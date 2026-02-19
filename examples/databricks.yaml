@@ -1,0 +1,47 @@
+# See https://docs.databricks.com/dev-tools/bundles/index.html for documentation.
+bundle:
+  name: databricks-bundle-decorators
+  
+
+artifacts:
+  databricks_bundle_decorators:
+  # this artifact includes all deps and pre-resolved versions
+  # Workaround for https://github.com/astral-sh/uv/issues/8729
+  # If uv started supporting `uv build --wheel --resolved` or similar, we would not need to do this anymore. 
+    type: whl
+    build: |-
+      uv sync --no-dev
+      uv export --no-emit-workspace --no-hashes -o requirements-frozen.txt
+      cp pyproject.toml pyproject.toml.bak
+      uv add -r requirements-frozen.txt
+      uv build --wheel
+      mv pyproject.toml.bak pyproject.toml
+      rm requirements-frozen.txt
+    path: .
+
+include:
+  - dbr_resources/*.yaml
+  - dbr_resources/*.yml
+  - dbr_resources/**/*.yaml
+  - dbr_resources/**/*.yml
+
+python:
+  venv_path: .venv
+  resources:
+    - 'resources:load_resources'
+
+
+targets:
+  # See deployment modes https://docs.databricks.com/dev-tools/bundles/deployment-modes.html.
+  develop:
+    mode: development
+    presets:
+      trigger_pause_status: PAUSED
+    workspace:
+      host: https://adb-2772814945750341.1.azuredatabricks.net/ #databricks-cdl-flexflow-cust-dev-01
+
+  master:
+    mode: production
+    workspace:
+      host: https://adb-935426158960346.6.azuredatabricks.net/ #databricks-cdl-flexflow-cust-prod-01
+      root_path: /Workspace/Users/bocci.l/.bundle/${bundle.name}/${bundle.target}

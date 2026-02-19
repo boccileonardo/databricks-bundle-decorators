@@ -1,0 +1,45 @@
+default_install_hook_types: [ pre-commit, commit-msg ]
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v6.0.0
+  hooks:
+  - id: no-commit-to-branch
+    args: [ -b, main, -p, '^(?!feature/|fix/|bump/|docs/|test/).*' ]
+  - id: check-merge-conflict
+  - id: check-json
+  - id: check-yaml
+  - id: mixed-line-ending # replaces or checks mixed line ending.
+    args: [ "--fix=lf" ]
+    description: Forces to replace line ending with the 'lf' character.
+  - id: check-added-large-files
+    name: Check for files larger than 5 MB
+    args: [ "--maxkb=5120" ]
+- repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+  rev: 3.6.0
+  hooks:
+  - id: editorconfig-checker
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.15.0
+  hooks:
+  - id: ruff-format
+    name: ruff formatter
+  - id: ruff
+    args: [ --fix ]
+    name: ruff linter
+- repo: https://github.com/jorisroovers/gitlint
+  rev: v0.19.1
+  hooks:
+  - id: gitlint
+- repo: https://github.com/gitleaks/gitleaks
+  rev: v8.30.0
+  hooks:
+  - id: gitleaks
+- repo: https://github.com/lk16/detect-missing-init
+  rev: v0.1.6
+  hooks:
+  - id: detect-missing-init
+    args: [ '--create', "--track", "--python-folders", "src,tests" ]
+- repo: https://github.com/tox-dev/pyproject-fmt
+  rev: "v2.15.2"
+  hooks:
+    - id: pyproject-fmt

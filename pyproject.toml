@@ -1,0 +1,40 @@
+[build-system]
+build-backend = "uv_build"
+requires = [ "uv-build>=0.10.4,<0.11" ]
+
+[project]
+name = "databricks-bundle-decorators"
+version = "0.1.0"
+description = "Decorator-based framework for defining Databricks jobs and tasks as Python code."
+readme = "README.md"
+authors = [ { name = "boccileonardo", email = "leonardobocci99@hotmail.com" } ]
+requires-python = ">=3.12"
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+  "databricks-bundles>=0.275",
+]
+scripts.pydabs = "databricks_bundle_decorators.cli:main"
+scripts.pydabs_run = "databricks_bundle_decorators.runtime:main"
+
+[dependency-groups]
+dev = [
+  "databricks-bundle-decorators",
+  "prek>=0.3.3",
+  "pytest>=9.0.2",
+  "ruff>=0.15.1",
+  "ty>=0.0.17",
+]
+
+[tool.uv]
+sources.databricks-bundle-decorators = { workspace = true }
+
+[tool.pytest]
+ini_options.testpaths = [ "tests" ]
+
+[tool.ty]
+src.exclude = [ "examples" ]
