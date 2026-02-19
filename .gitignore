@@ -13,3 +13,5 @@ wheels/
 .pytest_cache
 .ruff_cache
 .vscode/
+.coverage
+coverage.xml
