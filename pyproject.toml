@@ -25,6 +25,7 @@ scripts.pydabs_run = "databricks_bundle_decorators.runtime:main"
 dev = [
   "databricks-bundle-decorators",
   "prek>=0.3.3",
+  "pyproject-fmt>=2.16.1",
   "pytest>=9.0.2",
   "pytest-cov>=6",
   "ruff>=0.15.1",
