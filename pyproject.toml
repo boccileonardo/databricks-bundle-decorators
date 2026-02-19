@@ -26,8 +26,10 @@ dev = [
   "databricks-bundle-decorators",
   "prek>=0.3.3",
   "pytest>=9.0.2",
+  "pytest-cov>=6",
   "ruff>=0.15.1",
   "ty>=0.0.17",
+  "vulture>=2.14",
 ]
 
 [tool.uv]
