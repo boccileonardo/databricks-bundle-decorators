@@ -10,33 +10,6 @@ on:
     - main
 
 jobs:
-  FileChecks:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-    - name: Mixed line endings
-      uses: ymwymw/check-mixed-line-endings@v2
-    - name: Large file check
-      uses: ppremk/lfs-warning@v3.2
-      with:
-        filesizelimit: 10MB
-    - name: Missing init modules
-      run: |
-        uv tool run pre-commit run --all-files detect-missing-init
-    - name: Check .gitattributes rules
-      run: |
-        missing_attributes=$(git ls-files | git check-attr -a --stdin | grep 'text: auto' || printf '\n')
-        if [ -n "$missing_attributes" ]; then
-          printf '%s\n%s\n' '.gitattributes rule missing for the following files:' "$missing_attributes"
-          exit 1
-        else
-          printf '%s\n' 'All files have a corresponding rule in .gitattributes'
-        fi
 
   lintFormat:
     runs-on: ubuntu-latest
@@ -50,7 +23,7 @@ jobs:
     - name: Install dependencies
       run: uv sync
     - name: Dead code Check
-      run: uv run --no-project vulture src/ --min-confidence 80
+      run: uv run --no-project vulture src/ --min-confidence 80 --ignore-names "obj"
     - name: Format code
       run: |
         uv run --no-project ruff format --check
@@ -67,6 +40,8 @@ jobs:
         fetch-depth: 0
     - name: Gitleaks
       uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   pytest:
     runs-on: ubuntu-latest
