@@ -18,8 +18,8 @@ classifiers = [
 dependencies = [
   "databricks-bundles>=0.275",
 ]
-scripts.pydabs = "databricks_bundle_decorators.cli:main"
-scripts.pydabs_run = "databricks_bundle_decorators.runtime:main"
+scripts.dbxdec = "databricks_bundle_decorators.cli:main"
+scripts.dbxdec-run = "databricks_bundle_decorators.runtime:main"
 
 [dependency-groups]
 dev = [

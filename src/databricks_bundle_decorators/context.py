@@ -10,8 +10,6 @@ arguments (parsed via ``argparse``).  Task code imports and reads it::
         url = params["url"]
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 

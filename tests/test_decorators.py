@@ -1,7 +1,5 @@
 """Tests for the decorator registry wiring (TaskFlow pattern)."""
 
-from __future__ import annotations
-
 import pytest
 
 from databricks_bundle_decorators.registry import (

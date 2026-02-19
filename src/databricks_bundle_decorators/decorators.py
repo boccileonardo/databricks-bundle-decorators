@@ -11,8 +11,6 @@ lightweight :class:`TaskProxy` that records the dependency edge when
 passed as an argument to another task call.  No AST parsing is needed.
 """
 
-from __future__ import annotations
-
 import functools
 import inspect
 import types

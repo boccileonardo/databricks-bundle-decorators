@@ -12,8 +12,6 @@ imports all pipeline definitions (populating the decorator registries)
 and then generates ``Job`` resources via :mod:`databricks_bundle_decorators.codegen`.
 """
 
-from __future__ import annotations
-
 from databricks.bundles.core import Bundle, Resources
 
 

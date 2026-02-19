@@ -8,8 +8,6 @@ Demonstrates the TaskFlow pattern:
 - DAG wiring via normal Python call-and-assign
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import polars as pl

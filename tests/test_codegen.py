@@ -1,7 +1,5 @@
 """Tests for codegen helpers."""
 
-from __future__ import annotations
-
 from databricks_bundle_decorators.codegen import generate_resources
 from databricks_bundle_decorators.decorators import job, job_cluster, task
 from databricks_bundle_decorators.registry import reset_registries

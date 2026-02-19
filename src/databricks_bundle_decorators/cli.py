@@ -4,10 +4,8 @@ Provides scaffolding commands for pipeline repositories.
 
 Usage::
 
-    uv run pydabs init
+    uv run dbxdec init
 """
-
-from __future__ import annotations
 
 import argparse
 import sys
@@ -91,7 +89,7 @@ Every .py module in this package is imported automatically, triggering
 @task / @job / @job_cluster decorator registration.
 """
 
-from __future__ import annotations
+
 
 import importlib
 import pkgutil
@@ -236,7 +234,7 @@ def _cmd_init(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="pydabs",
+        prog="dbxdec",
         description="databricks-bundle-decorators CLI",
     )
     subparsers = parser.add_subparsers(dest="command")
