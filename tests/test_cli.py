@@ -82,6 +82,15 @@ class TestCmdInit:
         assert (tmp_path / "databricks.yaml").exists()
         assert (tmp_path / "src" / "test_project" / "__init__.py").exists()
 
+        # resources/__init__.py directly imports the user's pipelines package
+        resources_content = (tmp_path / "resources" / "__init__.py").read_text()
+        assert "import test_project.pipelines" in resources_content
+        assert "discover_pipelines" not in resources_content
+
+        # Entry point was auto-added to pyproject.toml
+        pyproject_content = (tmp_path / "pyproject.toml").read_text()
+        assert 'test_project = "test_project.pipelines"' in pyproject_content
+
     def test_skips_existing_files(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
@@ -128,7 +137,13 @@ class TestCmdInit:
         _cmd_init(argparse.Namespace())
 
         captured = capsys.readouterr()
-        assert "entry-points" in captured.out or "entry point" in captured.out
+        assert "Modified" in captured.out
+        assert "entry point" in captured.out
+
+        # Entry point was actually added
+        content = (tmp_path / "pyproject.toml").read_text()
+        assert "databricks_bundle_decorators.pipelines" in content
+        assert 'test_project = "test_project.pipelines"' in content
 
     def test_no_entry_point_hint_when_present(
         self,
@@ -148,7 +163,11 @@ class TestCmdInit:
         _cmd_init(argparse.Namespace())
 
         captured = capsys.readouterr()
-        assert "Next step" not in captured.out
+        assert "Modified" not in captured.out
+
+        # pyproject.toml should not be modified
+        content = (tmp_path / "pyproject.toml").read_text()
+        assert content == pyproject
 
 
 class TestMainCli:

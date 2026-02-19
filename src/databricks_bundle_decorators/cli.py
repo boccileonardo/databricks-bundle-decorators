@@ -9,7 +9,6 @@ Usage::
 
 import argparse
 import sys
-import textwrap
 from pathlib import Path
 
 try:
@@ -71,10 +70,8 @@ from databricks.bundles.core import Bundle, Resources
 
 def load_resources(bundle: Bundle) -> Resources:
     """Entry-point called by ``databricks bundle deploy``."""
-    from databricks_bundle_decorators.discovery import discover_pipelines
+    import {package_name}.pipelines  # noqa: F401 – triggers decorator registration
     from databricks_bundle_decorators.codegen import generate_resources
-
-    discover_pipelines()
 
     resources = Resources()
     for key, job_resource in generate_resources().items():
@@ -121,31 +118,173 @@ targets:
 """
 
 _EXAMPLE_PIPELINE = '''\
-"""Example pipeline – replace with your own tasks and jobs."""
+"""Example pipeline – demonstrates task dependencies, IoManager, and parameters.
 
-from databricks_bundle_decorators import job, job_cluster, task, params
+Shows the TaskFlow pattern:
+- ``@job_cluster`` for shared cluster configuration
+- ``@task`` with dependencies (pass a task result to another task)
+- ``IoManager`` for DataFrame persistence between tasks
+- ``params`` for job-level parameter access
+"""
 
+from typing import Any
+
+import polars as pl
+
+from databricks_bundle_decorators import (
+    IoManager,
+    InputContext,
+    OutputContext,
+    job,
+    job_cluster,
+    params,
+    task,
+)
+
+
+# ---------------------------------------------------------------------------
+# IoManager -- persist DataFrames as Parquet on Azure Data Lake Storage Gen2
+# ---------------------------------------------------------------------------
+
+
+class AdlsParquetIoManager(IoManager):
+    """Read/write Polars DataFrames as Parquet files on ADLS Gen2.
+
+    Polars natively supports ``abfss://`` paths via ``storage_options``.
+    Use ``dbutils.secrets.get()`` to retrieve the storage access key
+    at runtime on Databricks.
+
+    Parameters
+    ----------
+    storage_account:
+        Azure storage account name.
+    container:
+        Blob container / filesystem name.
+    base_path:
+        Folder prefix inside the container (e.g. ``"staging"``).
+    storage_options:
+        Dict forwarded to ``polars.write_parquet`` /
+        ``polars.read_parquet`` -- must contain ``account_name``
+        and ``account_key``.
+    """
+
+    def __init__(
+        self,
+        storage_account: str,
+        container: str,
+        base_path: str = "data",
+        *,
+        storage_options: dict[str, str] | None = None,
+    ) -> None:
+        self.root = (
+            f"abfss://{container}@{storage_account}.dfs.core.windows.net/{base_path}"
+        )
+        self.storage_options = storage_options or {
+            "account_name": storage_account,
+            "account_key": self._get_access_key(storage_account),
+        }
+
+    @staticmethod
+    def _get_access_key(storage_account: str) -> str:
+        """Retrieve the ADLS access key from Databricks secrets."""
+        from pyspark.dbutils import DBUtils
+        from pyspark.sql import SparkSession
+
+        spark = SparkSession.builder.getOrCreate()
+        dbutils = DBUtils(spark)
+        return dbutils.secrets.get(
+            scope="KeyVault_Scope", key=f"{storage_account}-access-key"
+        )
+
+    def _uri(self, task_key: str) -> str:
+        return f"{self.root}/{task_key}.parquet"
+
+    def store(self, context: OutputContext, obj: Any) -> None:
+        uri = self._uri(context.task_key)
+        obj.write_parquet(uri, storage_options=self.storage_options)
+        print(f"[IoManager] Wrote {len(obj)} rows -> {uri}")
+
+    def load(self, context: InputContext) -> Any:
+        uri = self._uri(context.upstream_task_key)
+        print(f"[IoManager] Reading from {uri}")
+        return pl.read_parquet(uri, storage_options=self.storage_options)
+
+
+staging_io = AdlsParquetIoManager(
+    storage_account="mystorageaccount",
+    container="datalake",
+    base_path="staging",
+    # Optionally pass storage_options explicitly:
+    # storage_options={"account_name": "...", "account_key": "..."},
+)
+
+
+# ---------------------------------------------------------------------------
+# Shared job cluster
+# ---------------------------------------------------------------------------
 
 default_cluster = job_cluster(
     name="default_cluster",
-    spark_version="14.3.x-scala2.12",
+    spark_version="16.4.x-scala2.12",
     node_type_id="Standard_DS3_v2",
     num_workers=2,
 )
 
 
-@task
-def hello():
-    print(f"Hello from databricks-bundle-decorators! url={{params.get('url', 'N/A')}}")
+# ---------------------------------------------------------------------------
+# Job – inline TaskFlow pattern
+# ---------------------------------------------------------------------------
 
 
 @job(
-    params={{"url": "https://example.com"}},
+    params={"source_url": "https://api.github.com/events", "limit": "10"},
     cluster="default_cluster",
 )
 def example_job():
-    hello()
+    @task(io_manager=staging_io)
+    def extract():
+        """Fetch data from a remote API and return a DataFrame."""
+        import requests
+
+        url = params["source_url"]
+        response = requests.get(url)
+        response.raise_for_status()
+        return pl.DataFrame(response.json())
+
+    @task(io_manager=staging_io)
+    def transform(raw_df):
+        """Apply filtering/transformations to the raw data."""
+        limit = int(params["limit"])
+        return raw_df.head(limit)
+
+    @task
+    def load(clean_df):
+        """Final consumer – print the result (replace with your own logic)."""
+        print(f"Loaded {len(clean_df)} rows:")
+        print(clean_df)
+
+    raw = extract()
+    clean = transform(raw)
+    load(clean)
 '''
+
+
+def _add_entry_point_to_pyproject(cwd: Path, package_name: str) -> bool:
+    """Append the pipeline entry-point section to *pyproject.toml*.
+
+    Returns ``True`` if the section was added, ``False`` if it already
+    existed.
+    """
+    pyproject_path = cwd / "pyproject.toml"
+    content = pyproject_path.read_text()
+    if "databricks_bundle_decorators.pipelines" in content:
+        return False
+    entry_point_block = (
+        '\n[project.entry-points."databricks_bundle_decorators.pipelines"]\n'
+        f'{package_name} = "{package_name}.pipelines"\n'
+    )
+    pyproject_path.write_text(content.rstrip() + "\n" + entry_point_block)
+    return True
 
 
 # --- Init command ----------------------------------------------------------
@@ -171,7 +310,10 @@ def _cmd_init(args: argparse.Namespace) -> None:
         created.append(str(path.relative_to(cwd)))
 
     # 1. resources/__init__.py
-    _write(cwd / "resources" / "__init__.py", _RESOURCES_INIT)
+    _write(
+        cwd / "resources" / "__init__.py",
+        _RESOURCES_INIT.format(package_name=package_name),
+    )
 
     # 2. pipelines/__init__.py  (auto-discovery)
     _write(pkg_dir / "pipelines" / "__init__.py", _PIPELINES_INIT)
@@ -209,23 +351,13 @@ def _cmd_init(args: argparse.Namespace) -> None:
         for f in skipped:
             print(f"  {f}")
 
-    # --- Check for entry point in pyproject.toml ---------------------------
-    entry_points = (
-        pyproject.get("project", {})
-        .get("entry-points", {})
-        .get("databricks_bundle_decorators.pipelines", {})
-    )
-    if not entry_points:
-        print()
-        print("Next step: add the pipeline entry point to your pyproject.toml:")
-        print()
-        print(
-            textwrap.dedent(f"""\
-            [project.entry-points."databricks_bundle_decorators.pipelines"]
-            {package_name} = "{package_name}.pipelines"
-            """)
-        )
+    # --- Add entry point to pyproject.toml --------------------------------
+    entry_point_added = _add_entry_point_to_pyproject(cwd, package_name)
+    if entry_point_added:
+        print("Modified:")
+        print("  pyproject.toml (added pipeline entry point)")
 
+    print()
     print("Done! Define your @task and @job functions in the pipelines/ directory.")
 
 
