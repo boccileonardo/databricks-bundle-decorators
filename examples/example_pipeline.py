@@ -5,54 +5,101 @@ Demonstrates the TaskFlow pattern:
 - ``@task`` defined *inside* the ``@job`` body (inline TaskFlow style)
 - ``IoManager`` for DataFrame persistence between tasks
 - Explicit task values via ``set_task_value``
+- ``params`` for job-level parameter access
 - DAG wiring via normal Python call-and-assign
 """
 
 from typing import Any
 
 import polars as pl
-import requests
 
-from databricks_bundle_decorators import IoManager, InputContext, OutputContext, params
-from databricks_bundle_decorators.decorators import job, job_cluster, task
-from databricks_bundle_decorators.task_values import set_task_value
+from databricks_bundle_decorators import (
+    IoManager,
+    InputContext,
+    OutputContext,
+    job,
+    job_cluster,
+    params,
+    task,
+    set_task_value,
+)
 
 
 # ---------------------------------------------------------------------------
-# IoManager – users implement one per storage target
+# IoManager – persist DataFrames as Parquet on Azure Data Lake Storage Gen2
 # ---------------------------------------------------------------------------
 
 
-class DeltaIoManager(IoManager):
-    """Persist Polars DataFrames as Delta tables.
+class AdlsParquetIoManager(IoManager):
+    """Read/write Polars DataFrames as Parquet files on ADLS Gen2.
 
-    In a real deployment the ``store`` / ``load`` methods would use
-    ``polars.write_delta`` / ``polars.read_delta`` (backed by
-    ``deltalake``).  This example uses workspace-local Parquet files as a
-    placeholder so the pipeline can be tested without a running Spark
-    cluster.
+    Polars natively supports ``abfss://`` paths via ``storage_options``.
+    Use ``dbutils.secrets.get()`` to retrieve the storage access key
+    at runtime on Databricks.
+
+    Parameters
+    ----------
+    storage_account:
+        Azure storage account name.
+    container:
+        Blob container / filesystem name.
+    base_path:
+        Folder prefix inside the container (e.g. ``"staging"``).
+    storage_options:
+        Dict forwarded to ``polars.write_parquet`` /
+        ``polars.read_parquet`` – must contain ``account_name``
+        and ``account_key``.
     """
 
-    def __init__(self, catalog: str, schema: str) -> None:
-        self.catalog = catalog
-        self.schema = schema
+    def __init__(
+        self,
+        storage_account: str,
+        container: str,
+        base_path: str = "data",
+        *,
+        storage_options: dict[str, str] | None = None,
+    ) -> None:
+        self.root = (
+            f"abfss://{container}@{storage_account}.dfs.core.windows.net/{base_path}"
+        )
+        self.storage_options = storage_options or {
+            "account_name": storage_account,
+            "account_key": self._get_access_key(storage_account),
+        }
 
-    def _table_path(self, task_key: str) -> str:
-        return f"{self.catalog}.{self.schema}.{task_key}"
+    @staticmethod
+    def _get_access_key(storage_account: str) -> str:
+        """Retrieve the ADLS access key from Databricks secrets."""
+        from pyspark.dbutils import DBUtils
+        from pyspark.sql import SparkSession
+
+        spark = SparkSession.builder.getOrCreate()
+        dbutils = DBUtils(spark)
+        return dbutils.secrets.get(
+            scope="KeyVault_Scope", key=f"{storage_account}-access-key"
+        )
+
+    def _uri(self, task_key: str) -> str:
+        return f"{self.root}/{task_key}.parquet"
 
     def store(self, context: OutputContext, obj: Any) -> None:
-        table = self._table_path(context.task_key)
-        # In production: obj.write_delta(table, mode="overwrite")
-        print(f"[IoManager] Storing {len(obj)} rows → {table}")
+        uri = self._uri(context.task_key)
+        obj.write_parquet(uri, storage_options=self.storage_options)
+        print(f"[IoManager] Wrote {len(obj)} rows -> {uri}")
 
     def load(self, context: InputContext) -> Any:
-        table = self._table_path(context.upstream_task_key)
-        # In production: return pl.read_delta(table)
-        print(f"[IoManager] Loading from {table}")
-        return pl.DataFrame()
+        uri = self._uri(context.upstream_task_key)
+        print(f"[IoManager] Reading from {uri}")
+        return pl.read_parquet(uri, storage_options=self.storage_options)
 
 
-staging_io = DeltaIoManager(catalog="main", schema="staging")
+staging_io = AdlsParquetIoManager(
+    storage_account="mystorageaccount",
+    container="datalake",
+    base_path="staging",
+    # Optionally pass storage_options explicitly:
+    # storage_options={"account_name": "...", "account_key": "..."},
+)
 
 
 # ---------------------------------------------------------------------------
@@ -73,23 +120,34 @@ small_cluster = job_cluster(
 
 @job(
     tags={"source": "github", "type": "api"},
-    params={"url": "https://api.github.com/events"},
+    params={"url": "https://api.github.com/events", "limit": "10"},
     cluster="small_cluster",
 )
 def example_pydab_job():
     @task(io_manager=staging_io)
-    def upstream():
+    def extract():
         """Fetch events from the GitHub API and return a Polars DataFrame."""
+        import requests
+
         r = requests.get(params["url"])
+        r.raise_for_status()
         df = pl.DataFrame(r.json())
         # Explicit task value – small scalar, goes via dbutils.jobs.taskValues
         set_task_value("row_count", len(df))
         return df
 
-    @task()
-    def downstream(df):
-        """Print the first rows received from upstream."""
-        print(df.head(10))
+    @task(io_manager=staging_io)
+    def transform(raw_df):
+        """Apply filtering/transformations to the raw data."""
+        limit = int(params["limit"])
+        return raw_df.head(limit)
 
-    df = upstream()
-    downstream(df)
+    @task
+    def load(clean_df):
+        """Final consumer – print the result."""
+        print(f"Loaded {len(clean_df)} rows:")
+        print(clean_df)
+
+    raw = extract()
+    clean = transform(raw)
+    load(clean)

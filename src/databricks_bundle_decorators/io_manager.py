@@ -46,18 +46,15 @@ class IoManager(ABC):
         import polars as pl
         from databricks_bundle_decorators import IoManager, OutputContext, InputContext
 
-        class DeltaIoManager(IoManager):
-            def __init__(self, catalog: str, schema: str):
-                self.catalog = catalog
-                self.schema = schema
+        class AdlsParquetIoManager(IoManager):
+            def __init__(self, storage_account: str, container: str, base_path: str = "data"):
+                self.root = f"abfss://{container}@{storage_account}.dfs.core.windows.net/{base_path}"
 
             def store(self, context: OutputContext, obj: Any) -> None:
-                table = f"{self.catalog}.{self.schema}.{context.task_key}"
-                obj.write_delta(table, mode="overwrite")
+                obj.write_parquet(f"{self.root}/{context.task_key}.parquet")
 
             def load(self, context: InputContext) -> Any:
-                table = f"{self.catalog}.{self.schema}.{context.upstream_task_key}"
-                return pl.read_delta(table)
+                return pl.read_parquet(f"{self.root}/{context.upstream_task_key}.parquet")
     """
 
     @abstractmethod
