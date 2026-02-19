@@ -1,7 +1,5 @@
 """Tests for the runtime task runner."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from databricks_bundle_decorators.context import params
@@ -16,6 +14,11 @@ from databricks_bundle_decorators.registry import (
     reset_registries,
 )
 from databricks_bundle_decorators.runtime import run_task
+from databricks_bundle_decorators.task_values import (
+    _local_task_values,
+    get_task_value,
+    set_task_value,
+)
 
 
 class _MemoryIo(IoManager):
@@ -34,6 +37,7 @@ class TestRunTask:
     def setup_method(self):
         reset_registries()
         _MemoryIo.storage = {}
+        _local_task_values.clear()
 
     def test_simple_task_no_io(self):
         call_log: list[str] = []
@@ -89,3 +93,20 @@ class TestRunTask:
                 "__upstream__df": "producer",
             },
         )
+
+    def test_task_values_cross_task_round_trip(self):
+        """set_task_value in producer is retrievable via get_task_value."""
+
+        def producer():
+            set_task_value("row_count", 42)
+
+        def consumer():
+            return get_task_value("producer", "row_count")
+
+        _TASK_REGISTRY["producer"] = TaskMeta(fn=producer, task_key="producer")
+        _TASK_REGISTRY["consumer"] = TaskMeta(fn=consumer, task_key="consumer")
+
+        run_task("producer", {"__job_name__": "j", "__task_key__": "producer"})
+        run_task("consumer", {"__job_name__": "j", "__task_key__": "consumer"})
+
+        assert _local_task_values["producer"]["row_count"] == 42

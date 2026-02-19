@@ -6,12 +6,14 @@ small primitive payloads (~48 KB) and must be opted-in explicitly by calling
 :func:`set_task_value` inside a ``@task`` function.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 # Module-level fallback store used during local / test execution.
 _local_task_values: dict[str, dict[str, Any]] = {}
+
+# Set by the runtime runner before executing a task, so set_task_value
+# can key the local store correctly for cross-task round-trips in tests.
+_current_task_key: str | None = None
 
 
 def set_task_value(key: str, value: str | int | float | bool) -> None:
@@ -43,8 +45,10 @@ def set_task_value(key: str, value: str | int | float | bool) -> None:
         dbutils = DBUtils(spark)
         dbutils.jobs.taskValues.set(key=key, value=value)
     except Exception:
-        # Local / testing fallback
-        _local_task_values.setdefault("__current__", {})[key] = value
+        # Local / testing fallback — use the current task key if set by
+        # the runtime runner, otherwise fall back to "__current__".
+        store_key = _current_task_key or "__current__"
+        _local_task_values.setdefault(store_key, {})[key] = value
 
 
 def get_task_value(task_key: str, key: str) -> Any:

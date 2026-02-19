@@ -1,6 +1,6 @@
 """Runtime entry-point for ``python_wheel_task`` execution on Databricks.
 
-Databricks invokes the ``pydabs_run`` console-script, which calls
+Databricks invokes the ``dbxdec-run`` console-script, which calls
 :func:`main`.  The function:
 
 1. Imports the user's pipeline definitions (populating the registries).
@@ -9,8 +9,6 @@ Databricks invokes the ``pydabs_run`` console-script, which calls
 4. Executes the task function.
 5. Persists the return value via the task's ``IoManager`` (if configured).
 """
-
-from __future__ import annotations
 
 import argparse
 import os
@@ -91,7 +89,13 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
             )
 
     # ---- execute the task function ---------------------------------------
-    result = task_meta.fn(**kwargs)
+    from databricks_bundle_decorators import task_values as _tv
+
+    _tv._current_task_key = task_key
+    try:
+        result = task_meta.fn(**kwargs)
+    finally:
+        _tv._current_task_key = None
 
     # ---- persist output via IoManager.store() ----------------------------
     if result is not None and task_meta.io_manager:
@@ -110,7 +114,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
 
 
 def main() -> None:
-    """Console-script entry-point (``pydabs_run``).
+    """Console-script entry-point (``dbxdec-run``).
 
     Invoked by Databricks ``python_wheel_task`` with ``named_parameters``.
     """
@@ -122,7 +126,7 @@ def main() -> None:
     discover_pipelines()
 
     # 2. Parse CLI arguments.
-    parser = argparse.ArgumentParser(description="pydabs task runner")
+    parser = argparse.ArgumentParser(description="dbxdec task runner")
     args, remaining = parser.parse_known_args()
     cli_params = _parse_named_args(remaining)
 

@@ -9,8 +9,6 @@ Users implement concrete IoManagers and attach them to tasks via the
 ``io_manager`` parameter of the ``@task`` decorator.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any

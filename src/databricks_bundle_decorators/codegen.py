@@ -6,8 +6,6 @@ and produces ``Job`` dataclass instances that the Databricks CLI
 serialises into the bundle configuration.
 """
 
-from __future__ import annotations
-
 from databricks_bundle_decorators.registry import (
     _CLUSTER_REGISTRY,
     _JOB_REGISTRY,
@@ -72,7 +70,7 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
                 job_cluster_key=job_meta.cluster,
                 python_wheel_task=PythonWheelTask(
                     package_name=package_name,
-                    entry_point="pydabs_run",
+                    entry_point="dbxdec-run",
                     named_parameters=named_params,  # type: ignore[arg-type]  # SDK Variable wrappers
                 ),
                 libraries=[Library(whl="dist/*.whl")],

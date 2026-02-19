@@ -67,7 +67,7 @@ class JobConfig(TypedDict, total=False):
     """SDK-native fields forwarded to ``databricks.bundles.jobs.Job``.
 
     Pass any of these as keyword arguments to ``@job(...)`` alongside
-    the pydabs-managed parameters (``params``, ``cluster``).
+    the framework-managed parameters (``params``, ``cluster``).
 
     Example::
 
@@ -109,7 +109,7 @@ class TaskConfig(TypedDict, total=False):
     """SDK-native fields forwarded to ``databricks.bundles.jobs.Task``.
 
     Pass any of these as keyword arguments to ``@task(...)`` alongside
-    the pydabs convenience parameter (``io_manager``).
+    the framework convenience parameter (``io_manager``).
 
     Example::
 
@@ -144,7 +144,7 @@ class ClusterConfig(TypedDict, total=False):
     """SDK-native fields forwarded to ``databricks.bundles.jobs.ClusterSpec``.
 
     Pass any of these as keyword arguments to ``@job_cluster(...)``
-    alongside the pydabs convenience parameter (``name``).
+    alongside the framework convenience parameter (``name``).
 
     Example::
 
