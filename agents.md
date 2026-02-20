@@ -13,11 +13,14 @@ The package name is `databricks-bundle-decorators`. The Python import name is `d
 - Before considering a change completed, must run:
 
 ```bash
-# Tests
-uv run pytest
-
 # Pre-commit multiple check
 uv run prek run --all-files
+
+# Type checking
+uv run ty check
+
+# Tests
+uv run pytest
 ```
 
 ## Architecture — Key Concepts

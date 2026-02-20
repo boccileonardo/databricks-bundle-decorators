@@ -221,7 +221,7 @@ class TestJobDecorator:
         """Passing a string instead of ClusterMeta raises TypeError."""
         with pytest.raises(TypeError, match="expects a ClusterMeta"):
 
-            @job(cluster="some_cluster")
+            @job(cluster="some_cluster")  # type: ignore[arg-type]  # intentional wrong type
             def bad_job():
                 @task
                 def noop():
