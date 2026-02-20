@@ -48,6 +48,18 @@ class IoManager(ABC):
     Each ``@task`` can optionally declare an ``IoManager`` that controls how
     its return value is persisted and how downstream tasks read that data.
 
+    Lifecycle
+    ---------
+    IoManager instances are created at **import time** during both deploy
+    and runtime phases.  ``__init__`` must therefore be safe to run locally
+    without a Databricks runtime — do **not** import modules like
+    ``pyspark.dbutils`` or establish cluster-only connections there.
+
+    Instead, override :meth:`setup` for any initialisation that requires a
+    Databricks runtime environment.  The framework calls ``setup()``
+    exactly once per instance, at **runtime only**, before the first
+    :meth:`read` or :meth:`write` invocation.
+
     Example
     -------
     ::
@@ -60,6 +72,11 @@ class IoManager(ABC):
                 self.catalog = catalog
                 self.schema = schema
 
+            def setup(self) -> None:
+                # Safe here — only called at runtime on Databricks.
+                from pyspark.dbutils import DBUtils          # noqa: F401
+                self.dbutils = DBUtils(...)
+
             def write(self, context: OutputContext, obj: Any) -> None:
                 table = f"{self.catalog}.{self.schema}.{context.task_key}"
                 obj.write_delta(table, mode="overwrite")
@@ -68,6 +85,27 @@ class IoManager(ABC):
                 table = f"{self.catalog}.{self.schema}.{context.upstream_task_key}"
                 return pl.read_delta(table)
     """
+
+    _is_setup: bool = False
+    """Internal flag to ensure :meth:`setup` is called at most once."""
+
+    def setup(self) -> None:
+        """Initialise runtime-only resources.
+
+        Override this method to perform initialisation that requires a
+        Databricks cluster environment (Spark sessions, DBUtils, secret
+        scopes, etc.).  The framework guarantees this is called **once**
+        before the first :meth:`read` or :meth:`write`, and **only at
+        runtime** — never during ``databricks bundle deploy``.
+
+        The default implementation does nothing.
+        """
+
+    def _ensure_setup(self) -> None:
+        """Call :meth:`setup` if it has not been called yet."""
+        if not self._is_setup:
+            self.setup()
+            self._is_setup = True
 
     @abstractmethod
     def write(self, context: OutputContext, obj: Any) -> None:

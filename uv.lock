@@ -519,7 +519,7 @@ wheels = [
 
 [[package]]
 name = "databricks-bundle-decorators"
-version = "0.1.3"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "databricks-bundles" },
@@ -571,7 +571,7 @@ requires-dist = [
     { name = "polars", marker = "extra == 'polars'" },
     { name = "s3fs", marker = "extra == 'aws'" },
 ]
-provides-extras = ["azure", "aws", "gcp", "polars"]
+provides-extras = ["aws", "azure", "gcp", "polars"]
 
 [package.metadata.requires-dev]
 dev = [

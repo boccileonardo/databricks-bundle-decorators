@@ -176,7 +176,7 @@ def task(
 def job_cluster(
     name: str,
     **kwargs: Unpack[ClusterConfig],
-) -> str:
+) -> ClusterMeta:
     """Register a reusable job-cluster configuration.
 
     Cluster spec fields (``spark_version``, ``node_type_id``,
@@ -185,14 +185,13 @@ def job_cluster(
     at deploy time.  The cluster is ephemeral: created when the job
     starts and torn down when it finishes.
 
-    Returns the cluster *name* so it can be passed straight to
-    ``@job(cluster=…)``.
+    Returns a :class:`ClusterMeta` object that should be passed directly
+    to ``@job(cluster=…)``.
 
     Parameters
     ----------
     name:
-        Logical name used to reference this cluster from
-        ``@job(cluster=…)``.
+        Logical name for this cluster configuration.
     **kwargs:
         Any SDK-native ``ClusterSpec`` fields (e.g. ``spark_version``,
         ``node_type_id``, ``num_workers``).  See
@@ -201,7 +200,7 @@ def job_cluster(
     """
     meta = ClusterMeta(name=name, spec=dict(kwargs))
     _register_unique(_CLUSTER_REGISTRY, name, meta, "job_cluster")
-    return name
+    return meta
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +223,7 @@ _JobDecorator = Callable[[types.FunctionType], Callable[..., Any]]
 def job(
     *,
     params: dict[str, str] | None = ...,
-    cluster: str | None = ...,
+    cluster: ClusterMeta | None = ...,
     **kwargs: Unpack[JobConfig],
 ) -> _JobDecorator: ...
 
@@ -237,7 +236,7 @@ def job(
     fn: types.FunctionType | None = None,
     *,
     params: dict[str, str] | None = None,
-    cluster: str | None = None,
+    cluster: ClusterMeta | None = None,
     **kwargs: Unpack[JobConfig],
 ):
     """Register a function as a Databricks job.
@@ -253,8 +252,8 @@ def job(
         Default values for job-level parameters.  Accessible inside task
         functions via ``from databricks_bundle_decorators import params``.
     cluster:
-        Name of a ``@job_cluster``-decorated configuration to use as the
-        shared job cluster for all tasks.
+        A :class:`ClusterMeta` returned by :func:`job_cluster` to use
+        as the shared job cluster for all tasks.
     **kwargs:
         Any SDK-native ``Job`` fields (e.g. ``tags``, ``schedule``,
         ``max_concurrent_runs``, ``timeout_seconds``,
@@ -272,6 +271,15 @@ def job(
         if job_name in _JOB_REGISTRY:
             raise DuplicateResourceError(
                 f"Duplicate job '{job_name}'. Each job must have a unique name."
+            )
+
+        # --- validate cluster type -----------------------------------------
+        if cluster is not None and not isinstance(cluster, ClusterMeta):
+            raise TypeError(
+                f"@job(cluster=...) expects a ClusterMeta returned by "
+                f"job_cluster(), got {type(cluster).__name__!r}. "
+                f"Pass the job_cluster() return value directly instead "
+                f"of a string."
             )
 
         # --- execute the body to collect tasks and build the DAG ----------

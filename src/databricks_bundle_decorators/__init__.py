@@ -29,6 +29,7 @@ from databricks_bundle_decorators.io_manager import InputContext as InputContext
 from databricks_bundle_decorators.io_manager import IoManager as IoManager
 from databricks_bundle_decorators.io_manager import OutputContext as OutputContext
 from databricks_bundle_decorators.registry import (
+    ClusterMeta as ClusterMeta,
     DuplicateResourceError as DuplicateResourceError,
 )
 from databricks_bundle_decorators.sdk_types import ClusterConfig as ClusterConfig
@@ -45,6 +46,7 @@ __all__ = [
     "IoManager",
     "OutputContext",
     "InputContext",
+    "ClusterMeta",
     "DuplicateResourceError",
     "ClusterConfig",
     "JobConfig",

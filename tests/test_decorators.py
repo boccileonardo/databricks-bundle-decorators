@@ -3,6 +3,7 @@
 import pytest
 
 from databricks_bundle_decorators.registry import (
+    ClusterMeta,
     DuplicateResourceError,
     _CLUSTER_REGISTRY,
     _JOB_REGISTRY,
@@ -63,10 +64,11 @@ class TestJobCluster:
         assert "test_cluster" in _CLUSTER_REGISTRY
         assert _CLUSTER_REGISTRY["test_cluster"].spec["num_workers"] == 1
 
-    def test_cluster_returns_name(self):
+    def test_cluster_returns_cluster_meta(self):
         result = job_cluster(name="my_cluster", spark_version="14.0.x-scala2.12")
 
-        assert result == "my_cluster"
+        assert isinstance(result, ClusterMeta)
+        assert result.name == "my_cluster"
         assert "my_cluster" in _CLUSTER_REGISTRY
 
     def test_duplicate_cluster_raises(self):
@@ -84,11 +86,14 @@ class TestJobDecorator:
 
     def test_inline_dag_extraction(self):
         """Tasks defined inside @job body produce correct DAG."""
+        test_cluster = job_cluster(
+            name="default", spark_version="13.2.x-scala2.12", num_workers=1
+        )
 
         @job(
             tags={"env": "test"},
             params={"url": "http://example.com"},
-            cluster="default",
+            cluster=test_cluster,
         )
         def my_job():
             @task
@@ -212,6 +217,18 @@ class TestJobDecorator:
 
                 noop()
 
+    def test_string_cluster_raises_type_error(self):
+        """Passing a string instead of ClusterMeta raises TypeError."""
+        with pytest.raises(TypeError, match="expects a ClusterMeta"):
+
+            @job(cluster="some_cluster")
+            def bad_job():
+                @task
+                def noop():
+                    pass
+
+                noop()
+
 
 class TestSdkConfigForwarding:
     """SDK-native fields passed via **kwargs are stored in meta."""
@@ -263,10 +280,14 @@ class TestSdkConfigForwarding:
 
     def test_job_convenience_and_sdk_combined(self):
         """Managed params and SDK params coexist."""
+        test_cluster = job_cluster(
+            name="combo_cluster", spark_version="13.2.x-scala2.12", num_workers=1
+        )
 
         @job(
             tags={"team": "data"},
             params={"url": "http://example.com"},
+            cluster=test_cluster,
             max_concurrent_runs=1,
             description="My pipeline",
         )
