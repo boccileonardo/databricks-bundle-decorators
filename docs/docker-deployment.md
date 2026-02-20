@@ -54,7 +54,7 @@ def my_pipeline():
     transform(raw)
 ```
 
-### `libraries=[]`
+**`libraries=[]`**
 
 When `libraries` is not specified (the default), every generated task
 includes `Library(whl="dist/*.whl")` — Databricks installs the wheel
@@ -62,7 +62,7 @@ before running the task.  Setting `libraries=[]` tells the framework to
 **skip** library installation entirely because the package is already
 available in the container.
 
-### `libraries` parameter reference
+**`libraries` parameter reference**
 
 | Value | Behavior |
 |-------|----------|
