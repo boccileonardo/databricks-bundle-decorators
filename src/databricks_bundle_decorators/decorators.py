@@ -14,6 +14,7 @@ passed as an argument to another task call.  No AST parsing is needed.
 import functools
 import inspect
 import types
+import warnings
 from typing import Any, Callable, Unpack, overload
 
 from databricks_bundle_decorators.io_manager import IoManager
@@ -146,11 +147,42 @@ def task(
                             param_names[idx] if idx < len(param_names) else f"arg{idx}"
                         )
                         edge_map[p_name] = arg.task_key
+                    elif arg is not None:
+                        p_name = (
+                            param_names[idx] if idx < len(param_names) else f"arg{idx}"
+                        )
+                        warnings.warn(
+                            f"Task '{task_key}' in job '{_current_job_name}' "
+                            f"received a non-TaskProxy argument "
+                            f"({type(arg).__name__!r}) for parameter "
+                            f"'{p_name}'. Inside a @job body, task calls "
+                            f"only build the DAG — arguments that are not "
+                            f"TaskProxy values returned by other @task "
+                            f"calls are silently discarded at runtime. "
+                            f"Move data-producing code inside a @task "
+                            f"function.",
+                            UserWarning,
+                            stacklevel=2,
+                        )
 
                 for kw_name, kw_val in kwargs.items():
                     if isinstance(kw_val, TaskProxy):
                         upstream_deps.append(kw_val.task_key)
                         edge_map[kw_name] = kw_val.task_key
+                    elif kw_val is not None:
+                        warnings.warn(
+                            f"Task '{task_key}' in job '{_current_job_name}' "
+                            f"received a non-TaskProxy argument "
+                            f"({type(kw_val).__name__!r}) for parameter "
+                            f"'{kw_name}'. Inside a @job body, task calls "
+                            f"only build the DAG — arguments that are not "
+                            f"TaskProxy values returned by other @task "
+                            f"calls are silently discarded at runtime. "
+                            f"Move data-producing code inside a @task "
+                            f"function.",
+                            UserWarning,
+                            stacklevel=2,
+                        )
 
                 _current_job_dag[task_key] = upstream_deps
                 _current_job_edges[task_key] = edge_map

@@ -1,5 +1,7 @@
 """Tests for the decorator registry wiring (TaskFlow pattern)."""
 
+import warnings
+
 import pytest
 
 from databricks_bundle_decorators.registry import (
@@ -347,3 +349,140 @@ class TestSdkConfigForwarding:
         }
         task_meta = _TASK_REGISTRY["combo_job.step"]
         assert task_meta.sdk_config == {"max_retries": 2}
+
+
+class TestJobBodySafeguard:
+    """Warn when non-TaskProxy arguments are passed to task calls in @job body."""
+
+    def setup_method(self):
+        reset_registries()
+
+    def test_non_proxy_positional_arg_warns(self):
+        """Passing real data as a positional arg triggers a warning."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+
+            @job
+            def bad_job():
+                @task
+                def process(data):
+                    pass
+
+                process([1, 2, 3])
+
+            assert len(w) == 1
+            assert "non-TaskProxy argument" in str(w[0].message)
+            assert "'data'" in str(w[0].message)
+            assert "'list'" in str(w[0].message)
+
+    def test_non_proxy_kwarg_warns(self):
+        """Passing real data as a keyword arg triggers a warning."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+
+            @job
+            def kw_bad_job():
+                @task
+                def process(data):
+                    pass
+
+                process(data={"key": "value"})
+
+            assert len(w) == 1
+            assert "non-TaskProxy argument" in str(w[0].message)
+            assert "'data'" in str(w[0].message)
+            assert "'dict'" in str(w[0].message)
+
+    def test_none_arg_no_warning(self):
+        """Passing None does not trigger a warning."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+
+            @job
+            def none_job():
+                @task
+                def process(data):
+                    pass
+
+                process(None)
+
+            assert len(w) == 0
+
+    def test_task_proxy_arg_no_warning(self):
+        """Passing a TaskProxy (normal DAG wiring) does not trigger a warning."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+
+            @job
+            def good_job():
+                @task
+                def step_a():
+                    pass
+
+                @task
+                def step_b(data):
+                    pass
+
+                x = step_a()
+                step_b(x)
+
+            assert len(w) == 0
+
+    def test_string_arg_warns(self):
+        """Passing a string constant triggers a warning — it's discarded at runtime."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+
+            @job
+            def str_job():
+                @task
+                def process(mode):
+                    pass
+
+                process("fast")
+
+            assert len(w) == 1
+            assert "'str'" in str(w[0].message)
+
+    def test_mixed_proxy_and_literal_warns_once(self):
+        """Only the literal argument triggers a warning, not the proxy."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+
+            @job
+            def mixed_job():
+                @task
+                def step_a():
+                    pass
+
+                @task
+                def step_b(data, extra):
+                    pass
+
+                x = step_a()
+                step_b(x, "oops")
+
+            assert len(w) == 1
+            assert "'extra'" in str(w[0].message)
+
+    def test_dag_still_built_despite_warning(self):
+        """The DAG is still built correctly even when warnings fire."""
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+
+            @job
+            def dag_job():
+                @task
+                def a():
+                    pass
+
+                @task
+                def b(data, extra):
+                    pass
+
+                x = a()
+                b(x, 42)
+
+        meta = _JOB_REGISTRY["dag_job"]
+        assert meta.dag["b"] == ["a"]
+        assert meta.dag_edges["b"] == {"data": "a"}
