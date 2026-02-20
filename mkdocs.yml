@@ -65,6 +65,7 @@ nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - How It Works: how-it-works.md
+  - Docker Deployment: docker-deployment.md
   - API Reference:
       - api/index.md
       - Decorators: api/decorators.md

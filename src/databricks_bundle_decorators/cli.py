@@ -214,6 +214,97 @@ def example_job():
     summarize(clean)
 '''
 
+_DOCKER_EXAMPLE_PIPELINE = '''\
+"""Example pipeline using a pre-built Docker image.
+
+Demonstrates how to deploy when your package and dependencies are
+baked into a custom Docker image:
+
+- ``libraries=[]`` tells the framework **not** to attach a wheel,
+  because the package is already installed in the image.
+- ``docker_image`` on the cluster specifies the container image.
+- Everything else (TaskFlow DAG, IoManager, params) works the same.
+
+Build and push your image with the package pre-installed::
+
+    docker build -t my-registry.io/my-pipeline:latest .
+    docker push my-registry.io/my-pipeline:latest
+"""
+
+from databricks_bundle_decorators import (
+    job,
+    job_cluster,
+    params,
+    task,
+)
+
+
+# ---------------------------------------------------------------------------
+# Shared job cluster (with Docker image)
+# ---------------------------------------------------------------------------
+
+default_cluster = job_cluster(
+    name="docker_cluster",
+    spark_version="16.4.x-scala2.12",
+    node_type_id="Standard_DS3_v2",
+    num_workers=2,
+    docker_image={
+        "url": "my-registry.io/my-pipeline:latest",
+    },
+)
+
+
+# ---------------------------------------------------------------------------
+# Job – libraries=[] because the package is pre-installed in the image
+# ---------------------------------------------------------------------------
+
+
+@job(
+    params={"greeting": "hello"},
+    cluster=default_cluster,
+    libraries=[],
+)
+def example_docker_job():
+    @task
+    def produce() -> None:
+        """Produce a message (use set_task_value for small data)."""
+        from databricks_bundle_decorators import set_task_value
+
+        message = f"{params[\'greeting\']} from Docker!"
+        set_task_value("message", message)
+        print(message)
+
+    @task
+    def consume() -> None:
+        """Consume the message via task values."""
+        from databricks_bundle_decorators import get_task_value
+
+        message = get_task_value("produce", "message")
+        print(f"Received: {message}")
+
+    produce()
+    consume()
+'''
+
+_DOCKER_DATABRICKS_YAML = """\
+bundle:
+  name: {project_name}
+
+# No artifacts section needed – the package is pre-installed
+# in the Docker image rather than uploaded as a wheel.
+
+python:
+  venv_path: .venv
+  resources:
+    - 'resources:load_resources'
+
+targets:
+  dev:
+    mode: development
+    workspace:
+      host: https://<your-workspace>.azuredatabricks.net/
+"""
+
 
 def _add_entry_point_to_pyproject(cwd: Path, package_name: str) -> bool:
     """Append the pipeline entry-point section to *pyproject.toml*.
@@ -243,6 +334,7 @@ def _cmd_init(args: argparse.Namespace) -> None:
     package_name = _detect_package_name(pyproject)
     project_name = pyproject["project"]["name"]
     pkg_dir = _detect_src_layout(cwd, package_name)
+    docker: bool = getattr(args, "docker", False)
 
     created: list[str] = []
     skipped: list[str] = []
@@ -267,13 +359,13 @@ def _cmd_init(args: argparse.Namespace) -> None:
     # 3. Example pipeline
     _write(
         pkg_dir / "pipelines" / "example.py",
-        _EXAMPLE_PIPELINE,
+        _DOCKER_EXAMPLE_PIPELINE if docker else _EXAMPLE_PIPELINE,
     )
 
     # 4. databricks.yaml
     _write(
         cwd / "databricks.yaml",
-        _DATABRICKS_YAML.format(
+        (_DOCKER_DATABRICKS_YAML if docker else _DATABRICKS_YAML).format(
             project_name=project_name,
             package_name=package_name,
         ),
@@ -317,9 +409,18 @@ def main() -> None:
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser(
+    init_parser = subparsers.add_parser(
         "init",
         help="Scaffold a new databricks-bundle-decorators pipeline project",
+    )
+    init_parser.add_argument(
+        "--docker",
+        action="store_true",
+        help=(
+            "Generate a Docker-based example pipeline where the package "
+            "is pre-installed in a custom container image instead of "
+            "uploaded as a wheel."
+        ),
     )
 
     args = parser.parse_args()

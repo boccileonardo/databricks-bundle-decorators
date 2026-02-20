@@ -8,6 +8,13 @@ uv add databricks-bundle-decorators[azure]  # or [aws], [gcp], [polars]
 uv run dbxdec init
 ```
 
+!!! tip "Docker deployment"
+
+    If you pre-install your package in a custom Docker image instead of
+    deploying a wheel, use `uv run dbxdec init --docker` to generate a
+    Docker-ready example.  See [Docker Deployment](docker-deployment.md)
+    for details.
+
 `dbxdec init` creates:
 
 | File | Purpose |

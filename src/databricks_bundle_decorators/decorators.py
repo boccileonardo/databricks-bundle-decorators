@@ -224,6 +224,7 @@ def job(
     *,
     params: dict[str, str] | None = ...,
     cluster: ClusterMeta | None = ...,
+    libraries: list | None = ...,
     **kwargs: Unpack[JobConfig],
 ) -> _JobDecorator: ...
 
@@ -237,6 +238,7 @@ def job(
     *,
     params: dict[str, str] | None = None,
     cluster: ClusterMeta | None = None,
+    libraries: list | None = None,
     **kwargs: Unpack[JobConfig],
 ):
     """Register a function as a Databricks job.
@@ -254,6 +256,13 @@ def job(
     cluster:
         A `ClusterMeta` returned by `job_cluster()` to use
         as the shared job cluster for all tasks.
+    libraries:
+        Library dependencies to attach to each task.  When ``None``
+        (the default), the framework uses ``[Library(whl="dist/*.whl")]``
+        which is appropriate for standard wheel-based deployments.
+        Set to ``[]`` when the package is pre-installed in a custom
+        Docker image.  You may also pass explicit ``Library`` objects
+        for PyPI or Maven dependencies.
     **kwargs:
         Any SDK-native ``Job`` fields (e.g. ``tags``, ``schedule``,
         ``max_concurrent_runs``, ``timeout_seconds``,
@@ -306,6 +315,7 @@ def job(
             name=job_name,
             params=params or {},
             cluster=cluster,
+            libraries=libraries,
             dag=dag,
             dag_edges=dag_edges,
             sdk_config=dict(kwargs),

@@ -169,6 +169,51 @@ class TestCmdInit:
         content = (tmp_path / "pyproject.toml").read_text()
         assert content == pyproject
 
+    def test_docker_flag_creates_docker_example(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        import argparse
+
+        _cmd_init(argparse.Namespace(docker=True))
+
+        example_path = tmp_path / "src" / "test_project" / "pipelines" / "example.py"
+        assert example_path.exists()
+        content = example_path.read_text()
+        # Docker example uses libraries=[] and docker_image
+        assert "libraries=[]" in content
+        assert "docker_image" in content
+        assert "PolarsParquetIoManager" not in content
+
+        # databricks.yaml should NOT have artifacts section
+        yaml_content = (tmp_path / "databricks.yaml").read_text()
+        assert "artifacts:" not in yaml_content
+        assert "No artifacts section" in yaml_content
+
+    def test_default_init_creates_wheel_example(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        import argparse
+
+        _cmd_init(argparse.Namespace(docker=False))
+
+        example_path = tmp_path / "src" / "test_project" / "pipelines" / "example.py"
+        content = example_path.read_text()
+        # Default example uses PolarsParquetIoManager
+        assert "PolarsParquetIoManager" in content
+        assert "libraries=[]" not in content
+
+        # databricks.yaml should have artifacts section
+        yaml_content = (tmp_path / "databricks.yaml").read_text()
+        assert "artifacts" in yaml_content
+
 
 class TestMainCli:
     def test_init_subcommand(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -181,6 +226,23 @@ class TestMainCli:
         main()
 
         assert (tmp_path / "databricks.yaml").exists()
+
+    def test_init_docker_subcommand(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """main() dispatches the init --docker subcommand."""
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["dbxdec", "init", "--docker"])
+        from databricks_bundle_decorators.cli import main
+
+        main()
+
+        assert (tmp_path / "databricks.yaml").exists()
+        content = (
+            tmp_path / "src" / "test_project" / "pipelines" / "example.py"
+        ).read_text()
+        assert "libraries=[]" in content
 
     def test_no_subcommand_exits(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(sys, "argv", ["dbxdec"])
