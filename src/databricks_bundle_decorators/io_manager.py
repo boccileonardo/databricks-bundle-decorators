@@ -10,13 +10,13 @@ Users implement concrete IoManagers and attach them to tasks via the
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
 @dataclass
 class OutputContext:
-    """Context provided to :meth:`IoManager.store` when persisting a task's return value."""
+    """Context provided to :meth:`IoManager.write` when persisting a task's return value."""
 
     job_name: str
     task_key: str
@@ -25,19 +25,28 @@ class OutputContext:
 
 @dataclass
 class InputContext:
-    """Context provided to :meth:`IoManager.load` when retrieving upstream output."""
+    """Context provided to :meth:`IoManager.read` when retrieving upstream output.
+
+    Attributes
+    ----------
+    expected_type : type | None
+        The type annotation of the downstream task's parameter, if available.
+        IoManagers can use this to return the appropriate type (e.g.
+        ``polars.LazyFrame`` vs ``polars.DataFrame``).
+    """
 
     job_name: str
     task_key: str
     upstream_task_key: str
     run_id: str
+    expected_type: type | None = field(default=None, repr=False)
 
 
 class IoManager(ABC):
     """Base class for managing data transfer between tasks.
 
     Each ``@task`` can optionally declare an ``IoManager`` that controls how
-    its return value is stored and how downstream tasks load that data.
+    its return value is persisted and how downstream tasks read that data.
 
     Example
     -------
@@ -46,23 +55,26 @@ class IoManager(ABC):
         import polars as pl
         from databricks_bundle_decorators import IoManager, OutputContext, InputContext
 
-        class AdlsParquetIoManager(IoManager):
-            def __init__(self, storage_account: str, container: str, base_path: str = "data"):
-                self.root = f"abfss://{container}@{storage_account}.dfs.core.windows.net/{base_path}"
+        class DeltaIoManager(IoManager):
+            def __init__(self, catalog: str, schema: str):
+                self.catalog = catalog
+                self.schema = schema
 
-            def store(self, context: OutputContext, obj: Any) -> None:
-                obj.write_parquet(f"{self.root}/{context.task_key}.parquet")
+            def write(self, context: OutputContext, obj: Any) -> None:
+                table = f"{self.catalog}.{self.schema}.{context.task_key}"
+                obj.write_delta(table, mode="overwrite")
 
-            def load(self, context: InputContext) -> Any:
-                return pl.read_parquet(f"{self.root}/{context.upstream_task_key}.parquet")
+            def read(self, context: InputContext) -> Any:
+                table = f"{self.catalog}.{self.schema}.{context.upstream_task_key}"
+                return pl.read_delta(table)
     """
 
     @abstractmethod
-    def store(self, context: OutputContext, obj: Any) -> None:
+    def write(self, context: OutputContext, obj: Any) -> None:
         """Persist the return value of a task."""
         ...
 
     @abstractmethod
-    def load(self, context: InputContext) -> Any:
-        """Load the output of an upstream task for use downstream."""
+    def read(self, context: InputContext) -> Any:
+        """Read the output of an upstream task for use downstream."""
         ...

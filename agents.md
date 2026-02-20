@@ -26,7 +26,7 @@ uv run prek run --all-files
 
 1. **Deploy time** (`databricks bundle deploy`): Python files are imported, decorators register metadata into global registries (`_TASK_REGISTRY`, `_JOB_REGISTRY`, `_CLUSTER_REGISTRY` in `registry.py`). `codegen.py` reads the registries and produces `databricks.bundles.jobs.Job` dataclass instances. No task business logic runs.
 
-2. **Runtime** (on Databricks cluster): The `dbxdec-run` entry point (`runtime.py`) is invoked per-task. It discovers pipelines via entry points, looks up the task in the registry, calls `IoManager.load()` for upstream data, executes the task function, and calls `IoManager.store()` for the return value.
+2. **Runtime** (on Databricks cluster): The `dbxdec-run` entry point (`runtime.py`) is invoked per-task. It discovers pipelines via entry points, looks up the task in the registry, calls `IoManager.read()` for upstream data, executes the task function, and calls `IoManager.write()` for the return value.
 
 ### DAG Construction (TaskFlow Pattern)
 
@@ -60,7 +60,7 @@ This design is intentional — decorators run at import time in a single-threade
 
 ### IoManager
 
-The **producer** declares the IoManager via `@task(io_manager=...)`. The framework calls `store()` after the producer runs and `load()` before the consumer runs. Consumers don't need to know about storage — they receive plain Python objects as function arguments.
+The **producer** declares the IoManager via `@task(io_manager=...)`. The framework calls `write()` after the producer runs and `read()` before the consumer runs. Consumers don't need to know about storage — they receive plain Python objects as function arguments.
 
 ### Public API
 

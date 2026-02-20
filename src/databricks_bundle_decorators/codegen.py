@@ -48,7 +48,7 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
                 "__run_id__": "{{job.run_id}}",
             }
 
-            # Upstream edge info so the runtime can invoke IoManager.load()
+            # Upstream edge info so the runtime can invoke IoManager.read()
             edges = job_meta.dag_edges.get(task_key, {})
             for param_name, upstream_task in edges.items():
                 named_params[f"__upstream__{param_name}"] = upstream_task

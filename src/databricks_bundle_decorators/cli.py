@@ -123,98 +123,32 @@ _EXAMPLE_PIPELINE = '''\
 Shows the TaskFlow pattern:
 - ``@job_cluster`` for shared cluster configuration
 - ``@task`` with dependencies (pass a task result to another task)
-- ``IoManager`` for DataFrame persistence between tasks
+- Built-in ``PolarsParquetIoManager`` for DataFrame persistence between tasks
 - ``params`` for job-level parameter access
-"""
+Requires the cloud extra, e.g.::
 
-from typing import Any
+    uv add databricks-bundle-decorators[azure]   # adlfs + fsspec + polars
+    uv add databricks-bundle-decorators[aws]     # s3fs + fsspec + polars
+    uv add databricks-bundle-decorators[gcp]     # gcsfs + fsspec + polars"""
 
 import polars as pl
 
 from databricks_bundle_decorators import (
-    IoManager,
-    InputContext,
-    OutputContext,
     job,
     job_cluster,
     params,
     task,
 )
+from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
 
 # ---------------------------------------------------------------------------
-# IoManager -- persist DataFrames as Parquet on Azure Data Lake Storage Gen2
+# IoManager – persist DataFrames as Parquet (works with any cloud or local path)
 # ---------------------------------------------------------------------------
 
-
-class AdlsParquetIoManager(IoManager):
-    """Read/write Polars DataFrames as Parquet files on ADLS Gen2.
-
-    Polars natively supports ``abfss://`` paths via ``storage_options``.
-    Use ``dbutils.secrets.get()`` to retrieve the storage access key
-    at runtime on Databricks.
-
-    Parameters
-    ----------
-    storage_account:
-        Azure storage account name.
-    container:
-        Blob container / filesystem name.
-    base_path:
-        Folder prefix inside the container (e.g. ``"staging"``).
-    storage_options:
-        Dict forwarded to ``polars.write_parquet`` /
-        ``polars.read_parquet`` -- must contain ``account_name``
-        and ``account_key``.
-    """
-
-    def __init__(
-        self,
-        storage_account: str,
-        container: str,
-        base_path: str = "data",
-        *,
-        storage_options: dict[str, str] | None = None,
-    ) -> None:
-        self.root = (
-            f"abfss://{container}@{storage_account}.dfs.core.windows.net/{base_path}"
-        )
-        self.storage_options = storage_options or {
-            "account_name": storage_account,
-            "account_key": self._get_access_key(storage_account),
-        }
-
-    @staticmethod
-    def _get_access_key(storage_account: str) -> str:
-        """Retrieve the ADLS access key from Databricks secrets."""
-        from pyspark.dbutils import DBUtils
-        from pyspark.sql import SparkSession
-
-        spark = SparkSession.builder.getOrCreate()
-        dbutils = DBUtils(spark)
-        return dbutils.secrets.get(
-            scope="KeyVault_Scope", key=f"{storage_account}-access-key"
-        )
-
-    def _uri(self, task_key: str) -> str:
-        return f"{self.root}/{task_key}.parquet"
-
-    def store(self, context: OutputContext, obj: Any) -> None:
-        uri = self._uri(context.task_key)
-        obj.write_parquet(uri, storage_options=self.storage_options)
-        print(f"[IoManager] Wrote {len(obj)} rows -> {uri}")
-
-    def load(self, context: InputContext) -> Any:
-        uri = self._uri(context.upstream_task_key)
-        print(f"[IoManager] Reading from {uri}")
-        return pl.read_parquet(uri, storage_options=self.storage_options)
-
-
-staging_io = AdlsParquetIoManager(
-    storage_account="mystorageaccount",
-    container="datalake",
-    base_path="staging",
-    # Optionally pass storage_options explicitly:
+staging_io = PolarsParquetIoManager(
+    base_path="abfss://datalake@mystorageaccount.dfs.core.windows.net/staging",
+    # Pass credentials via storage_options:
     # storage_options={"account_name": "...", "account_key": "..."},
 )
 
@@ -242,7 +176,7 @@ default_cluster = job_cluster(
 )
 def example_job():
     @task(io_manager=staging_io)
-    def extract():
+    def extract() -> pl.DataFrame:
         """Fetch data from a remote API and return a DataFrame."""
         import requests
 
@@ -252,20 +186,20 @@ def example_job():
         return pl.DataFrame(response.json())
 
     @task(io_manager=staging_io)
-    def transform(raw_df):
+    def transform(raw_df: pl.DataFrame) -> pl.DataFrame:
         """Apply filtering/transformations to the raw data."""
         limit = int(params["limit"])
         return raw_df.head(limit)
 
     @task
-    def load(clean_df):
+    def summarize(clean_df: pl.DataFrame) -> None:
         """Final consumer – print the result (replace with your own logic)."""
         print(f"Loaded {len(clean_df)} rows:")
         print(clean_df)
 
     raw = extract()
     clean = transform(raw)
-    load(clean)
+    summarize(clean)
 '''
 
 

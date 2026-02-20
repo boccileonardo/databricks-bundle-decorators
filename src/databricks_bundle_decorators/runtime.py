@@ -13,6 +13,7 @@ Databricks invokes the ``dbxdec-run`` console-script, which calls
 import argparse
 import os
 import sys
+import typing
 from typing import Any
 
 from databricks_bundle_decorators.context import _populate_params
@@ -66,7 +67,13 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
         print(f"Available: {list(_TASK_REGISTRY.keys())}", file=sys.stderr)
         sys.exit(1)
 
-    # ---- resolve upstream data via IoManager.load() ----------------------
+    # ---- resolve type hints for the current task's parameters ------------
+    try:
+        type_hints = typing.get_type_hints(task_meta.fn)
+    except Exception:  # noqa: BLE001 – graceful fallback
+        type_hints = {}
+
+    # ---- resolve upstream data via IoManager.read() ----------------------
     kwargs: dict[str, Any] = {}
     for param_name, upstream_task_key in upstream_map.items():
         upstream_qualified = f"{job_name}.{upstream_task_key}"
@@ -79,8 +86,9 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 task_key=task_key,
                 upstream_task_key=upstream_task_key,
                 run_id=run_id,
+                expected_type=type_hints.get(param_name),
             )
-            kwargs[param_name] = upstream_meta.io_manager.load(context)
+            kwargs[param_name] = upstream_meta.io_manager.read(context)
         else:
             print(
                 f"Warning: upstream task '{upstream_task_key}' has no IoManager – "
@@ -97,14 +105,14 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
     finally:
         _tv._current_task_key = None
 
-    # ---- persist output via IoManager.store() ----------------------------
+    # ---- persist output via IoManager.write() ----------------------------
     if result is not None and task_meta.io_manager:
         context = OutputContext(
             job_name=job_name,
             task_key=task_key,
             run_id=run_id,
         )
-        task_meta.io_manager.store(context, result)
+        task_meta.io_manager.write(context, result)
     elif result is not None and not task_meta.io_manager:
         print(
             f"Warning: task '{task_key}' returned a value but has no IoManager – "
