@@ -51,7 +51,7 @@ small_cluster = job_cluster(
 @job(
     tags={"source": "github", "type": "api"},
     params={"url": "https://api.github.com/events", "limit": "10"},
-    cluster="small_cluster",
+    cluster=small_cluster,
 )
 def example_pydab_job():
     @task(io_manager=staging_io)

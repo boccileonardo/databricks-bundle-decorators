@@ -52,10 +52,10 @@ def _mock_polars(monkeypatch: pytest.MonkeyPatch):
     mock_pl = _make_mock_polars()
     monkeypatch.setitem(sys.modules, "polars", mock_pl)
     # Reset call tracking between tests
-    mock_pl.DataFrame.write_parquet.reset_mock()  # type: ignore[union-attr]
-    mock_pl.LazyFrame.sink_parquet.reset_mock()  # type: ignore[union-attr]
-    mock_pl.read_parquet.reset_mock()  # type: ignore[union-attr]
-    mock_pl.scan_parquet.reset_mock()  # type: ignore[union-attr]
+    mock_pl.DataFrame.write_parquet.reset_mock()
+    mock_pl.LazyFrame.sink_parquet.reset_mock()
+    mock_pl.read_parquet.reset_mock()
+    mock_pl.scan_parquet.reset_mock()
     yield mock_pl
 
 

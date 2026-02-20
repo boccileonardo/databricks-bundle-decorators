@@ -81,6 +81,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
             upstream_task_key
         )
         if upstream_meta and upstream_meta.io_manager:
+            upstream_meta.io_manager._ensure_setup()
             context = InputContext(
                 job_name=job_name,
                 task_key=task_key,
@@ -107,6 +108,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
 
     # ---- persist output via IoManager.write() ----------------------------
     if result is not None and task_meta.io_manager:
+        task_meta.io_manager._ensure_setup()
         context = OutputContext(
             job_name=job_name,
             task_key=task_key,

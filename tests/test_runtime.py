@@ -110,3 +110,91 @@ class TestRunTask:
         run_task("consumer", {"__job_name__": "j", "__task_key__": "consumer"})
 
         assert _local_task_values["producer"]["row_count"] == 42
+
+    def test_io_manager_setup_called_before_write(self):
+        """IoManager.setup() is called once before write()."""
+        call_log: list[str] = []
+
+        class _SetupIo(IoManager):
+            def setup(self) -> None:
+                call_log.append("setup")
+
+            def write(self, context: OutputContext, obj: Any) -> None:
+                call_log.append("write")
+
+            def read(self, context: InputContext) -> Any:
+                return None
+
+        io = _SetupIo()
+        _TASK_REGISTRY["t"] = TaskMeta(fn=lambda: "data", task_key="t", io_manager=io)
+
+        run_task("t", {"__job_name__": "j", "__task_key__": "t"})
+
+        assert call_log == ["setup", "write"]
+
+    def test_io_manager_setup_called_before_read(self):
+        """IoManager.setup() is called once before read()."""
+        call_log: list[str] = []
+
+        class _SetupIo(IoManager):
+            def setup(self) -> None:
+                call_log.append("setup")
+
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                call_log.append("read")
+                return "upstream_data"
+
+        io = _SetupIo()
+        _TASK_REGISTRY["j.upstream"] = TaskMeta(
+            fn=lambda: None, task_key="upstream", io_manager=io
+        )
+        _TASK_REGISTRY["j.downstream"] = TaskMeta(fn=lambda x: x, task_key="downstream")
+
+        run_task(
+            "downstream",
+            {
+                "__job_name__": "j",
+                "__task_key__": "downstream",
+                "__upstream__x": "upstream",
+            },
+        )
+
+        assert call_log == ["setup", "read"]
+
+    def test_io_manager_setup_called_only_once(self):
+        """setup() is idempotent — called at most once per IoManager instance."""
+        setup_count = 0
+
+        class _CountingIo(IoManager):
+            def setup(self) -> None:
+                nonlocal setup_count
+                setup_count += 1
+
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                return "data"
+
+        io = _CountingIo()
+
+        # Producer and consumer share the same IoManager instance.
+        _TASK_REGISTRY["j.a"] = TaskMeta(fn=lambda: "val", task_key="a", io_manager=io)
+        _TASK_REGISTRY["j.b"] = TaskMeta(fn=lambda x: x, task_key="b")
+
+        # write via producer
+        run_task("a", {"__job_name__": "j", "__task_key__": "a"})
+        # read via consumer
+        run_task(
+            "b",
+            {
+                "__job_name__": "j",
+                "__task_key__": "b",
+                "__upstream__x": "a",
+            },
+        )
+
+        assert setup_count == 1

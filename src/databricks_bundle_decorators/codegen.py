@@ -7,7 +7,6 @@ serialises into the bundle configuration.
 """
 
 from databricks_bundle_decorators.registry import (
-    _CLUSTER_REGISTRY,
     _JOB_REGISTRY,
     _TASK_REGISTRY,
 )
@@ -67,7 +66,7 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
             task_obj = Task(
                 task_key=task_key,
                 depends_on=depends_on,
-                job_cluster_key=job_meta.cluster,
+                job_cluster_key=job_meta.cluster.name if job_meta.cluster else None,
                 python_wheel_task=PythonWheelTask(
                     package_name=package_name,
                     entry_point="dbxdec-run",
@@ -80,12 +79,11 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
 
         # ----- job clusters -----------------------------------------------
         job_clusters: list[JobCluster] = []
-        if job_meta.cluster and job_meta.cluster in _CLUSTER_REGISTRY:
-            cluster_meta = _CLUSTER_REGISTRY[job_meta.cluster]
+        if job_meta.cluster is not None:
             job_clusters.append(
                 JobCluster(
-                    job_cluster_key=cluster_meta.name,
-                    new_cluster=ClusterSpec.from_dict(cluster_meta.spec),  # type: ignore[arg-type]  # typed as ClusterSpecDict
+                    job_cluster_key=job_meta.cluster.name,
+                    new_cluster=ClusterSpec.from_dict(job_meta.cluster.spec),  # type: ignore[arg-type]  # typed as ClusterSpecDict
                 )
             )
 

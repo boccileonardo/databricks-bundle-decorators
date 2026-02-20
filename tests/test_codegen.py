@@ -12,13 +12,13 @@ class TestGenerateResources:
     def test_sdk_config_forwarded_to_job(self):
         """Job-level sdk_config fields appear on the generated Job."""
 
-        job_cluster(
+        test_cluster = job_cluster(
             name="test_cluster", spark_version="13.2.x-scala2.12", num_workers=1
         )
 
         @job(
             tags={"env": "test"},
-            cluster="test_cluster",
+            cluster=test_cluster,
             max_concurrent_runs=3,
             description="A test job",
         )
