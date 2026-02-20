@@ -83,7 +83,7 @@ class PolarsParquetIoManager(IoManager):
         - :class:`~polars.DataFrame` → ``write_parquet``
         - :class:`~polars.LazyFrame` → ``sink_parquet``
         """
-        import polars as pl  # lazy import – polars is optional
+        import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional
 
         uri = self._uri(context.task_key)
 
@@ -106,7 +106,7 @@ class PolarsParquetIoManager(IoManager):
         (lazy :class:`~polars.LazyFrame`) — this is the default for
         unannotated parameters.
         """
-        import polars as pl  # lazy import – polars is optional
+        import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional
 
         uri = self._uri(context.upstream_task_key)
 
