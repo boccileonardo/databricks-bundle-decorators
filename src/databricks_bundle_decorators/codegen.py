@@ -6,6 +6,10 @@ and produces ``Job`` dataclass instances that the Databricks CLI
 serialises into the bundle configuration.
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 from databricks_bundle_decorators.registry import (
     _JOB_REGISTRY,
     _TASK_REGISTRY,
@@ -31,6 +35,8 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
         Task,
         TaskDependency,
     )
+
+    _default_libraries = [Library(whl="dist/*.whl")]
 
     jobs: dict[str, Job] = {}
 
@@ -63,18 +69,30 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
             task_meta = _TASK_REGISTRY.get(qualified_key)
             task_sdk_config = task_meta.sdk_config if task_meta else {}
 
-            task_obj = Task(
-                task_key=task_key,
-                depends_on=depends_on,
-                job_cluster_key=job_meta.cluster.name if job_meta.cluster else None,
-                python_wheel_task=PythonWheelTask(
+            # Use job-level libraries if explicitly set, else default wheel
+            if job_meta.libraries is not None:
+                task_libraries = (
+                    job_meta.libraries if len(job_meta.libraries) > 0 else None
+                )
+            else:
+                task_libraries = _default_libraries
+
+            # Build the Task kwargs – only include libraries when present
+            task_kwargs: dict[str, Any] = {
+                "task_key": task_key,
+                "depends_on": depends_on,
+                "job_cluster_key": job_meta.cluster.name if job_meta.cluster else None,
+                "python_wheel_task": PythonWheelTask(
                     package_name=package_name,
                     entry_point="dbxdec-run",
                     named_parameters=named_params,  # type: ignore[arg-type]  # SDK Variable wrappers
                 ),
-                libraries=[Library(whl="dist/*.whl")],
                 **task_sdk_config,
-            )
+            }
+            if task_libraries is not None:
+                task_kwargs["libraries"] = task_libraries
+
+            task_obj = Task(**task_kwargs)  # dynamic kwargs
             tasks.append(task_obj)
 
         # ----- job clusters -----------------------------------------------

@@ -40,6 +40,7 @@ class JobMeta:
     name: str
     params: dict[str, str] = field(default_factory=dict)
     cluster: ClusterMeta | None = None
+    libraries: list[Any] | None = None
     # task_key -> list of upstream task_keys
     dag: dict[str, list[str]] = field(default_factory=dict)
     # task_key -> {param_name: upstream_task_key}

@@ -51,3 +51,54 @@ class TestGenerateResources:
         assert len(tasks) == 1
         assert tasks[0].max_retries == 2
         assert tasks[0].timeout_seconds == 600
+
+    def test_default_libraries_dist_whl(self):
+        """When libraries is not set, tasks get the default dist/*.whl."""
+
+        @job
+        def my_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(package_name="test_pkg")
+        task_obj = resources["my_job"].tasks[0]
+        assert len(task_obj.libraries) == 1
+        assert task_obj.libraries[0].whl == "dist/*.whl"
+
+    def test_libraries_empty_for_docker(self):
+        """Setting libraries=[] removes all task libraries (Docker deployment)."""
+
+        @job(libraries=[])
+        def docker_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(package_name="test_pkg")
+        task_obj = resources["docker_job"].tasks[0]
+        # No libraries attached — the SDK defaults unset libraries to []
+        assert task_obj.libraries == [] or task_obj.libraries is None
+
+    def test_libraries_custom_forwarded(self):
+        """Custom Library objects are forwarded to generated tasks."""
+        from databricks.bundles.jobs import Library, PythonPyPiLibrary
+
+        custom_lib = Library(pypi=PythonPyPiLibrary(package="requests"))
+
+        @job(libraries=[custom_lib])
+        def custom_lib_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(package_name="test_pkg")
+        task_obj = resources["custom_lib_job"].tasks[0]
+        assert len(task_obj.libraries) == 1
+        assert task_obj.libraries[0].pypi.package == "requests"

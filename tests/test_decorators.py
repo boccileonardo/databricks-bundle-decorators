@@ -278,6 +278,46 @@ class TestSdkConfigForwarding:
 
         assert _JOB_REGISTRY["plain_job"].sdk_config == {}
 
+    def test_libraries_default_none(self):
+        """Libraries default to None (codegen uses dist/*.whl fallback)."""
+
+        @job
+        def lib_default_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        assert _JOB_REGISTRY["lib_default_job"].libraries is None
+
+    def test_libraries_empty_list(self):
+        """Setting libraries=[] suppresses the default wheel library (Docker images)."""
+
+        @job(libraries=[])
+        def docker_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        assert _JOB_REGISTRY["docker_job"].libraries == []
+
+    def test_libraries_custom_list(self):
+        """Custom library objects are stored as-is."""
+        sentinel = object()
+
+        @job(libraries=[sentinel])
+        def custom_lib_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        assert _JOB_REGISTRY["custom_lib_job"].libraries == [sentinel]
+
     def test_job_convenience_and_sdk_combined(self):
         """Managed params and SDK params coexist."""
         test_cluster = job_cluster(

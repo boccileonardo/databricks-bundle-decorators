@@ -7,10 +7,9 @@ Decorator-based framework for defining Databricks jobs and tasks as Python code.
 Writing Databricks jobs in raw YAML is tedious and disconnects task logic from orchestration configuration. databricks-bundle-decorators lets you express both in Python:
 
 - **Airflow TaskFlow-inspired pattern** — define `@task` functions inside a `@job` body; dependencies are captured automatically from call arguments.
-- **IoManager pattern** — large data (DataFrames, datasets) flows through permanent storage (Delta tables, Unity Catalog volumes) — multi-hop architecture.
+- **IoManager pattern** — large data (DataFrames, datasets) flows between tasks through external storage automatically.
 - **Explicit task values** — small scalars (`str`, `int`, `float`, `bool`) can be passed between tasks via `set_task_value` / `get_task_value`, like Airflow XComs.
-- **Deploy-time codegen** — `databricks bundle deploy` imports your Python files, discovers all `@job`/`@task` definitions, and generates Databricks Job configurations.
-- **Runtime dispatch** — each task executes on a cluster via the `dbxdec-run` entry point, which loads upstream data through IoManagers and calls your task function.
+- **Pure Python** — write your jobs and tasks as decorated functions, run `databricks bundle deploy`, and the framework generates all Databricks Job configurations for you.
 
 ## Installation
 
