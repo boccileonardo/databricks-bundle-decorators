@@ -1,7 +1,11 @@
-"""Cloud-agnostic Polars Parquet IoManager.
+"""Cloud-agnostic Polars JSON (NDJSON) IoManager.
 
-Reads and writes Polars DataFrames as Parquet files to any storage backend
-supported by Polars (local, ``abfss://``, ``s3://``, ``gs://``, …).
+Reads and writes Polars DataFrames as newline-delimited JSON (NDJSON) files
+to any storage backend supported by Polars (local, ``abfss://``, ``s3://``,
+``gs://``, …).
+
+NDJSON is used instead of standard JSON because it supports streaming
+reads/writes and cloud storage via ``storage_options``.
 
 Requires the ``polars`` optional dependency::
 
@@ -20,23 +24,29 @@ from databricks_bundle_decorators.io_manager import (
 )
 
 
-class PolarsParquetIoManager(IoManager):
-    """Persist Polars DataFrames as Parquet on any cloud or local filesystem.
+class PolarsJsonIoManager(IoManager):
+    """Persist Polars DataFrames as NDJSON on any cloud or local filesystem.
 
-    Automatically dispatches based on return-value type:
+    Uses newline-delimited JSON (NDJSON) format, the standard for
+    streaming data pipelines.  This is the only JSON variant in Polars
+    that supports cloud storage (``storage_options``) and lazy I/O.
 
-    - `polars.DataFrame` → ``write_parquet`` / ``read_parquet``
-    - `polars.LazyFrame` → ``sink_parquet`` / ``scan_parquet``
+    Write dispatch:
+
+    - `polars.LazyFrame` → ``sink_ndjson``
+    - `polars.DataFrame` → ``.lazy()`` then ``sink_ndjson``
+      (routed through the lazy path for cloud storage support)
 
     On the **read** side, the downstream task's parameter type annotation
     determines the method used.  Annotate the parameter as
-    ``pl.DataFrame`` to receive an eager read; otherwise (including
-    unannotated parameters) a lazy ``scan_parquet`` is used by default.
+    ``pl.DataFrame`` to receive an eager ``read_ndjson``; otherwise
+    (including unannotated parameters) a lazy ``scan_ndjson`` is used
+    by default.
 
     Parameters
     ----------
     base_path : str
-        Root URI for Parquet files.  Can be a local path (``/tmp/data``),
+        Root URI for NDJSON files.  Can be a local path (``/tmp/data``),
         an Azure URI (``abfss://container@account.dfs.core.windows.net/path``),
         an S3 URI (``s3://bucket/prefix``), a GCS URI (``gs://bucket/prefix``),
         or any other URI scheme that Polars supports.
@@ -45,9 +55,7 @@ class PolarsParquetIoManager(IoManager):
         Can be a plain dict, a **callable** that returns a dict (resolved
         lazily on each read/write), or ``None``.
 
-        Use a callable to defer credential lookup to runtime — this is
-        essential when credentials come from ``get_dbutils`` which is only
-        available on a Databricks cluster, not during local bundle deploy::
+        Use a callable to defer credential lookup to runtime::
 
             from databricks_bundle_decorators import get_dbutils
 
@@ -56,45 +64,37 @@ class PolarsParquetIoManager(IoManager):
                 key = dbutils.secrets.get(scope="kv", key="storage-key")
                 return {"account_name": "myaccount", "account_key": key}
 
-            io = PolarsParquetIoManager(
+            io = PolarsJsonIoManager(
                 base_path="abfss://lake@myaccount.dfs.core.windows.net/staging",
                 storage_options=_storage_options,
             )
 
-        A plain dict also works when credentials are known statically::
-
-            {"account_name": "...", "account_key": "..."}   # Azure
-            {"aws_access_key_id": "...", "aws_secret_access_key": "..."}  # S3
-
     write_options : dict[str, Any] | None
         Extra keyword arguments forwarded to the Polars write call
-        (``write_parquet`` / ``sink_parquet``).  For example::
-
-            {"compression": "zstd", "row_group_size": 100_000}
+        (``sink_ndjson``).
 
         Do **not** include ``storage_options`` here — use the
         dedicated parameter instead.
     read_options : dict[str, Any] | None
         Extra keyword arguments forwarded to the Polars read call
-        (``read_parquet`` / ``scan_parquet``).
+        (``read_ndjson`` / ``scan_ndjson``).
 
     Example
     -------
     ::
 
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+        from databricks_bundle_decorators.io_managers import PolarsJsonIoManager
 
-        io = PolarsParquetIoManager(
+        io = PolarsJsonIoManager(
             base_path="abfss://lake@myaccount.dfs.core.windows.net/staging",
-            storage_options={"account_name": "myaccount", "account_key": "***"},
         )
 
         @task(io_manager=io)
-        def extract() -> pl.LazyFrame:    # sink_parquet on write
+        def extract() -> pl.LazyFrame:    # sink_ndjson on write
             return pl.LazyFrame({"a": [1, 2]})
 
         @task
-        def transform(df: pl.LazyFrame):  # scan_parquet on read
+        def transform(df: pl.LazyFrame):  # scan_ndjson on read
             print(df.collect())
     """
 
@@ -118,38 +118,41 @@ class PolarsParquetIoManager(IoManager):
         return self._storage_options
 
     def _uri(self, key: str) -> str:
-        return f"{self.base_path}/{key}.parquet"
+        return f"{self.base_path}/{key}.ndjson"
 
     def write(self, context: OutputContext, obj: Any) -> None:
-        """Write a Polars DataFrame or LazyFrame to Parquet.
+        """Write a Polars DataFrame or LazyFrame as NDJSON.
 
-        - `polars.DataFrame` → ``write_parquet``
-        - `polars.LazyFrame` → ``sink_parquet``
+        Both types are routed through ``sink_ndjson`` for consistent
+        cloud storage support via ``storage_options``.
+
+        - `polars.LazyFrame` → ``sink_ndjson``
+        - `polars.DataFrame` → ``.lazy()`` then ``sink_ndjson``
         """
         import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional
 
         uri = self._uri(context.task_key)
 
         if isinstance(obj, pl.LazyFrame):
-            obj.sink_parquet(
+            obj.sink_ndjson(
                 uri, storage_options=self.storage_options, **self._write_options
             )
         elif isinstance(obj, pl.DataFrame):
-            obj.write_parquet(
+            obj.lazy().sink_ndjson(
                 uri, storage_options=self.storage_options, **self._write_options
             )
         else:
             msg = (
-                f"PolarsParquetIoManager.write() expects a polars.DataFrame or "
+                f"PolarsJsonIoManager.write() expects a polars.DataFrame or "
                 f"polars.LazyFrame, got {type(obj).__name__}"
             )
             raise TypeError(msg)
 
     def read(self, context: InputContext) -> Any:
-        """Read Parquet as a LazyFrame or DataFrame.
+        """Read NDJSON as a LazyFrame or DataFrame.
 
         If the downstream parameter is annotated as `polars.DataFrame`,
-        returns ``read_parquet`` (eager).  Otherwise returns ``scan_parquet``
+        returns ``read_ndjson`` (eager).  Otherwise returns ``scan_ndjson``
         (lazy `polars.LazyFrame`) — this is the default for
         unannotated parameters.
         """
@@ -158,9 +161,9 @@ class PolarsParquetIoManager(IoManager):
         uri = self._uri(context.upstream_task_key)
 
         if context.expected_type is pl.DataFrame:
-            return pl.read_parquet(
+            return pl.read_ndjson(
                 uri, storage_options=self.storage_options, **self._read_options
             )
-        return pl.scan_parquet(
+        return pl.scan_ndjson(
             uri, storage_options=self.storage_options, **self._read_options
         )
