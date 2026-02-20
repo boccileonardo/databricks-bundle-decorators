@@ -96,7 +96,7 @@ uv run pytest tests/ -v
 
 ### Automated (recommended)
 
-Go to **Actions → "Release: Bump Version & Publish" → Run workflow**, pick `patch`/`minor`/`major`, and click **Run**. The workflow bumps the version in `pyproject.toml`, commits, tags, builds, creates a GitHub Release, and publishes to PyPI.
+Run the [release automation action](https://github.com/boccileonardo/databricks-bundle-decorators/actions/workflows/release.yaml), pick `patch`/`minor`/`major`. The workflow bumps the version in `pyproject.toml`, commits, tags, builds, creates a GitHub Release, and publishes to PyPI.
 
 ### Manual
 
