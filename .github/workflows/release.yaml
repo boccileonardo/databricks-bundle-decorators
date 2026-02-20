@@ -38,7 +38,8 @@ jobs:
       - name: Bump version
         id: version
         run: |
-          new=$(uv version --bump ${{ inputs.bump }})
+          uv version --bump ${{ inputs.bump }}
+          new=$(uv version --short)
           echo "new=$new" >> "$GITHUB_OUTPUT"
           echo "tag=v${new}" >> "$GITHUB_OUTPUT"
           echo "## Version bump → $new (${{ inputs.bump }})" >> "$GITHUB_STEP_SUMMARY"
