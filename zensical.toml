@@ -57,7 +57,7 @@ features = [
 media = "(prefers-color-scheme: light)"
 scheme = "default"
 primary = "indigo"
-accent = "amber"
+accent = "green"
 toggle.icon = "lucide/sun"
 toggle.name = "Switch to dark mode"
 
