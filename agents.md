@@ -121,7 +121,7 @@ When adding new public symbols, add them to both the imports and `__all__` in `_
 
 Docs are built with **Zensical** (compatible with MkDocs config) and **mkdocstrings** and deployed to GitHub Pages.
 
-- Config: `mkdocs.yml` (Zensical reads MkDocs config natively)
+- Config: `zensical.toml`
 - Content: `docs/` directory (Markdown pages + API reference stubs)
 - API docs are auto-generated from docstrings via `mkdocstrings[python]`
 - Cross-references in docstrings use backtick style (`` `ClassName` ``, `` `function_name` ``) resolved by mkdocstrings autorefs
