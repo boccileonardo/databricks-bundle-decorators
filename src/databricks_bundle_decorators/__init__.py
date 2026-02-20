@@ -14,10 +14,14 @@ Data management:
 Task values (small scalars):
     ``set_task_value``, ``get_task_value``
 
+Databricks utilities:
+    ``get_dbutils``
+
 Job parameters:
     ``params``
 """
 
+from databricks_bundle_decorators.context import get_dbutils as get_dbutils
 from databricks_bundle_decorators.context import params as params
 from databricks_bundle_decorators.decorators import job as job
 from databricks_bundle_decorators.decorators import job_cluster as job_cluster
@@ -53,5 +57,6 @@ __all__ = [
     "TaskConfig",
     "set_task_value",
     "get_task_value",
+    "get_dbutils",
     "params",
 ]
