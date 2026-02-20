@@ -1,9 +1,9 @@
 """Explicit task-value helpers (small scalar data, akin to Airflow XComs).
 
 For *large* data (DataFrames, datasets, etc.) use an
-:class:`~databricks_bundle_decorators.io_manager.IoManager` instead.  Task values are limited to
+`IoManager` instead.  Task values are limited to
 small primitive payloads (~48 KB) and must be opted-in explicitly by calling
-:func:`set_task_value` inside a ``@task`` function.
+`set_task_value` inside a ``@task`` function.
 """
 
 from typing import Any
@@ -57,9 +57,9 @@ def get_task_value(task_key: str, key: str) -> Any:
     Parameters
     ----------
     task_key:
-        The ``task_key`` of the upstream task that called :func:`set_task_value`.
+        The ``task_key`` of the upstream task that called `set_task_value`.
     key:
-        The key passed to :func:`set_task_value`.
+        The key passed to `set_task_value`.
     """
     try:
         from pyspark.dbutils import DBUtils  # type: ignore[import-untyped]
