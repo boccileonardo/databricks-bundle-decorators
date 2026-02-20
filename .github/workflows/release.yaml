@@ -35,30 +35,13 @@ jobs:
       - name: Set up Python
         run: uv python install
 
-      - name: Install dependencies
-        run: uv sync
-
-      - name: Compute new version
+      - name: Bump version
         id: version
         run: |
-          current=$(grep -m1 'version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
-          IFS='.' read -r major minor patch <<< "$current"
-
-          case "${{ inputs.bump }}" in
-            major) major=$((major + 1)); minor=0; patch=0 ;;
-            minor) minor=$((minor + 1)); patch=0 ;;
-            patch) patch=$((patch + 1)) ;;
-          esac
-
-          new="${major}.${minor}.${patch}"
-          echo "current=$current" >> "$GITHUB_OUTPUT"
+          new=$(uv version --bump ${{ inputs.bump }})
           echo "new=$new" >> "$GITHUB_OUTPUT"
           echo "tag=v${new}" >> "$GITHUB_OUTPUT"
-          echo "## Version bump: $current → $new (${{ inputs.bump }})" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Bump version in pyproject.toml
-        run: |
-          sed -i "s/^version = \"${{ steps.version.outputs.current }}\"/version = \"${{ steps.version.outputs.new }}\"/" pyproject.toml
+          echo "## Version bump → $new (${{ inputs.bump }})" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit, tag, and push
         if: ${{ !inputs.dry_run }}
@@ -87,7 +70,7 @@ jobs:
         if: ${{ inputs.dry_run }}
         run: |
           echo "## Dry Run Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Version: ${{ steps.version.outputs.current }} → ${{ steps.version.outputs.new }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Version: ${{ steps.version.outputs.new }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Tag: ${{ steps.version.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Artifacts:" >> "$GITHUB_STEP_SUMMARY"
           ls -la dist/ >> "$GITHUB_STEP_SUMMARY"

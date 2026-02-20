@@ -4,7 +4,7 @@ repos:
   rev: v6.0.0
   hooks:
   - id: no-commit-to-branch
-    args: [ -b, main, -p, '^(?!feat/|fix/|bump/|docs/|test/).*' ]
+    args: [ -b, main, -p, '^(?!feat/|fix/|bump/|docs/|test/|refactor/).*' ]
   - id: check-merge-conflict
   - id: check-json
   - id: check-yaml

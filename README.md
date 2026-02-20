@@ -92,6 +92,16 @@ uv sync
 uv run pytest tests/ -v
 ```
 
-## Release
+## Releasing
 
-See [RELEASING.md](RELEASING.md) for the PyPI release process.
+### Automated (recommended)
+
+Go to **Actions → "Release: Bump Version & Publish" → Run workflow**, pick `patch`/`minor`/`major`, and click **Run**. The workflow bumps the version in `pyproject.toml`, commits, tags, builds, creates a GitHub Release, and publishes to PyPI.
+
+### Manual
+
+```bash
+uv version --bump patch  # or minor, major
+git commit -am "release: v$(uv version)" && git push
+# Create a GitHub Release with the new tag → publish.yaml pushes to PyPI
+```
