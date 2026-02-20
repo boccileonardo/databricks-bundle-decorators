@@ -162,6 +162,18 @@ calls `.execute()` automatically:
 └──────────────────────────────┘     └────────────────────────┘
 ```
 
+## Limitations
+
+This framework is designed for teams deploying jobs with [Databricks Asset Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/). It generates bundle resources from decorated Python code — it is not a general-purpose orchestrator.
+
+Key rules to keep in mind:
+
+- **The `@job` body is for wiring only.** It runs once at import time (during `databricks bundle deploy`), not on a cluster. Do not put data-fetching, transformations, or any real logic in it — only `@task` definitions and calls. The framework warns if a task call receives a non-`TaskProxy` argument.
+- **No conditional or dynamic DAGs.** `if`/`else` or loops in the `@job` body are evaluated at import time, not at runtime. Put conditional logic inside a `@task` function.
+- **Task arguments are symbolic.** Inside a `@job` body, `@task` calls return `TaskProxy` placeholders, not real data. Passing a literal value to a task call has no effect at runtime.
+- **IoManager belongs to the producer.** Attach `io_manager=` to the task that *produces* data. Downstream tasks receive the data as plain function arguments — they don't declare an IoManager.
+- **Names must be unique.** Job names are unique across the project; task names are unique within a job. Duplicates raise `DuplicateResourceError` at import time.
+
 !!! info "Under the hood"
 
     For details on codegen, runtime dispatch, the registry, and
