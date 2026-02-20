@@ -36,10 +36,10 @@ class TestTaskDecorator:
         from typing import Any
 
         class FakeIo(IoManager):
-            def store(self, context: OutputContext, obj: Any) -> None:
+            def write(self, context: OutputContext, obj: Any) -> None:
                 pass
 
-            def load(self, context: InputContext) -> Any:
+            def read(self, context: InputContext) -> Any:
                 return None
 
         fake = FakeIo()

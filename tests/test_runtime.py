@@ -26,10 +26,10 @@ class _MemoryIo(IoManager):
 
     storage: dict[str, Any] = {}
 
-    def store(self, context: OutputContext, obj: Any) -> None:
+    def write(self, context: OutputContext, obj: Any) -> None:
         self.storage[context.task_key] = obj
 
-    def load(self, context: InputContext) -> Any:
+    def read(self, context: InputContext) -> Any:
         return self.storage.get(context.upstream_task_key)
 
 

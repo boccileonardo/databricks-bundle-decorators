@@ -24,7 +24,7 @@ uv add databricks-bundle-decorators
 
 ```bash
 uv init my-pipeline && cd my-pipeline
-uv add databricks-bundle-decorators
+uv add databricks-bundle-decorators[azure]  # or [aws], [gcp], [polars]
 uv run dbxdec init
 ```
 
@@ -44,28 +44,15 @@ uv run dbxdec init
 # src/my_pipeline/pipelines/github_events.py
 
 import polars as pl
-import requests
 
-from databricks_bundle_decorators import IoManager, InputContext, OutputContext, params
-from databricks_bundle_decorators import job, job_cluster, task
-from databricks_bundle_decorators.task_values import set_task_value
+from databricks_bundle_decorators import job, job_cluster, params, task, set_task_value
+from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
 
-class DeltaIoManager(IoManager):
-    def __init__(self, catalog: str, schema: str):
-        self.catalog = catalog
-        self.schema = schema
-
-    def store(self, context: OutputContext, obj) -> None:
-        table = f"{self.catalog}.{self.schema}.{context.task_key}"
-        obj.write_delta(table, mode="overwrite")
-
-    def load(self, context: InputContext):
-        table = f"{self.catalog}.{self.schema}.{context.upstream_task_key}"
-        return pl.read_delta(table)
-
-
-staging_io = DeltaIoManager(catalog="main", schema="staging")
+staging_io = PolarsParquetIoManager(
+    base_path="abfss://datalake@mystorageaccount.dfs.core.windows.net/staging",
+    # storage_options={"account_name": "...", "account_key": "..."},
+)
 
 small_cluster = job_cluster(
     name="small_cluster",
@@ -84,6 +71,8 @@ small_cluster = job_cluster(
 def github_events():
     @task(io_manager=staging_io)
     def extract():
+        import requests
+
         r = requests.get(params["url"])
         df = pl.DataFrame(r.json())
         set_task_value("row_count", len(df))
@@ -127,9 +116,9 @@ your_pipeline.py
 When the job is triggered (on schedule or manually), Databricks launches each task as a separate `python_wheel_task` on a cluster. For each task:
 
 1. The `dbxdec-run` entry point starts.
-2. It looks up the upstream tasks and calls `IoManager.load()` to fetch their outputs.
+2. It looks up the upstream tasks and calls `IoManager.read()` to fetch their outputs.
 3. It injects the loaded data as arguments to your task function and calls it.
-4. If the task has an IoManager, it calls `IoManager.store()` to persist the return value for downstream tasks.
+4. If the task has an IoManager, it calls `IoManager.write()` to persist the return value for downstream tasks.
 
 ```
 Databricks triggers job
@@ -137,9 +126,9 @@ Databricks triggers job
        ▼
   dbxdec-run entry point
        ▼
-  IoManager.load() upstream data → call your task function
+  IoManager.read() upstream data → call your task function
        ▼
-  IoManager.store() return value for downstream tasks
+  IoManager.write() return value for downstream tasks
 ```
 
 ## API Reference
@@ -160,7 +149,7 @@ def my_task_with_io():
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `io_manager` | `IoManager \| None` | Controls how the return value is persisted and loaded by downstream tasks. |
+| `io_manager` | `IoManager \| None` | Controls how the return value is persisted and read by downstream tasks. |
 | `**kwargs` | `TaskConfig` | SDK-native `Task` fields (`max_retries`, `timeout_seconds`, `retry_on_timeout`, etc.). |
 
 ### `@job`
@@ -222,29 +211,42 @@ Abstract base class for inter-task data persistence. The **producing task** decl
 ```
 IoManager (attached to producer)
 ┌──────────┐
-│  store()  │ ← called after producer runs, persists return value
-│  load()   │ ← called before consumer runs, injects data as argument
+│  write()  │ ← called after producer runs, persists return value
+│  read()   │ ← called before consumer runs, injects data as argument
 └──────────┘
 ```
 
 ```python
 from databricks_bundle_decorators import IoManager, OutputContext, InputContext
 
-class DeltaIoManager(IoManager):
+class MyCustomIoManager(IoManager):
     def __init__(self, catalog: str, schema: str):
         self.catalog = catalog
         self.schema = schema
 
-    def store(self, context: OutputContext, obj) -> None:
+    def write(self, context: OutputContext, obj) -> None:
         table = f"{self.catalog}.{self.schema}.{context.task_key}"
         obj.write_delta(table, mode="overwrite")
 
-    def load(self, context: InputContext):
+    def read(self, context: InputContext):
         table = f"{self.catalog}.{self.schema}.{context.upstream_task_key}"
         return pl.read_delta(table)
 ```
 
 Downstream tasks are **storage-agnostic** — they receive plain Python objects and don't need to know the storage backend.
+
+#### Built-in IoManagers
+
+| IoManager | Backend | Import |
+|-----------|---------|--------|
+| `PolarsParquetIoManager` | Polars Parquet on any cloud or local filesystem | `from databricks_bundle_decorators.io_managers import PolarsParquetIoManager` |
+
+`PolarsParquetIoManager` dispatches automatically based on type:
+
+| Return / parameter type | Write method | Read method |
+|------------------------|-------------|------------|
+| `pl.DataFrame` | `write_parquet` | `read_parquet` |
+| `pl.LazyFrame` (or unannotated) | `sink_parquet` | `scan_parquet` |
 
 #### IoManager vs Task Values
 
@@ -255,9 +257,11 @@ Downstream tasks are **storage-agnostic** — they receive plain Python objects 
 
 #### Context Objects
 
-**`OutputContext`** (passed to `store()`): `job_name`, `task_key`, `run_id`
+**`OutputContext`** (passed to `write()`): `job_name`, `task_key`, `run_id`
 
-**`InputContext`** (passed to `load()`): `job_name`, `task_key`, `upstream_task_key`, `run_id`
+**`InputContext`** (passed to `read()`): `job_name`, `task_key`, `upstream_task_key`, `run_id`, `expected_type`
+
+The `expected_type` field contains the downstream parameter's type annotation (e.g. `polars.DataFrame` or `polars.LazyFrame`), allowing IoManagers to return the appropriate type. It is `None` when no annotation is present.
 
 ### Task Values
 

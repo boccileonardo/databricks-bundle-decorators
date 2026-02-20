@@ -18,6 +18,24 @@ classifiers = [
 dependencies = [
   "databricks-bundles>=0.275",
 ]
+optional-dependencies.aws = [
+  "fsspec",
+  "polars",
+  "s3fs",
+]
+optional-dependencies.azure = [
+  "adlfs",
+  "fsspec",
+  "polars",
+]
+optional-dependencies.gcp = [
+  "fsspec",
+  "gcsfs",
+  "polars",
+]
+optional-dependencies.polars = [
+  "polars",
+]
 scripts.dbxdec = "databricks_bundle_decorators.cli:main"
 scripts.dbxdec-run = "databricks_bundle_decorators.runtime:main"
 
