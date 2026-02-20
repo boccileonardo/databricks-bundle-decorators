@@ -1,43 +1,25 @@
 # How It Works
 
-## Deploy time (`databricks bundle deploy`)
+## Deploy and run
 
-When you run `databricks bundle deploy`, the Databricks CLI imports your Python pipeline files. This triggers the `@job` and `@task` decorators, which **register** your tasks and their dependencies into an internal DAG — no task code actually runs yet. The framework then generates Databricks Job definitions from this DAG and uploads them to your workspace.
+1. **You write Python** — define `@task` functions inside a `@job` body, wire them by passing return values as arguments.
+2. **`databricks bundle deploy`** — the framework reads your decorators and generates Databricks Job definitions. No task code runs at this stage.
+3. **Databricks runs your job** — each task executes on a cluster. The framework loads upstream data, calls your function, and persists the result for downstream tasks.
 
 ```
-your_pipeline.py
+You write Python
   @job / @task / job_cluster()
        ▼
-  Framework builds task DAG from decorator metadata
+databricks bundle deploy
+  → Job definitions created in workspace
        ▼
-  codegen → Databricks Job definition
-       ▼
-  databricks bundle deploy → Job created in workspace
+Job runs on Databricks
+  → Each task: load upstream data → call your function → save output
 ```
 
-## Runtime (when the job runs on Databricks)
+## Task dependencies
 
-When the job is triggered (on schedule or manually), Databricks launches each task as a separate `python_wheel_task` on a cluster. For each task:
-
-1. The `dbxdec-run` entry point starts.
-2. It looks up the upstream tasks and calls `IoManager.read()` to fetch their outputs.
-3. It injects the loaded data as arguments to your task function and calls it.
-4. If the task has an IoManager, it calls `IoManager.write()` to persist the return value for downstream tasks.
-
-```
-Databricks triggers job
-  → launches each task as python_wheel_task
-       ▼
-  dbxdec-run entry point
-       ▼
-  IoManager.read() upstream data → call your task function
-       ▼
-  IoManager.write() return value for downstream tasks
-```
-
-## DAG Construction (TaskFlow Pattern)
-
-Inside a `@job` body, `@task` calls return `TaskProxy` objects (not real data). When a proxy is passed as an argument to another `@task` call, the framework records the dependency edge. The DAG is built by normal Python execution — no AST parsing.
+Inside a `@job` body, calling a `@task` function doesn't execute it immediately — it records it. Passing the return value of one task call to another captures the dependency:
 
 ```python
 @job
@@ -47,11 +29,15 @@ def my_job():
     @task
     def b(data): ...
 
-    x = a()       # Returns TaskProxy("a")
-    b(x)          # Records: b depends on a, param "data" maps to task "a"
+    x = a()     # records task "a"
+    b(x)        # records task "b", depends on "a"
 ```
 
-## IoManager vs Task Values
+At deploy time this produces a two-task job where `b` runs after `a`. At runtime, the framework passes the output of `a` as the `data` argument to `b`.
+
+## Passing data between tasks
+
+There are two mechanisms, suited to different data sizes:
 
 | Mechanism | Use case | Size limit |
 |-----------|----------|------------|
@@ -123,7 +109,111 @@ calls `.execute()` automatically:
 | `"ignore"` | Silently skip if the target already exists |
 | *(merge builder)* | Return a `TableMerger` / `DeltaMergeBuilder` — `mode` is ignored |
 
-## Packaging Model
+## Delta Write Modes & Merge
+
+All Delta IoManagers accept a `mode` parameter that controls how data
+is written.  The default is `"error"`, which raises if the table
+already exists — this prevents accidental overwrites.  Set it
+explicitly when you want a different behaviour:
+
+```python
+from databricks_bundle_decorators.io_managers import PolarsDeltaIoManager
+
+io_append = PolarsDeltaIoManager(
+    base_path="abfss://lake@account.dfs.core.windows.net/staging",
+    mode="overwrite",   # or "append", "ignore"
+)
+```
+
+For **merge / upsert** operations, return a merge builder from your
+task instead of a DataFrame.  The IoManager detects the type and
+calls `.execute()` automatically:
+
+=== "Polars (deltalake)"
+
+    ```python
+    from deltalake import DeltaTable
+
+    @task(io_manager=io)
+    def upsert(new_data: pl.DataFrame):
+        dt = DeltaTable(io._uri("upsert"))
+        return (
+            dt.merge(
+                source=new_data,
+                predicate="t.id = s.id",
+                source_alias="s",
+                target_alias="t",
+            )
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )  # returns TableMerger — IoManager calls .execute()
+    ```
+
+=== "PySpark (delta-spark)"
+
+    ```python
+    from delta.tables import DeltaTable
+
+    @task(io_manager=io)
+    def upsert(new_data):
+        spark = SparkSession.getActiveSession()
+        dt = DeltaTable.forPath(spark, io._uri("upsert"))
+        return (
+            dt.alias("t")
+            .merge(new_data.alias("s"), "t.id = s.id")
+            .whenMatchedUpdateAll()
+            .whenNotMatchedInsertAll()
+        )  # returns DeltaMergeBuilder — IoManager calls .execute()
+    ```
+
+| Mode | Behaviour |
+|------|-----------|
+| `"error"` (default) | Raise if the target already exists |
+| `"overwrite"` | Replace the target completely |
+| `"append"` | Add rows to the existing target |
+| `"ignore"` | Silently skip if the target already exists |
+| *(merge builder)* | Return a `TableMerger` / `DeltaMergeBuilder` — `mode` is ignored |
+
+### IoManager (large data)
+
+Attach an `IoManager` to a task to persist its return value to external storage. Downstream tasks receive the data as a plain function argument:
+
+```python
+from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+io = PolarsParquetIoManager(base_path="abfss://lake@account.dfs.core.windows.net/staging")
+
+@job(cluster=my_cluster)
+def pipeline():
+    @task(io_manager=io)
+    def extract() -> pl.DataFrame:
+        return pl.DataFrame({"x": [1, 2, 3]})
+
+    @task
+    def transform(df: pl.DataFrame):
+        print(df.head())
+
+    data = extract()    # output saved by IoManager
+    transform(data)     # input loaded by upstream's IoManager
+```
+
+### Task values (small scalars)
+
+For lightweight metadata (row counts, status flags), use task values:
+
+```python
+from databricks_bundle_decorators import set_task_value, get_task_value
+
+@task
+def produce():
+    set_task_value("row_count", 42)
+
+@task
+def consume():
+    count = get_task_value("produce", "row_count")
+```
+
+## Packaging model
 
 ```
 ┌──────────────────────────────┐     ┌────────────────────────┐
@@ -131,10 +221,13 @@ calls `.execute()` automatically:
 │  (library, PyPI)             │◄────│                        │
 │                              │     │  pyproject.toml        │
 │  @task, @job, job_cluster()  │     │  src/my_pipeline/      │
-│  IoManager ABC               │     │    pipelines/           │
-│  codegen, runtime, discovery │     │  resources/__init__.py  │
-│  dbxdec CLI                  │     │  databricks.yaml        │
+│  IoManager ABC               │     │    pipelines/          │
+│  dbxdec CLI                  │     │  resources/__init__.py │
+│                              │     │  databricks.yaml       │
 └──────────────────────────────┘     └────────────────────────┘
 ```
 
-The framework is a reusable library. Pipeline repos contain only business logic — upgrading is a single dependency bump.
+!!! info "Under the hood"
+
+    For details on codegen, runtime dispatch, the registry, and
+    pipeline discovery, see [Internals](internals/index.md).

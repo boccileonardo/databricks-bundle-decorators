@@ -4,7 +4,7 @@ Public, user-facing API. For framework internals (codegen, runtime, registry), s
 
 | Module | Description |
 |--------|-------------|
-| [Decorators](decorators.md) | `@task`, `@job`, `job_cluster()`, `TaskProxy` |
+| [Decorators](decorators.md) | `@task`, `@job`, `job_cluster()` |
 | [IoManager](io-manager.md) | `IoManager` ABC, `OutputContext`, `InputContext` |
 | [Built-in IoManagers](io-managers.md) | Polars (Parquet, Delta, JSON, CSV), Spark (Delta, Parquet), Unity Catalog (Tables, Volumes) |
 | [Task Values](task-values.md) | `set_task_value`, `get_task_value` |
