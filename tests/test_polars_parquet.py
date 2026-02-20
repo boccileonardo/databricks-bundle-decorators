@@ -94,6 +94,35 @@ class TestConstruction:
         io = PolarsParquetIoManager(base_path="/data")
         assert io.storage_options is None
 
+    def test_storage_options_as_dict(self):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        opts = {"account_name": "sa", "account_key": "secret"}
+        io = PolarsParquetIoManager(base_path="/data", storage_options=opts)
+        assert io.storage_options == opts
+
+    def test_storage_options_as_callable(self):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        opts = {"account_name": "sa", "account_key": "secret"}
+        io = PolarsParquetIoManager(base_path="/data", storage_options=lambda: opts)
+        assert io.storage_options == opts
+
+    def test_storage_options_callable_invoked_each_time(self):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        call_count = 0
+
+        def _factory() -> dict[str, str]:
+            nonlocal call_count
+            call_count += 1
+            return {"key": str(call_count)}
+
+        io = PolarsParquetIoManager(base_path="/data", storage_options=_factory)
+        assert io.storage_options == {"key": "1"}
+        assert io.storage_options == {"key": "2"}
+        assert call_count == 2
+
     def test_uri_generation(self):
         from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
@@ -158,6 +187,20 @@ class TestWrite:
         df.write_parquet.assert_called_once_with(
             "/data/t.parquet",
             storage_options=None,
+        )
+
+    def test_write_callable_storage_options(self, _mock_polars):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        opts = {"account_name": "sa", "account_key": "secret"}
+        io = PolarsParquetIoManager(base_path="/data", storage_options=lambda: opts)
+        df = _mock_polars.DataFrame()
+
+        io.write(_output_ctx("t"), df)
+
+        df.write_parquet.assert_called_once_with(
+            "/data/t.parquet",
+            storage_options=opts,
         )
 
 
@@ -227,4 +270,17 @@ class TestRead:
         _mock_polars.scan_parquet.assert_called_once_with(
             "/data/t.parquet",
             storage_options=None,
+        )
+
+    def test_read_callable_storage_options(self, _mock_polars):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        opts = {"account_name": "sa", "account_key": "secret"}
+        io = PolarsParquetIoManager(base_path="/data", storage_options=lambda: opts)
+
+        io.read(_input_ctx("t"))
+
+        _mock_polars.scan_parquet.assert_called_once_with(
+            "/data/t.parquet",
+            storage_options=opts,
         )

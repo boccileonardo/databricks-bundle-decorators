@@ -124,6 +124,7 @@ Shows the TaskFlow pattern:
 - ``@job_cluster`` for shared cluster configuration
 - ``@task`` with dependencies (pass a task result to another task)
 - Built-in ``PolarsParquetIoManager`` for DataFrame persistence between tasks
+- ``get_dbutils`` for accessing secrets at runtime
 - ``params`` for job-level parameter access
 Requires the cloud extra, e.g.::
 
@@ -134,6 +135,7 @@ Requires the cloud extra, e.g.::
 import polars as pl
 
 from databricks_bundle_decorators import (
+    get_dbutils,
     job,
     job_cluster,
     params,
@@ -146,10 +148,20 @@ from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 # IoManager – persist DataFrames as Parquet (works with any cloud or local path)
 # ---------------------------------------------------------------------------
 
+def _storage_options() -> dict[str, str]:
+    """Resolve cloud storage credentials lazily at runtime.
+
+    This callable is invoked by the IoManager only when reading/writing
+    data on a Databricks cluster \u2013 never during local ``bundle deploy``.
+    """
+    dbutils = get_dbutils()
+    key = dbutils.secrets.get(scope="my_scope", key="storage-access-key")
+    return {"account_name": "mystorageaccount", "account_key": key}
+
+
 staging_io = PolarsParquetIoManager(
     base_path="abfss://datalake@mystorageaccount.dfs.core.windows.net/staging",
-    # Pass credentials via storage_options:
-    # storage_options={"account_name": "...", "account_key": "..."},
+    storage_options=_storage_options,
 )
 
 
@@ -172,7 +184,7 @@ default_cluster = job_cluster(
 
 @job(
     params={"source_url": "https://api.github.com/events", "limit": "10"},
-    cluster="default_cluster",
+    cluster=default_cluster,
 )
 def example_job():
     @task(io_manager=staging_io)

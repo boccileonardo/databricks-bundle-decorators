@@ -10,6 +10,7 @@ Requires the ``polars`` optional dependency::
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from databricks_bundle_decorators.io_manager import (
@@ -39,9 +40,28 @@ class PolarsParquetIoManager(IoManager):
         an Azure URI (``abfss://container@account.dfs.core.windows.net/path``),
         an S3 URI (``s3://bucket/prefix``), a GCS URI (``gs://bucket/prefix``),
         or any other URI scheme that Polars supports.
-    storage_options : dict[str, str] | None
+    storage_options : dict[str, str] | Callable[[], dict[str, str]] | None
         Credentials / options forwarded to Polars I/O calls.
-        For example::
+        Can be a plain dict, a **callable** that returns a dict (resolved
+        lazily on each read/write), or ``None``.
+
+        Use a callable to defer credential lookup to runtime — this is
+        essential when credentials come from ``get_dbutils`` which is only
+        available on a Databricks cluster, not during local bundle deploy::
+
+            from databricks_bundle_decorators import get_dbutils
+
+            def _storage_options() -> dict[str, str]:
+                dbutils = get_dbutils()
+                key = dbutils.secrets.get(scope="kv", key="storage-key")
+                return {"account_name": "myaccount", "account_key": key}
+
+            io = PolarsParquetIoManager(
+                base_path="abfss://lake@myaccount.dfs.core.windows.net/staging",
+                storage_options=_storage_options,
+            )
+
+        A plain dict also works when credentials are known statically::
 
             {"account_name": "...", "account_key": "..."}   # Azure
             {"aws_access_key_id": "...", "aws_secret_access_key": "..."}  # S3
@@ -69,10 +89,17 @@ class PolarsParquetIoManager(IoManager):
     def __init__(
         self,
         base_path: str,
-        storage_options: dict[str, str] | None = None,
+        storage_options: dict[str, str] | Callable[[], dict[str, str]] | None = None,
     ) -> None:
         self.base_path = base_path.rstrip("/")
-        self.storage_options = storage_options
+        self._storage_options = storage_options
+
+    @property
+    def storage_options(self) -> dict[str, str] | None:
+        """Resolve *storage_options*, calling it first if it is a callable."""
+        if callable(self._storage_options):
+            return self._storage_options()
+        return self._storage_options
 
     def _uri(self, key: str) -> str:
         return f"{self.base_path}/{key}.parquet"
