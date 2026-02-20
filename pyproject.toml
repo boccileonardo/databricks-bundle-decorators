@@ -4,7 +4,7 @@ requires = [ "uv-build>=0.10.4,<0.11" ]
 
 [project]
 name = "databricks-bundle-decorators"
-version = "0.2.1"
+version = "0.3.0"
 description = "Decorator-based framework for defining Databricks jobs and tasks as Python code."
 readme = "README.md"
 authors = [ { name = "boccileonardo", email = "leonardobocci99@hotmail.com" } ]
