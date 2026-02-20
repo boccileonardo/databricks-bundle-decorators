@@ -19,10 +19,10 @@ uv run dbxdec init
 
 | File | Purpose |
 |------|---------|
-| `resources/__init__.py` | `load_resources()` entry point for `databricks bundle deploy` |
-| `src/<package>/pipelines/__init__.py` | Auto-discovery module that imports all pipeline files |
+| `resources/__init__.py` | Tells `databricks bundle deploy` about your jobs |
+| `src/<package>/pipelines/__init__.py` | Auto-imports all pipeline files in the directory |
 | `src/<package>/pipelines/example.py` | Starter pipeline with `@task`, `@job`, `job_cluster()` |
-| `databricks.yaml` | Databricks Asset Bundle configuration (if not present) |
+| `databricks.yaml` | Databricks Asset Bundle configuration |
 | `pyproject.toml` | Updated with the pipeline package entry point |
 
 ## 2. Define your pipeline
@@ -77,19 +77,32 @@ databricks bundle deploy --target dev
 
 ## Pipeline Discovery
 
-Pipeline packages register via [entry points](https://packaging.python.org/en/latest/specifications/entry-points/):
+`dbxdec init` sets up pipeline discovery automatically. If you need to
+configure it manually (e.g. in an existing project), see
+[Discovery](internals/discovery.md) in the Internals section.
 
-```toml
-[project.entry-points."databricks_bundle_decorators.pipelines"]
-my_pipeline = "my_pipeline.pipelines"
+## Incremental adoption
+
+You don't have to migrate everything at once. The Databricks CLI merges
+resources from all sources — YAML-defined jobs and decorator-defined
+jobs coexist in the same bundle. Keep your existing
+`resources.jobs` in `databricks.yaml` and add new jobs with decorators:
+
+```yaml
+# databricks.yaml
+resources:
+  jobs:
+    existing_job:
+      name: existing_job
+      tasks:
+        - task_key: ingest
+          spark_python_task:
+            python_file: src/etl/ingest.py
+
+python:
+  venv_path: .venv
+  resources:
+    - 'resources:load_resources'  # new decorator-defined jobs
 ```
 
-The referenced module should import all modules containing `@task`/`@job` decorators:
-
-```python
-# my_pipeline/pipelines/__init__.py
-import importlib, pkgutil
-
-for _loader, _name, _is_pkg in pkgutil.walk_packages(__path__):
-    importlib.import_module(f"{__name__}.{_name}")
-```
+Both sets of jobs deploy together. Migrate at your own pace.
