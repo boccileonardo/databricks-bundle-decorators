@@ -1,11 +1,11 @@
 """Runtime entry-point for ``python_wheel_task`` execution on Databricks.
 
 Databricks invokes the ``dbxdec-run`` console-script, which calls
-:func:`main`.  The function:
+`main`.  The function:
 
 1. Imports the user's pipeline definitions (populating the registries).
 2. Parses CLI ``--key=value`` arguments produced by ``named_parameters``.
-3. Resolves upstream data via :class:`~databricks_bundle_decorators.io_manager.IoManager`.
+3. Resolves upstream data via `IoManager`.
 4. Executes the task function.
 5. Persists the return value via the task's ``IoManager`` (if configured).
 """

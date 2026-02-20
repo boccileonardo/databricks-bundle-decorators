@@ -7,7 +7,7 @@ are used to dispatch task execution.
 
 DAG construction uses the **TaskFlow** pattern: inside a ``@job`` body,
 ``@task``-decorated functions are called normally.  Each call returns a
-lightweight :class:`TaskProxy` that records the dependency edge when
+lightweight `TaskProxy` that records the dependency edge when
 passed as an argument to another task call.  No AST parsing is needed.
 """
 
@@ -90,7 +90,7 @@ def task(
 
     When used **inside** a ``@job`` body, the decorated function is
     registered under a qualified key (``job_name.task_name``) and
-    calling it returns a :class:`TaskProxy` that wires up the DAG.
+    calling it returns a `TaskProxy` that wires up the DAG.
 
     When used **outside** a ``@job`` body (e.g. at module level), the
     function is registered under its short name for use in tests or
@@ -99,15 +99,15 @@ def task(
     Parameters
     ----------
     io_manager:
-        An :class:`~databricks_bundle_decorators.io_manager.IoManager` instance that controls
+        An `IoManager` instance that controls
         how the task's return value is persisted and loaded by downstream
         tasks.  When ``None``, no automatic data transfer takes place (use
-        :func:`~databricks_bundle_decorators.task_values.set_task_value` for small scalars).
+        `set_task_value` for small scalars).
     **kwargs:
         Any additional SDK-native ``Task`` fields (e.g. ``max_retries``,
         ``timeout_seconds``, ``retry_on_timeout``).  These are forwarded
         directly to the ``databricks.bundles.jobs.Task`` constructor at
-        deploy time.  See :class:`~databricks_bundle_decorators.sdk_types.TaskConfig`
+        deploy time.  See `TaskConfig`
         for the full list of supported fields.
     """
 
@@ -185,7 +185,7 @@ def job_cluster(
     at deploy time.  The cluster is ephemeral: created when the job
     starts and torn down when it finishes.
 
-    Returns a :class:`ClusterMeta` object that should be passed directly
+    Returns a `ClusterMeta` object that should be passed directly
     to ``@job(cluster=…)``.
 
     Parameters
@@ -195,7 +195,7 @@ def job_cluster(
     **kwargs:
         Any SDK-native ``ClusterSpec`` fields (e.g. ``spark_version``,
         ``node_type_id``, ``num_workers``).  See
-        :class:`~databricks_bundle_decorators.sdk_types.ClusterConfig` for the
+        `ClusterConfig` for the
         full list of supported fields.
     """
     meta = ClusterMeta(name=name, spec=dict(kwargs))
@@ -243,7 +243,7 @@ def job(
 
     The function body is **executed once at decoration time** (not at
     Databricks runtime).  Inside the body, ``@task``-decorated functions
-    are defined and called.  Each call returns a :class:`TaskProxy`;
+    are defined and called.  Each call returns a `TaskProxy`;
     passing a proxy to another task call records the dependency edge.
 
     Parameters
@@ -252,14 +252,14 @@ def job(
         Default values for job-level parameters.  Accessible inside task
         functions via ``from databricks_bundle_decorators import params``.
     cluster:
-        A :class:`ClusterMeta` returned by :func:`job_cluster` to use
+        A `ClusterMeta` returned by `job_cluster()` to use
         as the shared job cluster for all tasks.
     **kwargs:
         Any SDK-native ``Job`` fields (e.g. ``tags``, ``schedule``,
         ``max_concurrent_runs``, ``timeout_seconds``,
         ``email_notifications``).  These are forwarded directly to the
         ``databricks.bundles.jobs.Job`` constructor at deploy time.
-        See :class:`~databricks_bundle_decorators.sdk_types.JobConfig` for the
+        See `JobConfig` for the
         full list of supported fields.
     """
 

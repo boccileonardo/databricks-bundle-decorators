@@ -50,6 +50,10 @@ dev = [
   "ty>=0.0.17",
   "vulture>=2.14",
 ]
+docs = [
+  "mkdocstrings[python]>=1.0.3",
+  "zensical>=0.0.23",
+]
 
 [tool.uv]
 sources.databricks-bundle-decorators = { workspace = true }

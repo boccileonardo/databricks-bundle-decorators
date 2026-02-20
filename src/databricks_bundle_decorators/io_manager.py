@@ -16,7 +16,7 @@ from typing import Any
 
 @dataclass
 class OutputContext:
-    """Context provided to :meth:`IoManager.write` when persisting a task's return value."""
+    """Context provided to `IoManager.write` when persisting a task's return value."""
 
     job_name: str
     task_key: str
@@ -25,7 +25,7 @@ class OutputContext:
 
 @dataclass
 class InputContext:
-    """Context provided to :meth:`IoManager.read` when retrieving upstream output.
+    """Context provided to `IoManager.read` when retrieving upstream output.
 
     Attributes
     ----------
@@ -55,10 +55,10 @@ class IoManager(ABC):
     without a Databricks runtime — do **not** import modules like
     ``pyspark.dbutils`` or establish cluster-only connections there.
 
-    Instead, override :meth:`setup` for any initialisation that requires a
+    Instead, override `setup` for any initialisation that requires a
     Databricks runtime environment.  The framework calls ``setup()``
     exactly once per instance, at **runtime only**, before the first
-    :meth:`read` or :meth:`write` invocation.
+    `read` or `write` invocation.
 
     Example
     -------
@@ -87,7 +87,7 @@ class IoManager(ABC):
     """
 
     _is_setup: bool = False
-    """Internal flag to ensure :meth:`setup` is called at most once."""
+    """Internal flag to ensure `setup` is called at most once."""
 
     def setup(self) -> None:
         """Initialise runtime-only resources.
@@ -95,14 +95,14 @@ class IoManager(ABC):
         Override this method to perform initialisation that requires a
         Databricks cluster environment (Spark sessions, DBUtils, secret
         scopes, etc.).  The framework guarantees this is called **once**
-        before the first :meth:`read` or :meth:`write`, and **only at
+        before the first `read` or `write`, and **only at
         runtime** — never during ``databricks bundle deploy``.
 
         The default implementation does nothing.
         """
 
     def _ensure_setup(self) -> None:
-        """Call :meth:`setup` if it has not been called yet."""
+        """Call `setup` if it has not been called yet."""
         if not self._is_setup:
             self.setup()
             self._is_setup = True

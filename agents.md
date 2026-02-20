@@ -92,7 +92,7 @@ When adding new public symbols, add them to both the imports and `__all__` in `_
 
 - Use `` in every source file.
 - Type hints on all function signatures. Use `Any` only when truly unavoidable.
-- Docstrings in Google/NumPy style with RST cross-references (`` :class:`...` ``, `` :func:`...` ``).
+- Docstrings in Google/NumPy style with backtick cross-references for mkdocstrings autorefs (e.g. `` `IoManager` ``, `` `set_task_value` ``). Do **not** use RST roles like `:class:`, `:func:`, `:meth:`, or `:mod:`.
 - Internal/private names start with `_` (e.g., `_TASK_REGISTRY`, `_current_job_name`).
 - SDK pass-through fields use `**kwargs: Unpack[TypedDict]` pattern for IDE autocomplete.
 - No dependencies beyond `databricks-bundles` in production. Dev deps are in `[dependency-groups] dev`.
@@ -116,6 +116,19 @@ When adding new public symbols, add them to both the imports and `__all__` in `_
 1. Define it in the appropriate source module.
 2. Import and re-export in `__init__.py`.
 3. Add to `__all__` in `__init__.py`.
+
+## Documentation
+
+Docs are built with **Zensical** (compatible with MkDocs config) and **mkdocstrings** and deployed to GitHub Pages.
+
+- Config: `mkdocs.yml` (Zensical reads MkDocs config natively)
+- Content: `docs/` directory (Markdown pages + API reference stubs)
+- API docs are auto-generated from docstrings via `mkdocstrings[python]`
+- Cross-references in docstrings use backtick style (`` `ClassName` ``, `` `function_name` ``) resolved by mkdocstrings autorefs
+- Local preview: `uv run zensical serve`
+- Build: `uv run zensical build --clean`
+- Deploy: automatic via `.github/workflows/docs.yml` on push to `main`
+- Docs dependencies are in the `[dependency-groups] docs` group
 
 ## Gotchas
 

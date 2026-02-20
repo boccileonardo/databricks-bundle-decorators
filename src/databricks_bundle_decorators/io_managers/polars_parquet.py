@@ -24,8 +24,8 @@ class PolarsParquetIoManager(IoManager):
 
     Automatically dispatches based on return-value type:
 
-    - :class:`polars.DataFrame` → ``write_parquet`` / ``read_parquet``
-    - :class:`polars.LazyFrame` → ``sink_parquet`` / ``scan_parquet``
+    - `polars.DataFrame` → ``write_parquet`` / ``read_parquet``
+    - `polars.LazyFrame` → ``sink_parquet`` / ``scan_parquet``
 
     On the **read** side, the downstream task's parameter type annotation
     determines the method used.  Annotate the parameter as
@@ -80,8 +80,8 @@ class PolarsParquetIoManager(IoManager):
     def write(self, context: OutputContext, obj: Any) -> None:
         """Write a Polars DataFrame or LazyFrame to Parquet.
 
-        - :class:`~polars.DataFrame` → ``write_parquet``
-        - :class:`~polars.LazyFrame` → ``sink_parquet``
+        - `polars.DataFrame` → ``write_parquet``
+        - `polars.LazyFrame` → ``sink_parquet``
         """
         import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional
 
@@ -101,9 +101,9 @@ class PolarsParquetIoManager(IoManager):
     def read(self, context: InputContext) -> Any:
         """Read Parquet as a LazyFrame or DataFrame.
 
-        If the downstream parameter is annotated as :class:`~polars.DataFrame`,
+        If the downstream parameter is annotated as `polars.DataFrame`,
         returns ``read_parquet`` (eager).  Otherwise returns ``scan_parquet``
-        (lazy :class:`~polars.LazyFrame`) — this is the default for
+        (lazy `polars.LazyFrame`) — this is the default for
         unannotated parameters.
         """
         import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional

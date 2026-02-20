@@ -7,9 +7,9 @@ Referenced from the ``python.resources`` list in ``databricks.yaml``::
       resources:
         - 'resources:load_resources'
 
-The Databricks CLI calls :func:`load_resources` during deployment.  It
+The Databricks CLI calls `load_resources` during deployment.  It
 imports all pipeline definitions (populating the decorator registries)
-and then generates ``Job`` resources via :mod:`databricks_bundle_decorators.codegen`.
+and then generates ``Job`` resources via `databricks_bundle_decorators.codegen`.
 """
 
 from databricks.bundles.core import Bundle, Resources
