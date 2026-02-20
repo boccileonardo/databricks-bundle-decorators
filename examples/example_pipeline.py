@@ -4,6 +4,7 @@ Demonstrates the TaskFlow pattern:
 - ``@job_cluster`` for shared job-cluster configuration
 - ``@task`` defined *inside* the ``@job`` body (inline TaskFlow style)
 - Built-in ``PolarsParquetIoManager`` for DataFrame persistence between tasks
+- ``get_dbutils`` for accessing secrets at runtime
 - Explicit task values via ``set_task_value``
 - ``params`` for job-level parameter access
 - DAG wiring via normal Python call-and-assign
@@ -12,6 +13,7 @@ Demonstrates the TaskFlow pattern:
 import polars as pl
 
 from databricks_bundle_decorators import (
+    get_dbutils,
     job,
     job_cluster,
     params,
@@ -25,10 +27,21 @@ from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 # IoManager – persist DataFrames as Parquet (works with any cloud or local path)
 # ---------------------------------------------------------------------------
 
+
+def _storage_options() -> dict[str, str]:
+    """Resolve cloud storage credentials lazily at runtime.
+
+    This callable is invoked by the IoManager only when reading/writing
+    data on a Databricks cluster — never during local ``bundle deploy``.
+    """
+    dbutils = get_dbutils()
+    key = dbutils.secrets.get(scope="my_scope", key="storage-access-key")
+    return {"account_name": "mystorageaccount", "account_key": key}
+
+
 staging_io = PolarsParquetIoManager(
     base_path="abfss://datalake@mystorageaccount.dfs.core.windows.net/staging",
-    # Pass credentials via storage_options:
-    # storage_options={"account_name": "...", "account_key": "..."},
+    storage_options=_storage_options,
 )
 
 
