@@ -284,3 +284,91 @@ class TestRead:
             "/data/t.parquet",
             storage_options=opts,
         )
+
+
+# ---------------------------------------------------------------------------
+# write_options / read_options passthrough
+# ---------------------------------------------------------------------------
+
+
+class TestWriteOptions:
+    def test_write_options_forwarded_to_write_parquet(self, _mock_polars):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        io = PolarsParquetIoManager(
+            base_path="/data",
+            write_options={"compression": "zstd", "row_group_size": 100_000},
+        )
+        df = _mock_polars.DataFrame()
+
+        io.write(_output_ctx("t"), df)
+
+        df.write_parquet.assert_called_once_with(
+            "/data/t.parquet",
+            storage_options=None,
+            compression="zstd",
+            row_group_size=100_000,
+        )
+
+    def test_write_options_forwarded_to_sink_parquet(self, _mock_polars):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        io = PolarsParquetIoManager(
+            base_path="/data",
+            write_options={"compression": "zstd"},
+        )
+        lf = _mock_polars.LazyFrame()
+
+        io.write(_output_ctx("t"), lf)
+
+        lf.sink_parquet.assert_called_once_with(
+            "/data/t.parquet",
+            storage_options=None,
+            compression="zstd",
+        )
+
+    def test_write_options_default_empty(self, _mock_polars):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        io = PolarsParquetIoManager(base_path="/data")
+        assert io._write_options == {}
+
+
+class TestReadOptions:
+    def test_read_options_forwarded_to_scan_parquet(self, _mock_polars):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        io = PolarsParquetIoManager(
+            base_path="/data",
+            read_options={"n_rows": 100},
+        )
+
+        io.read(_input_ctx("t"))
+
+        _mock_polars.scan_parquet.assert_called_once_with(
+            "/data/t.parquet",
+            storage_options=None,
+            n_rows=100,
+        )
+
+    def test_read_options_forwarded_to_read_parquet(self, _mock_polars):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        io = PolarsParquetIoManager(
+            base_path="/data",
+            read_options={"n_rows": 100},
+        )
+
+        io.read(_input_ctx("t", expected_type=_mock_polars.DataFrame))
+
+        _mock_polars.read_parquet.assert_called_once_with(
+            "/data/t.parquet",
+            storage_options=None,
+            n_rows=100,
+        )
+
+    def test_read_options_default_empty(self, _mock_polars):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        io = PolarsParquetIoManager(base_path="/data")
+        assert io._read_options == {}

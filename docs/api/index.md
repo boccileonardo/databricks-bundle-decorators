@@ -6,7 +6,7 @@ Public, user-facing API. For framework internals (codegen, runtime, registry), s
 |--------|-------------|
 | [Decorators](decorators.md) | `@task`, `@job`, `job_cluster()`, `TaskProxy` |
 | [IoManager](io-manager.md) | `IoManager` ABC, `OutputContext`, `InputContext` |
-| [Built-in IoManagers](io-managers.md) | `PolarsParquetIoManager` |
+| [Built-in IoManagers](io-managers.md) | Polars (Parquet, Delta, JSON, CSV), Spark (Delta, Parquet), Unity Catalog (Tables, Volumes) |
 | [Task Values](task-values.md) | `set_task_value`, `get_task_value` |
 | [Parameters](parameters.md) | `params` dict |
 | [SDK Types](sdk-types.md) | `JobConfig`, `TaskConfig`, `ClusterConfig` TypedDicts |
