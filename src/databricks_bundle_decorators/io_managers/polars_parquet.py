@@ -11,7 +11,7 @@ Requires the ``polars`` optional dependency::
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from databricks_bundle_decorators.io_manager import (
     InputContext,
@@ -114,7 +114,7 @@ class PolarsParquetIoManager(IoManager):
     def storage_options(self) -> dict[str, str] | None:
         """Resolve *storage_options*, calling it first if it is a callable."""
         if callable(self._storage_options):
-            return self._storage_options()
+            return cast(Callable[[], dict[str, str]], self._storage_options)()
         return self._storage_options
 
     def _uri(self, key: str) -> str:

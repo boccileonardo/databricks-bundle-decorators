@@ -14,7 +14,7 @@ Requires PySpark, which is pre-installed on Databricks clusters.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from databricks_bundle_decorators.io_manager import (
     InputContext,
@@ -194,7 +194,7 @@ class SparkDeltaIoManager(_SparkDeltaBase):
     def spark_configs(self) -> dict[str, str] | None:
         """Resolve *spark_configs*, calling it first if it is a callable."""
         if callable(self._spark_configs):
-            return self._spark_configs()
+            return cast(Callable[[], dict[str, str]], self._spark_configs)()
         return self._spark_configs
 
     def setup(self) -> None:
