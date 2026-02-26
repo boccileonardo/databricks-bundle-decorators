@@ -3,7 +3,7 @@
 ## Deploy and run
 
 1. **You write Python** — define `@task` functions inside a `@job` body, wire them by passing return values as arguments.
-2. **`databricks bundle deploy`** — the framework reads your decorators and generates Databricks Job definitions. No task code runs at this stage.
+2. **`databricks bundle deploy`** — the framework imports your pipeline modules and generates Databricks Job definitions. The `@job` body runs at import time to build the DAG, but `@task` business logic does not run at this stage.
 3. **Databricks runs your job** — each task executes on a cluster. The framework loads upstream data, calls your function, and persists the result for downstream tasks.
 
 ```
@@ -173,6 +173,81 @@ Key rules to keep in mind:
 - **Task arguments are symbolic.** Inside a `@job` body, `@task` calls return `TaskProxy` placeholders, not real data. Passing a literal value to a task call has no effect at runtime.
 - **IoManager belongs to the producer.** Attach `io_manager=` to the task that *produces* data. Downstream tasks receive the data as plain function arguments — they don't declare an IoManager.
 - **Names must be unique.** Job names are unique across the project; task names are unique within a job. Duplicates raise `DuplicateResourceError` at import time.
+
+### Dependency wiring is direct-argument only
+
+The framework detects dependencies by inspecting the direct positional and
+keyword arguments of each task call. A `TaskProxy` hidden inside a list,
+dict, or any other container will **not** register a dependency edge:
+
+```python
+@job
+def my_job():
+    @task
+    def a(): ...
+    @task
+    def b(inputs): ...   # inputs is a list
+
+    result = a()
+    b(inputs=[result])   # ✗ — edge NOT captured; result is nested in a list
+```
+
+The correct approach is to use a separate parameter per upstream dependency:
+
+```python
+@job
+def my_job():
+    @task
+    def a(): ...
+    @task
+    def b(a_data): ...
+
+    result = a()
+    b(a_data=result)     # ✓ — direct keyword argument, edge captured
+```
+
+### Keep `@job` bodies free of side effects
+
+The body of a `@job` function runs **at import time** — specifically, when
+`databricks bundle deploy` imports your pipeline module to discover job
+definitions. This means any code you write directly in the job body (outside
+of `@task` definitions) runs during deployment, not when the job executes on
+a cluster.
+
+Code that is safe in a `@job` body:
+
+```python
+@job
+def my_job():
+    @task                # ✓ — defining tasks is fine
+    def extract(): ...
+
+    @task
+    def transform(df): ...
+
+    df = extract()       # ✓ — calling tasks records the DAG, does not execute them
+    transform(df)
+```
+
+Code that will behave unexpectedly:
+
+```python
+@job
+def my_job():
+    print("deploying!")  # ✗ — runs every time the module is imported
+    connect_to_db()      # ✗ — network call at deploy time
+
+    @task
+    def extract(): ...
+
+    extract()
+```
+
+!!! warning "Side effects in `@job` bodies run at deploy time"
+
+    Only task graph construction belongs in a `@job` body. Keep everything
+    else — logging, network calls, file I/O — inside `@task` functions,
+    where it will only run when the job executes on Databricks.
 
 !!! info "Under the hood"
 

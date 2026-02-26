@@ -1,5 +1,6 @@
 """Tests for the runtime task runner."""
 
+import pytest
 from typing import Any
 
 from databricks_bundle_decorators.context import params
@@ -45,7 +46,7 @@ class TestRunTask:
         def my_task():
             call_log.append("executed")
 
-        _TASK_REGISTRY["my_task"] = TaskMeta(fn=my_task, task_key="my_task")
+        _TASK_REGISTRY["j.my_task"] = TaskMeta(fn=my_task, task_key="my_task")
 
         run_task("my_task", {"__job_name__": "j", "__task_key__": "my_task"})
 
@@ -57,7 +58,7 @@ class TestRunTask:
         def my_task():
             captured.update(params)
 
-        _TASK_REGISTRY["my_task"] = TaskMeta(fn=my_task, task_key="my_task")
+        _TASK_REGISTRY["j.my_task"] = TaskMeta(fn=my_task, task_key="my_task")
 
         run_task(
             "my_task",
@@ -75,10 +76,10 @@ class TestRunTask:
         def consumer(df):
             return df
 
-        _TASK_REGISTRY["producer"] = TaskMeta(
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
             fn=producer, task_key="producer", io_manager=io
         )
-        _TASK_REGISTRY["consumer"] = TaskMeta(fn=consumer, task_key="consumer")
+        _TASK_REGISTRY["j.consumer"] = TaskMeta(fn=consumer, task_key="consumer")
 
         # Run the producer
         run_task("producer", {"__job_name__": "j", "__task_key__": "producer"})
@@ -103,8 +104,8 @@ class TestRunTask:
         def consumer():
             return get_task_value("producer", "row_count")
 
-        _TASK_REGISTRY["producer"] = TaskMeta(fn=producer, task_key="producer")
-        _TASK_REGISTRY["consumer"] = TaskMeta(fn=consumer, task_key="consumer")
+        _TASK_REGISTRY["j.producer"] = TaskMeta(fn=producer, task_key="producer")
+        _TASK_REGISTRY["j.consumer"] = TaskMeta(fn=consumer, task_key="consumer")
 
         run_task("producer", {"__job_name__": "j", "__task_key__": "producer"})
         run_task("consumer", {"__job_name__": "j", "__task_key__": "consumer"})
@@ -126,7 +127,7 @@ class TestRunTask:
                 return None
 
         io = _SetupIo()
-        _TASK_REGISTRY["t"] = TaskMeta(fn=lambda: "data", task_key="t", io_manager=io)
+        _TASK_REGISTRY["j.t"] = TaskMeta(fn=lambda: "data", task_key="t", io_manager=io)
 
         run_task("t", {"__job_name__": "j", "__task_key__": "t"})
 
@@ -198,3 +199,33 @@ class TestRunTask:
         )
 
         assert setup_count == 1
+
+
+class TestStrictTaskResolution:
+    """Runtime always requires qualified key; no short-key fallback."""
+
+    def setup_method(self):
+        reset_registries()
+        _MemoryIo.storage = {}
+        _local_task_values.clear()
+
+    def test_qualified_key_is_required(self):
+        """Qualified key resolves correctly in strict mode."""
+        call_log: list[str] = []
+
+        def my_task():
+            call_log.append("ran")
+
+        # Registered under qualified key (as @job would do)
+        _TASK_REGISTRY["myjob.my_task"] = TaskMeta(fn=my_task, task_key="my_task")
+
+        run_task("my_task", {"__job_name__": "myjob", "__task_key__": "my_task"})
+        assert call_log == ["ran"]
+
+    def test_strict_mode_fails_on_short_key_only(self):
+        """A task only in the short-key registry is not found."""
+
+        _TASK_REGISTRY["my_task"] = TaskMeta(fn=lambda: None, task_key="my_task")
+
+        with pytest.raises(RuntimeError, match="not found by qualified key"):
+            run_task("my_task", {"__job_name__": "myjob", "__task_key__": "my_task"})

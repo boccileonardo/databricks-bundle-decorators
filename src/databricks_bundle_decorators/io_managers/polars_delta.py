@@ -12,7 +12,7 @@ Requires the ``polars`` and ``deltalake`` optional dependencies::
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from databricks_bundle_decorators.io_manager import (
     InputContext,
@@ -81,8 +81,7 @@ class PolarsDeltaIoManager(IoManager):
         they are managed by the IoManager.
     mode : str
         Delta write mode.  One of ``"overwrite"``, ``"append"``,
-        ``"error"``, or ``"ignore"``.  Defaults to ``"overwrite"``
-        for idempotent task outputs.
+        ``"error"``, or ``"ignore"``.  Defaults to ``"error"``.
 
         For **merge** operations, ignore this parameter and return a
         fully-configured `deltalake.table.TableMerger` from your task
@@ -129,7 +128,7 @@ class PolarsDeltaIoManager(IoManager):
     def storage_options(self) -> dict[str, str] | None:
         """Resolve *storage_options*, calling it first if it is a callable."""
         if callable(self._storage_options):
-            return self._storage_options()
+            return cast(Callable[[], dict[str, str]], self._storage_options)()
         return self._storage_options
 
     def _uri(self, key: str) -> str:
