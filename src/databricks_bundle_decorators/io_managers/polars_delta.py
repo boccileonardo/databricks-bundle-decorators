@@ -81,8 +81,7 @@ class PolarsDeltaIoManager(IoManager):
         they are managed by the IoManager.
     mode : str
         Delta write mode.  One of ``"overwrite"``, ``"append"``,
-        ``"error"``, or ``"ignore"``.  Defaults to ``"overwrite"``
-        for idempotent task outputs.
+        ``"error"``, or ``"ignore"``.  Defaults to ``"error"``.
 
         For **merge** operations, ignore this parameter and return a
         fully-configured `deltalake.table.TableMerger` from your task

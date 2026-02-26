@@ -11,14 +11,16 @@ Databricks invokes the ``dbxdec-run`` console-script, which calls
 """
 
 import argparse
+import logging
 import os
-import sys
 import typing
 from typing import Any
 
 from databricks_bundle_decorators.context import _populate_params
 from databricks_bundle_decorators.io_manager import InputContext, OutputContext
 from databricks_bundle_decorators.registry import _TASK_REGISTRY
+
+_logger = logging.getLogger(__name__)
 
 
 def _parse_named_args(argv: list[str]) -> dict[str, str]:
@@ -58,14 +60,14 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
     _populate_params(cli_params)
 
     # ---- look up task metadata -------------------------------------------
-    # Try qualified key (job_name.task_key) first, then short key.
     qualified_key = f"{job_name}.{task_key}"
-    task_meta = _TASK_REGISTRY.get(qualified_key) or _TASK_REGISTRY.get(task_key)
+    task_meta = _TASK_REGISTRY.get(qualified_key)
     if task_meta is None:
-        print(f"Error: Task '{task_key}' not found in registry.", file=sys.stderr)
-        print(f"Tried: '{qualified_key}', '{task_key}'", file=sys.stderr)
-        print(f"Available: {list(_TASK_REGISTRY.keys())}", file=sys.stderr)
-        sys.exit(1)
+        available = list(_TASK_REGISTRY.keys())
+        raise RuntimeError(
+            f"Task '{task_key}' not found by qualified key '{qualified_key}'. "
+            f"Available: {available}"
+        )
 
     # ---- resolve type hints for the current task's parameters ------------
     try:
@@ -77,9 +79,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
     kwargs: dict[str, Any] = {}
     for param_name, upstream_task_key in upstream_map.items():
         upstream_qualified = f"{job_name}.{upstream_task_key}"
-        upstream_meta = _TASK_REGISTRY.get(upstream_qualified) or _TASK_REGISTRY.get(
-            upstream_task_key
-        )
+        upstream_meta = _TASK_REGISTRY.get(upstream_qualified)
         if upstream_meta and upstream_meta.io_manager:
             upstream_meta.io_manager._ensure_setup()
             context = InputContext(
@@ -91,10 +91,11 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
             )
             kwargs[param_name] = upstream_meta.io_manager.read(context)
         else:
-            print(
-                f"Warning: upstream task '{upstream_task_key}' has no IoManager – "
-                f"cannot auto-load data for parameter '{param_name}'.",
-                file=sys.stderr,
+            _logger.warning(
+                "Upstream task '%s' has no IoManager – "
+                "cannot auto-load data for parameter '%s'.",
+                upstream_task_key,
+                param_name,
             )
 
     # ---- execute the task function ---------------------------------------
@@ -116,10 +117,10 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
         )
         task_meta.io_manager.write(context, result)
     elif result is not None and not task_meta.io_manager:
-        print(
-            f"Warning: task '{task_key}' returned a value but has no IoManager – "
-            f"the return value will be discarded.",
-            file=sys.stderr,
+        _logger.warning(
+            "Task '%s' returned a value but has no IoManager – "
+            "the return value will be discarded.",
+            task_key,
         )
 
 
@@ -142,8 +143,7 @@ def main() -> None:
 
     task_key = cli_params.get("__task_key__")
     if not task_key:
-        print("Error: --__task_key__=<name> is required.", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError("--__task_key__=<name> is required.")
 
     # 3. Run the task.
     run_task(task_key, cli_params)

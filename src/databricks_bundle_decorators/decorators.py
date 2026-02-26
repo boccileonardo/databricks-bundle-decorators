@@ -31,6 +31,32 @@ from databricks_bundle_decorators.sdk_types import ClusterConfig, JobConfig, Tas
 
 
 # ---------------------------------------------------------------------------
+# Reserved parameter namespace
+# ---------------------------------------------------------------------------
+
+#: Parameter names that are reserved for internal runtime wiring.
+_RESERVED_PARAM_NAMES: frozenset[str] = frozenset(
+    {"__job_name__", "__task_key__", "__run_id__"}
+)
+
+#: Parameter name prefixes that are reserved for internal runtime wiring.
+_RESERVED_PARAM_PREFIXES: tuple[str, ...] = ("__upstream__",)
+
+
+def _validate_user_params(params: dict[str, str], context: str) -> None:
+    """Raise ``ValueError`` if any *params* key collides with reserved names."""
+    for name in params:
+        if name in _RESERVED_PARAM_NAMES or any(
+            name.startswith(p) for p in _RESERVED_PARAM_PREFIXES
+        ):
+            raise ValueError(
+                f"{context}: parameter name {name!r} is reserved for internal "
+                f"runtime use. Reserved names: {sorted(_RESERVED_PARAM_NAMES)}; "
+                f"reserved prefix: {list(_RESERVED_PARAM_PREFIXES)}."
+            )
+
+
+# ---------------------------------------------------------------------------
 # Job context – tracks which @job body is currently being executed
 # ---------------------------------------------------------------------------
 
@@ -94,7 +120,8 @@ def task(
 
     When used **outside** a ``@job`` body (e.g. at module level), the
     function is registered under its short name for use in tests or
-    standalone execution.
+    standalone execution.  Duplicate names at module level raise
+    `DuplicateResourceError`.
 
     Parameters
     ----------
@@ -109,7 +136,12 @@ def task(
         directly to the ``databricks.bundles.jobs.Task`` constructor at
         deploy time.  See `TaskConfig`
         for the full list of supported fields.
-    """
+    Notes
+    -----
+    Dependency edges are detected only for `TaskProxy` objects passed as
+    **direct** positional or keyword arguments.  Proxies nested inside
+    lists, dicts, or other container types are **not** inspected and will
+    not register dependency edges."""
 
     def decorator(fn: types.FunctionType) -> Callable[..., Any]:
         task_key = fn.__name__
@@ -127,13 +159,21 @@ def task(
             _current_job_tasks[task_key] = meta
         else:
             # Module-level definition (standalone / test usage).
-            _TASK_REGISTRY[task_key] = meta
+            _register_unique(_TASK_REGISTRY, task_key, meta, "task")
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
             if _current_job_name is not None:
                 # We're being *called* inside a @job body – return a
                 # TaskProxy and record DAG edges from any proxy args.
+                if task_key in _current_job_dag:
+                    raise DuplicateResourceError(
+                        f"Task '{task_key}' is called more than once in job "
+                        f"'{_current_job_name}'. Each @task may only be invoked "
+                        "once per @job body. Use a unique function name for "
+                        "each logical step."
+                    )
+
                 upstream_deps: list[str] = []
                 edge_map: dict[str, str] = {}
 
@@ -281,6 +321,10 @@ def job(
             raise DuplicateResourceError(
                 f"Duplicate job '{job_name}'. Each job must have a unique name."
             )
+
+        # --- validate param names -----------------------------------------
+        if params:
+            _validate_user_params(params, f"@job('{job_name}')")
 
         # --- validate cluster type -----------------------------------------
         if cluster is not None and not isinstance(cluster, ClusterMeta):

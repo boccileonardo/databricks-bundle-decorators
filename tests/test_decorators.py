@@ -347,3 +347,125 @@ class TestSdkConfigForwarding:
         }
         task_meta = _TASK_REGISTRY["combo_job.step"]
         assert task_meta.sdk_config == {"max_retries": 2}
+
+
+class TestReservedParamValidation:
+    """Fix #1: Reserved job parameter names must be rejected at decoration time."""
+
+    def setup_method(self):
+        reset_registries()
+
+    def test_reserved_name_job_name_raises(self):
+        with pytest.raises(ValueError, match="reserved for internal runtime use"):
+
+            @job(params={"__job_name__": "bad"})
+            def bad_job():
+                @task
+                def noop():
+                    pass
+
+                noop()
+
+    def test_reserved_name_task_key_raises(self):
+        with pytest.raises(ValueError, match="reserved for internal runtime use"):
+
+            @job(params={"__task_key__": "bad"})
+            def bad_job2():
+                @task
+                def noop():
+                    pass
+
+                noop()
+
+    def test_reserved_name_run_id_raises(self):
+        with pytest.raises(ValueError, match="reserved for internal runtime use"):
+
+            @job(params={"__run_id__": "bad"})
+            def bad_job3():
+                @task
+                def noop():
+                    pass
+
+                noop()
+
+    def test_reserved_prefix_upstream_raises(self):
+        with pytest.raises(ValueError, match="reserved for internal runtime use"):
+
+            @job(params={"__upstream__data": "bad"})
+            def bad_job4():
+                @task
+                def noop():
+                    pass
+
+                noop()
+
+    def test_safe_param_names_accepted(self):
+        @job(params={"url": "http://x", "env": "prod"})
+        def good_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        assert _JOB_REGISTRY["good_job"].params == {"url": "http://x", "env": "prod"}
+
+
+class TestDuplicateTaskInvocation:
+    """Fix #4: Calling the same @task twice inside one @job body must raise."""
+
+    def setup_method(self):
+        reset_registries()
+
+    def test_duplicate_invocation_raises(self):
+        with pytest.raises(DuplicateResourceError, match="called more than once"):
+
+            @job
+            def dup_call_job():
+                @task
+                def step():
+                    pass
+
+                step()
+                step()  # second call – should raise
+
+    def test_second_job_can_reuse_task_function_name(self):
+        """Same task function name in a *different* job is allowed."""
+
+        @job
+        def job_one():
+            @task
+            def extract():
+                pass
+
+            extract()
+
+        reset_registries()
+
+        @job
+        def job_two():
+            @task
+            def extract():
+                pass
+
+            extract()
+
+        assert "job_two.extract" in _TASK_REGISTRY
+
+
+class TestDuplicateStandaloneTask:
+    """Fix #5: Duplicate standalone @task names must raise DuplicateResourceError."""
+
+    def setup_method(self):
+        reset_registries()
+
+    def test_duplicate_standalone_task_raises(self):
+        @task
+        def my_task():
+            return 1
+
+        with pytest.raises(DuplicateResourceError, match="Duplicate task 'my_task'"):
+
+            @task
+            def my_task():  # noqa: F811 – intentional duplicate
+                return 2

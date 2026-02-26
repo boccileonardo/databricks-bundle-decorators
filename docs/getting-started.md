@@ -27,6 +27,21 @@ uv run dbxdec init
 
 ## 2. Define your pipeline
 
+!!! warning "Keep pipeline module bodies free of side effects"
+
+    The body of a `@job` function runs at **deploy time** (when
+    `databricks bundle deploy` imports your module), not when the job
+    executes on Databricks. Only task graph construction should be placed
+    inside a `@job` body — logging, network calls, database connections, and
+    all business logic belong inside `@task` functions.
+    See [How It Works — Known limitations](how-it-works.md#known-limitations) for details.
+
+!!! warning "Avoid reserved job parameter names"
+
+    Keys in `@job(params={...})` must not use reserved internal names:
+    `__job_name__`, `__task_key__`, `__run_id__`, or the `__upstream__` prefix.
+    These keys are used by runtime task dispatch wiring.
+
 ```python
 # src/my_pipeline/pipelines/github_events.py
 

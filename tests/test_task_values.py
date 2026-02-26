@@ -3,6 +3,7 @@
 import pytest
 
 from databricks_bundle_decorators.task_values import (
+    _is_databricks_runtime,
     _local_task_values,
     get_task_value,
     set_task_value,
@@ -87,3 +88,28 @@ class TestLocalRoundTrip:
         _tv._current_task_key = None
 
         assert get_task_value("producer", "row_count") == 42
+
+
+class TestDatabricksRuntimeDetection:
+    """Fix #2: _is_databricks_runtime() must reflect the env var correctly."""
+
+    def test_not_databricks_by_default(self, monkeypatch):
+        monkeypatch.delenv("DATABRICKS_RUNTIME_VERSION", raising=False)
+        assert _is_databricks_runtime() is False
+
+    def test_detected_when_env_var_set(self, monkeypatch):
+        monkeypatch.setenv("DATABRICKS_RUNTIME_VERSION", "14.3.x-scala2.12")
+        assert _is_databricks_runtime() is True
+
+    def test_local_store_used_outside_databricks(self, monkeypatch):
+        """When DATABRICKS_RUNTIME_VERSION is unset, local store is used."""
+        monkeypatch.delenv("DATABRICKS_RUNTIME_VERSION", raising=False)
+        _local_task_values.clear()
+        set_task_value("x", 1)
+        assert _local_task_values["__current__"]["x"] == 1
+
+    def test_local_get_returns_none_outside_databricks(self, monkeypatch):
+        """When not in Databricks, missing key returns None (no exception)."""
+        monkeypatch.delenv("DATABRICKS_RUNTIME_VERSION", raising=False)
+        _local_task_values.clear()
+        assert get_task_value("missing_task", "missing_key") is None
