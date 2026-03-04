@@ -12,7 +12,13 @@ from databricks_bundle_decorators.registry import (
     _TASK_REGISTRY,
     reset_registries,
 )
-from databricks_bundle_decorators.decorators import job, job_cluster, task
+from databricks_bundle_decorators.decorators import (
+    job,
+    job_cluster,
+    task,
+    for_each_task,
+    task_value,
+)
 
 
 class TestTaskDecorator:
@@ -608,3 +614,420 @@ class TestDuplicateStandaloneTask:
             @task
             def my_task():  # noqa: F811 – intentional duplicate
                 return 2
+
+
+class TestDependsOn:
+    """Control-flow-only dependencies via @task(depends_on=...)."""
+
+    def setup_method(self):
+        reset_registries()
+
+    def test_single_depends_on(self):
+        """A single TaskProxy in depends_on creates a DAG edge without edge_map."""
+
+        @job
+        def dep_job():
+            @task
+            def setup():
+                pass
+
+            s = setup()
+
+            @task(depends_on=s)
+            def work():
+                pass
+
+            work()
+
+        meta = _JOB_REGISTRY["dep_job"]
+        assert meta.dag["work"] == ["setup"]
+        # No IoManager edge – only control-flow
+        assert meta.dag_edges.get("work", {}) == {}
+
+    def test_list_depends_on(self):
+        """A list of TaskProxies in depends_on creates multiple edges."""
+
+        @job
+        def multi_dep_job():
+            @task
+            def init_a():
+                pass
+
+            @task
+            def init_b():
+                pass
+
+            a = init_a()
+            b = init_b()
+
+            @task(depends_on=[a, b])
+            def work():
+                pass
+
+            work()
+
+        meta = _JOB_REGISTRY["multi_dep_job"]
+        assert set(meta.dag["work"]) == {"init_a", "init_b"}
+        assert meta.dag_edges.get("work", {}) == {}
+
+    def test_depends_on_with_data_deps(self):
+        """depends_on and data dependencies (TaskProxy args) coexist."""
+
+        @job
+        def mixed_dep_job():
+            @task
+            def init():
+                pass
+
+            @task
+            def produce():
+                pass
+
+            i = init()
+            p = produce()
+
+            @task(depends_on=i)
+            def consume(data):
+                pass
+
+            consume(p)
+
+        meta = _JOB_REGISTRY["mixed_dep_job"]
+        assert set(meta.dag["consume"]) == {"init", "produce"}
+        # Only 'data' -> 'produce' is an IoManager edge
+        assert meta.dag_edges["consume"] == {"data": "produce"}
+
+    def test_depends_on_deduplication(self):
+        """Same upstream in both depends_on and args is deduplicated."""
+
+        @job
+        def dedup_job():
+            @task
+            def upstream():
+                pass
+
+            u = upstream()
+
+            @task(depends_on=u)
+            def downstream(data):
+                pass
+
+            downstream(u)
+
+        meta = _JOB_REGISTRY["dedup_job"]
+        assert meta.dag["downstream"] == ["upstream"]  # single entry, not duplicated
+
+    def test_depends_on_invalid_type_raises(self):
+        """Passing a non-TaskProxy to depends_on raises TypeError."""
+        with pytest.raises(TypeError, match="expects TaskProxy"):
+
+            @job
+            def bad_dep_job():
+                @task(depends_on="setup")  # type: ignore[arg-type]
+                def work():
+                    pass
+
+                work()
+
+    def test_depends_on_uncalled_task_preserves_deps(self):
+        """A task with depends_on that is never called still has deps in DAG."""
+
+        @job
+        def uncalled_job():
+            @task
+            def setup():
+                pass
+
+            s = setup()
+
+            @task(depends_on=s)
+            def work():
+                pass
+
+            # setup() is called, work() is NOT called
+
+        meta = _JOB_REGISTRY["uncalled_job"]
+        assert meta.dag["work"] == ["setup"]
+
+    def test_depends_on_codegen(self):
+        """depends_on produces TaskDependency in generated resources."""
+        from databricks_bundle_decorators.codegen import generate_resources
+
+        @job
+        def codegen_dep_job():
+            @task
+            def gate():
+                pass
+
+            g = gate()
+
+            @task(depends_on=g)
+            def after_gate():
+                pass
+
+            after_gate()
+
+        resources = generate_resources(package_name="test_pkg")
+        tasks = {t.task_key: t for t in resources["codegen_dep_job"].tasks}
+        after = tasks["after_gate"]
+        assert any(d.task_key == "gate" for d in after.depends_on)
+        # No __upstream__ params for control-flow-only deps
+        named_params = after.python_wheel_task.named_parameters
+        upstream_keys = [k for k in named_params if k.startswith("__upstream__")]
+        assert upstream_keys == []
+
+
+class TestForEachTask:
+    """Tests for the @for_each_task decorator."""
+
+    def setup_method(self):
+        reset_registries()
+
+    def test_dynamic_inputs_from_upstream_func_ref(self):
+        """for_each_task wired with task_value() using function reference."""
+
+        @job
+        def fe_job():
+            @task
+            def get_items():
+                pass
+
+            @for_each_task(inputs=task_value(get_items, "items"))
+            def process(inputs: str):
+                pass
+
+        meta = _JOB_REGISTRY["fe_job"]
+        assert meta.dag["process"] == ["get_items"]
+        assert "process" in meta.for_each_tasks
+        fe = meta.for_each_tasks["process"]
+        assert fe.inputs_task_key == "get_items"
+        assert fe.inputs_value_key == "items"
+        assert fe.static_inputs is None
+
+    def test_dynamic_inputs_from_upstream_task_proxy(self):
+        """for_each_task wired with task_value() using a TaskProxy."""
+
+        @job
+        def fe_proxy_job():
+            @task
+            def get_items():
+                pass
+
+            items = get_items()
+
+            @for_each_task(inputs=task_value(items, "countries"))
+            def process(inputs: str):
+                pass
+
+        meta = _JOB_REGISTRY["fe_proxy_job"]
+        assert meta.dag["process"] == ["get_items"]
+        fe = meta.for_each_tasks["process"]
+        assert fe.inputs_task_key == "get_items"
+        assert fe.inputs_value_key == "countries"
+        assert fe.static_inputs is None
+
+    def test_custom_value_key(self):
+        """task_value() stores the user-specified key name."""
+
+        @job
+        def custom_key_job():
+            @task
+            def discover():
+                pass
+
+            @for_each_task(inputs=task_value(discover, "regions"))
+            def process(inputs: str):
+                pass
+
+        fe = _JOB_REGISTRY["custom_key_job"].for_each_tasks["process"]
+        assert fe.inputs_task_key == "discover"
+        assert fe.inputs_value_key == "regions"
+
+    def test_static_inputs(self):
+        """for_each_task with a plain list of static inputs."""
+
+        @job
+        def static_fe_job():
+            @for_each_task(inputs=["us-east-1", "eu-west-1"])
+            def ingest(inputs: str):
+                pass
+
+        meta = _JOB_REGISTRY["static_fe_job"]
+        assert meta.dag["ingest"] == []
+        fe = meta.for_each_tasks["ingest"]
+        assert fe.inputs_task_key is None
+        assert fe.static_inputs == ["us-east-1", "eu-west-1"]
+
+    def test_static_inputs_no_call_needed(self):
+        """Static for_each_task appears in DAG without being called."""
+
+        @job
+        def no_call_job():
+            @for_each_task(inputs=["a", "b", "c"])
+            def work(inputs: str):
+                pass
+
+        meta = _JOB_REGISTRY["no_call_job"]
+        assert "work" in meta.dag
+        assert "work" in meta.for_each_tasks
+
+    def test_concurrency(self):
+        """concurrency is stored in ForEachMeta."""
+
+        @job
+        def conc_job():
+            @for_each_task(inputs=["a", "b"], concurrency=10)
+            def work(inputs: str):
+                pass
+
+        fe = _JOB_REGISTRY["conc_job"].for_each_tasks["work"]
+        assert fe.concurrency == 10
+
+    def test_with_data_deps(self):
+        """for_each_task with inputs in decorator and data deps via call."""
+
+        @job
+        def data_fe_job():
+            @task
+            def get_items():
+                pass
+
+            @task
+            def get_data():
+                pass
+
+            d = get_data()
+
+            @for_each_task(inputs=task_value(get_items, "items"))
+            def process(inputs: str, data):
+                pass
+
+            process(data=d)
+
+        meta = _JOB_REGISTRY["data_fe_job"]
+        assert set(meta.dag["process"]) == {"get_items", "get_data"}
+        assert meta.dag_edges["process"] == {"data": "get_data"}
+        fe = meta.for_each_tasks["process"]
+        assert fe.inputs_task_key == "get_items"
+
+    def test_missing_inputs_param_raises(self):
+        """Function must have a parameter named 'inputs'."""
+        with pytest.raises(ValueError, match="parameter named 'inputs'"):
+
+            @job
+            def bad_param_job():
+                @for_each_task(inputs=["a"])
+                def work(item: str):
+                    pass
+
+    def test_invalid_inputs_type_raises(self):
+        """Passing a non-list, non-TaskValueRef as inputs raises TypeError."""
+        with pytest.raises(TypeError, match="expects a TaskValueRef"):
+
+            @job
+            def bad_type_job():
+                @for_each_task(inputs="not_a_list_or_ref")  # type: ignore[arg-type]
+                def work(inputs: str):
+                    pass
+
+    def test_outside_job_raises(self):
+        """@for_each_task outside a @job body raises RuntimeError."""
+        with pytest.raises(RuntimeError, match="inside a @job body"):
+
+            @for_each_task(inputs=["a"])
+            def work(inputs: str):
+                pass
+
+    def test_duplicate_call_raises(self):
+        """Calling a for_each_task twice in a @job body raises."""
+        with pytest.raises(DuplicateResourceError, match="called more than once"):
+
+            @job
+            def dup_fe_job():
+                @for_each_task(inputs=["a", "b"])
+                def work(inputs: str):
+                    pass
+
+                work()
+                work()
+
+    def test_with_depends_on_func_ref(self):
+        """for_each_task with control-flow depends_on using function ref."""
+
+        @job
+        def fe_depends_job():
+            @task
+            def setup():
+                pass
+
+            @for_each_task(inputs=["a", "b"], depends_on=setup)
+            def work(inputs: str):
+                pass
+
+        meta = _JOB_REGISTRY["fe_depends_job"]
+        assert "setup" in meta.dag["work"]
+
+    def test_with_depends_on_task_proxy(self):
+        """for_each_task with control-flow depends_on using TaskProxy."""
+
+        @job
+        def fe_depends_proxy_job():
+            @task
+            def setup():
+                pass
+
+            s = setup()
+
+            @for_each_task(inputs=["a", "b"], depends_on=s)
+            def work(inputs: str):
+                pass
+
+        meta = _JOB_REGISTRY["fe_depends_proxy_job"]
+        assert "setup" in meta.dag["work"]
+
+    def test_positional_arg_call_for_data_deps(self):
+        """for_each_task call with positional args wires data deps."""
+
+        @job
+        def pos_fe_job():
+            @task
+            def get_items():
+                pass
+
+            @task
+            def get_data():
+                pass
+
+            d = get_data()
+
+            @for_each_task(inputs=task_value(get_items, "items"))
+            def process(inputs: str, data):
+                pass
+
+            process(d)
+
+        meta = _JOB_REGISTRY["pos_fe_job"]
+        fe = meta.for_each_tasks["process"]
+        assert fe.inputs_task_key == "get_items"
+        assert meta.dag_edges["process"] == {"data": "get_data"}
+
+    def test_registered_as_task(self):
+        """for_each_task is registered in _TASK_REGISTRY with qualified key."""
+
+        @job
+        def reg_fe_job():
+            @for_each_task(inputs=["a"])
+            def work(inputs: str):
+                pass
+
+        assert "reg_fe_job.work" in _TASK_REGISTRY
+
+    def test_non_json_static_inputs_raises(self):
+        """Static inputs that aren't JSON-serialisable raise TypeError."""
+        with pytest.raises(TypeError, match="JSON-serialisable"):
+
+            @job
+            def bad_json_job():
+                @for_each_task(inputs=[object()])
+                def work(inputs):
+                    pass

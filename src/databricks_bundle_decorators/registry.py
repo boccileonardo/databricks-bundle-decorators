@@ -22,6 +22,7 @@ class TaskMeta:
     task_key: str
     io_manager: IoManager | None = None
     sdk_config: dict[str, Any] = field(default_factory=dict)
+    depends_on: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -30,6 +31,48 @@ class ClusterMeta:
 
     name: str
     spec: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TaskValueRef:
+    """Reference to a specific task-value from an upstream task.
+
+    Created via the `task_value` helper and passed to
+    ``@for_each_task(inputs=...)`` to specify which upstream task-value
+    provides the iteration list.
+    """
+
+    task_key: str
+    """The task key of the upstream task."""
+
+    key: str
+    """The task-value key name (the ``key`` argument to
+    `set_task_value`)."""
+
+
+@dataclass
+class ForEachMeta:
+    """Metadata for a for-each task wrapper.
+
+    Recorded by ``@for_each_task`` inside a ``@job`` body.  The outer
+    task iterates over *inputs* and executes the inner task once per
+    element.
+    """
+
+    inputs_task_key: str | None = None
+    """Upstream task whose task-value provides the iteration list.
+    ``None`` when a static list is used."""
+
+    inputs_value_key: str | None = None
+    """The task-value key name on the upstream task (e.g. ``"countries"``).
+    ``None`` when a static list is used."""
+
+    static_inputs: list[Any] | None = None
+    """A static JSON-serialisable list used when no upstream task supplies
+    the inputs dynamically."""
+
+    concurrency: int | None = None
+    """Maximum parallel iterations (maps to ``ForEachTask.concurrency``)."""
 
 
 @dataclass
@@ -46,6 +89,8 @@ class JobMeta:
     # task_key -> {param_name: upstream_task_key}
     dag_edges: dict[str, dict[str, str]] = field(default_factory=dict)
     sdk_config: dict[str, Any] = field(default_factory=dict)
+    # task_key -> ForEachMeta (for tasks that are for_each wrappers)
+    for_each_tasks: dict[str, ForEachMeta] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

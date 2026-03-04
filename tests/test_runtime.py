@@ -229,3 +229,100 @@ class TestStrictTaskResolution:
 
         with pytest.raises(RuntimeError, match="not found by qualified key"):
             run_task("my_task", {"__job_name__": "myjob", "__task_key__": "my_task"})
+
+
+class TestForEachRuntime:
+    """Runtime handles __for_each_input__ injection."""
+
+    def setup_method(self):
+        reset_registries()
+        _MemoryIo.storage = {}
+        _local_task_values.clear()
+
+    def test_for_each_input_injected_as_string(self):
+        """JSON string input is parsed and passed to the task function."""
+        captured: dict[str, Any] = {}
+
+        def process(inputs):
+            captured["inputs"] = inputs
+
+        _TASK_REGISTRY["j.process"] = TaskMeta(fn=process, task_key="process")
+
+        run_task(
+            "process",
+            {
+                "__job_name__": "j",
+                "__task_key__": "process",
+                "__for_each_input__": '"hello"',
+            },
+        )
+
+        assert captured["inputs"] == "hello"
+
+    def test_for_each_input_json_object(self):
+        """JSON object input is parsed into a dict."""
+        captured: dict[str, Any] = {}
+
+        def process(inputs):
+            captured["inputs"] = inputs
+
+        _TASK_REGISTRY["j.process"] = TaskMeta(fn=process, task_key="process")
+
+        run_task(
+            "process",
+            {
+                "__job_name__": "j",
+                "__task_key__": "process",
+                "__for_each_input__": '{"file": "a.csv", "id": 1}',
+            },
+        )
+
+        assert captured["inputs"] == {"file": "a.csv", "id": 1}
+
+    def test_for_each_input_plain_string_fallback(self):
+        """Non-JSON input is passed as a plain string."""
+        captured: dict[str, Any] = {}
+
+        def process(inputs):
+            captured["inputs"] = inputs
+
+        _TASK_REGISTRY["j.process"] = TaskMeta(fn=process, task_key="process")
+
+        run_task(
+            "process",
+            {
+                "__job_name__": "j",
+                "__task_key__": "process",
+                "__for_each_input__": "plain_value",
+            },
+        )
+
+        assert captured["inputs"] == "plain_value"
+
+    def test_for_each_with_io_manager_data(self):
+        """for_each task receives both the input element and IoManager data."""
+        io = _MemoryIo()
+        io.storage["get_data"] = {"rows": [1, 2, 3]}
+        captured: dict[str, Any] = {}
+
+        def process(inputs, data):
+            captured["inputs"] = inputs
+            captured["data"] = data
+
+        _TASK_REGISTRY["j.process"] = TaskMeta(fn=process, task_key="process")
+        _TASK_REGISTRY["j.get_data"] = TaskMeta(
+            fn=lambda: None, task_key="get_data", io_manager=io
+        )
+
+        run_task(
+            "process",
+            {
+                "__job_name__": "j",
+                "__task_key__": "process",
+                "__for_each_input__": '"file_a.csv"',
+                "__upstream__data": "get_data",
+            },
+        )
+
+        assert captured["inputs"] == "file_a.csv"
+        assert captured["data"] == {"rows": [1, 2, 3]}

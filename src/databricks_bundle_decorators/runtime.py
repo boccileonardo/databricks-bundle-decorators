@@ -11,6 +11,7 @@ Databricks invokes the ``dbxdec-run`` console-script, which calls
 """
 
 import argparse
+import json
 import logging
 import os
 import typing
@@ -56,6 +57,9 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
             param_name = key[len("__upstream__") :]
             upstream_map[param_name] = cli_params.pop(key)
 
+    # ---- extract for-each input (if present) -----------------------------
+    for_each_input_raw: str | None = cli_params.pop("__for_each_input__", None)
+
     # ---- remaining keys are job-level parameters -------------------------
     _populate_params(cli_params)
 
@@ -97,6 +101,14 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 upstream_task_key,
                 param_name,
             )
+
+    # ---- inject for-each input element -----------------------------------
+    if for_each_input_raw is not None:
+        try:
+            kwargs["inputs"] = json.loads(for_each_input_raw)
+        except (json.JSONDecodeError, TypeError):
+            # Not valid JSON — pass as a plain string
+            kwargs["inputs"] = for_each_input_raw
 
     # ---- execute the task function ---------------------------------------
     from databricks_bundle_decorators import task_values as _tv

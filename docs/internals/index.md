@@ -8,3 +8,4 @@ Implementation details for contributors and advanced users. These modules are no
 | [Codegen](codegen.md) | Converts registries into `databricks.bundles.jobs` resources at deploy time |
 | [Runtime](runtime.md) | `dbxdec-run` entry point — task dispatch, IoManager wiring, parameter injection |
 | [Discovery](discovery.md) | Entry-point-based pipeline discovery |
+| [SDK Types](sdk-types.md) | `JobConfig`, `TaskConfig`, `ClusterConfig` TypedDicts for `**kwargs` pass-through |

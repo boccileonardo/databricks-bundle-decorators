@@ -47,7 +47,7 @@ uv run dbxdec init
 
 import polars as pl
 
-from databricks_bundle_decorators import job, job_cluster, params, task, set_task_value
+from databricks_bundle_decorators import job, job_cluster, params, task, task_value, set_task_value, for_each_task
 from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
 staging_io = PolarsParquetIoManager(
@@ -80,8 +80,13 @@ def github_events():
     def transform(raw_df):
         print(raw_df.head(10))
 
+    @for_each_task(inputs=["slack", "email", "pagerduty"], concurrency=3)
+    def notify(inputs: str, raw_df):
+        print(f"Sending alert for {inputs} ({len(raw_df)} rows)")
+
     df = extract()
     transform(df)
+    notify(raw_df=df)
 ```
 
 ## 3. Deploy
