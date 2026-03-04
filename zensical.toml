@@ -10,20 +10,27 @@ nav = [
     { "Getting Started" = "getting-started.md" },
     { "How It Works" = "how-it-works.md" },
     { "Docker Deployment" = "docker-deployment.md" },
+    { "Examples" = [
+        "examples/index.md",
+        { "Basic ETL" = "examples/basic-etl.md" },
+        { "For-Each" = "examples/for-each.md" },
+        { "Docker" = "examples/docker.md" },
+        { "Yaml and Decorators Mix" = "examples/mixed-bundle.md" },
+        { "Bundle Configuration" = "examples/bundle-config.md" },
+    ]},
     { "API Reference" = [
         "api/index.md",
-        { "Decorators" = "api/decorators.md" },
-        { "IoManager" = "api/io-manager.md" },
+        { "Tasks" = "api/tasks.md" },
+        { "Jobs" = "api/jobs.md" },
+        { "Task Values" = "api/task-values.md" },
         { "Built-in IoManagers" = [
             "api/io-managers/index.md",
             { "Polars" = "api/io-managers/polars.md" },
-            { "Spark – Classic" = "api/io-managers/spark-classic.md" },
-            { "Spark – Serverless" = "api/io-managers/spark-serverless.md" },
-            { "Spark – Unity Catalog" = "api/io-managers/spark-uc.md" },
+            { "Spark \u2013 Classic" = "api/io-managers/spark-classic.md" },
+            { "Spark \u2013 Serverless" = "api/io-managers/spark-serverless.md" },
+            { "Spark \u2013 Unity Catalog" = "api/io-managers/spark-uc.md" },
         ]},
-        { "Task Values" = "api/task-values.md" },
-        { "Parameters" = "api/parameters.md" },
-        { "SDK Types" = "api/sdk-types.md" },
+        { "Custom IoManagers" = "api/custom-io-manager.md" },
     ]},
     { "Internals" = [
         "internals/index.md",
@@ -31,6 +38,7 @@ nav = [
         { "Codegen" = "internals/codegen.md" },
         { "Runtime" = "internals/runtime.md" },
         { "Discovery" = "internals/discovery.md" },
+        { "SDK Types" = "internals/sdk-types.md" },
     ]},
 ]
 

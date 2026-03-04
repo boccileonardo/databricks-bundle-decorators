@@ -1,13 +1,14 @@
 """Convert registries into ``databricks.bundles.jobs`` resource objects.
 
 Called at deploy time by the resource loader.  Reads the global
-registries populated by ``@task``, ``@job_cluster``, and ``@job`` decorators
-and produces ``Job`` dataclass instances that the Databricks CLI
-serialises into the bundle configuration.
+registries populated by ``@task``, ``@job_cluster``, ``@job``, and
+``@for_each_task`` decorators and produces ``Job`` dataclass instances
+that the Databricks CLI serialises into the bundle configuration.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from databricks_bundle_decorators.registry import (
@@ -27,6 +28,7 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
     """
     from databricks.bundles.jobs import (
         ClusterSpec,
+        ForEachTask,
         Job,
         JobCluster,
         JobParameterDefinition,
@@ -77,23 +79,75 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
             else:
                 task_libraries = _default_libraries
 
-            # Build the Task kwargs – only include libraries when present
-            task_kwargs: dict[str, Any] = {
-                "task_key": task_key,
-                "depends_on": depends_on,
-                "job_cluster_key": job_meta.cluster.name if job_meta.cluster else None,
-                "python_wheel_task": PythonWheelTask(
-                    package_name=package_name,
-                    entry_point="dbxdec-run",
-                    named_parameters=named_params,  # type: ignore[arg-type]  # SDK Variable wrappers
-                ),
-                **task_sdk_config,
-            }
-            if task_libraries is not None:
-                task_kwargs["libraries"] = task_libraries
+            # ----- check if this is a for-each task -----------------------
+            fe_meta = job_meta.for_each_tasks.get(task_key)
 
-            task_obj = Task(**task_kwargs)  # dynamic kwargs
-            tasks.append(task_obj)
+            if fe_meta is not None:
+                # ---- for-each task: outer wrapper with inner task --------
+                # Add __for_each_input__ so runtime knows to inject it
+                named_params["__for_each_input__"] = "{{input}}"
+
+                # Build the inner Task (the one that runs per iteration)
+                inner_task_kwargs: dict[str, Any] = {
+                    "task_key": f"{task_key}_inner",
+                    "python_wheel_task": PythonWheelTask(
+                        package_name=package_name,
+                        entry_point="dbxdec-run",
+                        named_parameters=named_params,  # type: ignore[arg-type]
+                    ),
+                    **task_sdk_config,
+                }
+                if task_libraries is not None:
+                    inner_task_kwargs["libraries"] = task_libraries
+
+                inner_task = Task(**inner_task_kwargs)
+
+                # Determine the inputs expression
+                if fe_meta.inputs_task_key is not None:
+                    value_key = fe_meta.inputs_value_key or "result"
+                    inputs_expr = (
+                        "{{"
+                        + f"tasks.{fe_meta.inputs_task_key}.values.{value_key}"
+                        + "}}"
+                    )
+                else:
+                    inputs_expr = json.dumps(fe_meta.static_inputs)
+
+                for_each = ForEachTask(
+                    inputs=inputs_expr,
+                    task=inner_task,
+                    concurrency=fe_meta.concurrency,
+                )
+
+                outer_task_obj = Task(
+                    task_key=task_key,
+                    depends_on=depends_on,
+                    job_cluster_key=(
+                        job_meta.cluster.name if job_meta.cluster else None
+                    ),
+                    for_each_task=for_each,
+                )
+                tasks.append(outer_task_obj)
+            else:
+                # ---- regular task ----------------------------------------
+                task_kwargs: dict[str, Any] = {
+                    "task_key": task_key,
+                    "depends_on": depends_on,
+                    "job_cluster_key": (
+                        job_meta.cluster.name if job_meta.cluster else None
+                    ),
+                    "python_wheel_task": PythonWheelTask(
+                        package_name=package_name,
+                        entry_point="dbxdec-run",
+                        named_parameters=named_params,  # type: ignore[arg-type]  # SDK Variable wrappers
+                    ),
+                    **task_sdk_config,
+                }
+                if task_libraries is not None:
+                    task_kwargs["libraries"] = task_libraries
+
+                task_obj = Task(**task_kwargs)  # dynamic kwargs
+                tasks.append(task_obj)
 
         # ----- job clusters -----------------------------------------------
         job_clusters: list[JobCluster] = []

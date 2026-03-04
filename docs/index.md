@@ -8,6 +8,7 @@ Writing Databricks jobs in raw YAML is tedious and disconnects task logic from o
 
 - **Airflow TaskFlow-inspired pattern** — define `@task` functions inside a `@job` body; dependencies are captured automatically from call arguments.
 - **IoManager pattern** — large data (DataFrames, datasets) flows between tasks through external storage automatically.
+- **Control-flow dependencies** — use `@task(depends_on=...)` for ordering constraints without data transfer.
 - **Explicit task values** — small scalars (`str`, `int`, `float`, `bool`) can be passed between tasks via `set_task_value` / `get_task_value`, like Airflow XComs.
 - **Pure Python** — write your jobs and tasks as decorated functions, run `databricks bundle deploy`, and the framework generates all Databricks Job configurations for you.
 

@@ -3,10 +3,19 @@
 Public API
 ----------
 Decorators:
-    ``@task``, ``@job``
+    ``@task``, ``@job``, ``@for_each_task``
 
 Cluster configuration:
     ``job_cluster()``
+
+DAG wiring:
+    ``TaskProxy`` — returned by ``@task`` calls inside ``@job`` bodies;
+    used for data dependencies (pass as args) or control-flow
+    dependencies (pass to ``depends_on``).
+
+    ``task_value()`` — creates a ``TaskValueRef`` referencing a specific
+    task-value from an upstream task; used with
+    ``@for_each_task(inputs=...)``.
 
 Data management:
     ``IoManager``, ``OutputContext``, ``InputContext``
@@ -23,9 +32,12 @@ Job parameters:
 
 from databricks_bundle_decorators.context import get_dbutils as get_dbutils
 from databricks_bundle_decorators.context import params as params
+from databricks_bundle_decorators.decorators import for_each_task as for_each_task
 from databricks_bundle_decorators.decorators import job as job
 from databricks_bundle_decorators.decorators import job_cluster as job_cluster
 from databricks_bundle_decorators.decorators import task as task
+from databricks_bundle_decorators.decorators import task_value as task_value
+from databricks_bundle_decorators.decorators import TaskProxy as TaskProxy
 from databricks_bundle_decorators.discovery import (
     discover_pipelines as discover_pipelines,
 )
@@ -35,6 +47,7 @@ from databricks_bundle_decorators.io_manager import OutputContext as OutputConte
 from databricks_bundle_decorators.registry import (
     ClusterMeta as ClusterMeta,
     DuplicateResourceError as DuplicateResourceError,
+    TaskValueRef as TaskValueRef,
 )
 from databricks_bundle_decorators.sdk_types import ClusterConfig as ClusterConfig
 from databricks_bundle_decorators.sdk_types import JobConfig as JobConfig
@@ -46,6 +59,10 @@ __all__ = [
     "task",
     "job",
     "job_cluster",
+    "for_each_task",
+    "task_value",
+    "TaskProxy",
+    "TaskValueRef",
     "discover_pipelines",
     "IoManager",
     "OutputContext",

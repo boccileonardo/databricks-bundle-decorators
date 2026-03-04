@@ -1,5 +1,9 @@
 # Built-in IoManagers
 
+Ready-to-use `IoManager` implementations for common data formats and
+compute types. Pick one, pass it to `@task(io_manager=...)`, and the
+framework handles reading and writing data between tasks automatically.
+
 Choose an IoManager based on your compute type and preferred data format.
 
 | Compute | Format | IoManager |

@@ -13,6 +13,7 @@ passed as an argument to another task call.  No AST parsing is needed.
 
 import functools
 import inspect
+import json
 import types
 import warnings
 from typing import Any, Callable, Unpack, overload
@@ -21,8 +22,10 @@ from databricks_bundle_decorators.io_manager import IoManager
 from databricks_bundle_decorators.registry import (
     ClusterMeta,
     DuplicateResourceError,
+    ForEachMeta,
     JobMeta,
     TaskMeta,
+    TaskValueRef,
     _CLUSTER_REGISTRY,
     _JOB_REGISTRY,
     _TASK_REGISTRY,
@@ -37,7 +40,12 @@ from databricks_bundle_decorators.sdk_types import ClusterConfig, JobConfig, Tas
 
 #: Parameter names that are reserved for internal runtime wiring.
 _RESERVED_PARAM_NAMES: frozenset[str] = frozenset(
-    {"__job_name__", "__task_key__", "__run_id__"}
+    {
+        "__job_name__",
+        "__task_key__",
+        "__run_id__",
+        "__for_each_input__",
+    }
 )
 
 #: Parameter name prefixes that are reserved for internal runtime wiring.
@@ -99,6 +107,7 @@ _TaskDecorator = Callable[[types.FunctionType], Callable[..., Any]]
 def task(
     *,
     io_manager: IoManager | None = ...,
+    depends_on: TaskProxy | list[TaskProxy] | None = ...,
     **kwargs: Unpack[TaskConfig],
 ) -> _TaskDecorator: ...
 
@@ -111,6 +120,7 @@ def task(
     fn: types.FunctionType | None = None,
     *,
     io_manager: IoManager | None = None,
+    depends_on: TaskProxy | list[TaskProxy] | None = None,
     **kwargs: Unpack[TaskConfig],
 ):
     """Register a function as a Databricks task.
@@ -131,6 +141,15 @@ def task(
         how the task's return value is persisted and loaded by downstream
         tasks.  When ``None``, no automatic data transfer takes place (use
         `set_task_value` for small scalars).
+    depends_on:
+        One or more `TaskProxy` objects returned by calling other
+        ``@task``-decorated functions inside a ``@job`` body.  Creates
+        **control-flow-only** dependencies: the current task will run
+        after the specified upstream tasks complete, but no data is
+        transferred via `IoManager`.  Use this when a task must wait
+        for another to finish without consuming its output.  For
+        data dependencies, pass `TaskProxy` objects as regular function
+        arguments instead.
     **kwargs:
         Any additional SDK-native ``Task`` fields (e.g. ``max_retries``,
         ``timeout_seconds``, ``retry_on_timeout``).  These are forwarded
@@ -146,8 +165,26 @@ def task(
 
     def decorator(fn: types.FunctionType) -> Callable[..., Any]:
         task_key = fn.__name__
+
+        # Normalize and validate depends_on
+        depends_on_keys: list[str] = []
+        if depends_on is not None:
+            deps = depends_on if isinstance(depends_on, list) else [depends_on]
+            for dep in deps:
+                if not isinstance(dep, TaskProxy):
+                    raise TypeError(
+                        f"@task(depends_on=...) expects TaskProxy objects "
+                        f"returned by calling @task-decorated functions "
+                        f"inside a @job body, got {type(dep).__name__!r}."
+                    )
+                depends_on_keys.append(dep.task_key)
+
         meta = TaskMeta(
-            fn=fn, task_key=task_key, io_manager=io_manager, sdk_config=dict(kwargs)
+            fn=fn,
+            task_key=task_key,
+            io_manager=io_manager,
+            sdk_config=dict(kwargs),
+            depends_on=depends_on_keys,
         )
 
         if _current_job_name is not None:
@@ -175,7 +212,7 @@ def task(
                         "each logical step."
                     )
 
-                upstream_deps: list[str] = []
+                upstream_deps: list[str] = list(meta.depends_on)
                 edge_map: dict[str, str] = {}
 
                 param_names = list(inspect.signature(fn).parameters.keys())
@@ -224,6 +261,8 @@ def task(
                             stacklevel=2,
                         )
 
+                # Deduplicate while preserving order
+                upstream_deps = list(dict.fromkeys(upstream_deps))
                 _current_job_dag[task_key] = upstream_deps
                 _current_job_edges[task_key] = edge_map
 
@@ -282,6 +321,7 @@ def job_cluster(
 _current_job_tasks: dict[str, TaskMeta] = {}
 _current_job_dag: dict[str, list[str]] = {}
 _current_job_edges: dict[str, dict[str, str]] = {}
+_current_job_for_each: dict[str, ForEachMeta] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +355,8 @@ def job(
 ):
     """Register a function as a Databricks job.
 
-    The function body is **executed once at decoration time** (not at
+    The function body is **executed once at deploy time** (when
+    ``databricks bundle deploy`` imports your module — not at
     Databricks runtime).  Inside the body, ``@task``-decorated functions
     are defined and called.  Each call returns a `TaskProxy`;
     passing a proxy to another task call records the dependency edge.
@@ -371,6 +412,7 @@ def job(
         _current_job_tasks.clear()
         _current_job_dag.clear()
         _current_job_edges.clear()
+        _current_job_for_each.clear()
         _current_job_name = job_name
 
         try:
@@ -380,11 +422,13 @@ def job(
 
         dag = dict(_current_job_dag)
         dag_edges = dict(_current_job_edges)
+        for_each_tasks = dict(_current_job_for_each)
 
         # Ensure tasks that were defined but never called (no outgoing
-        # edges recorded yet) still appear in the DAG with empty deps.
-        for tk in _current_job_tasks:
-            dag.setdefault(tk, [])
+        # edges recorded yet) still appear in the DAG.  If the task has
+        # depends_on control-flow deps, include them even when uncalled.
+        for tk, t_meta in _current_job_tasks.items():
+            dag.setdefault(tk, list(t_meta.depends_on))
 
         meta = JobMeta(
             fn=fn,
@@ -395,6 +439,7 @@ def job(
             dag=dag,
             dag_edges=dag_edges,
             sdk_config=dict(kwargs),
+            for_each_tasks=for_each_tasks,
         )
         _JOB_REGISTRY[job_name] = meta
 
@@ -408,3 +453,285 @@ def job(
     if fn is not None:
         return decorator(fn)
     return decorator
+
+
+# ---------------------------------------------------------------------------
+# @for_each_task
+# ---------------------------------------------------------------------------
+
+
+_TaskRef = Callable[..., Any] | TaskProxy
+"""A reference to an upstream task: either the decorated function itself or
+a `TaskProxy` returned by calling it inside a ``@job`` body."""
+
+
+def task_value(task_ref: _TaskRef, key: str) -> TaskValueRef:
+    """Create a reference to a specific task-value from an upstream task.
+
+    Use this with ``@for_each_task(inputs=...)`` to specify which
+    upstream task-value provides the iteration list.
+
+    Parameters
+    ----------
+    task_ref:
+        A ``@task``-decorated function or a `TaskProxy` returned by
+        calling one inside a ``@job`` body.
+    key:
+        The task-value key name — the ``key`` argument passed to
+        `set_task_value` in the upstream task.
+
+    Returns
+    -------
+    `TaskValueRef`
+        An object that can be passed to ``@for_each_task(inputs=...)``.
+
+    Examples
+    --------
+    ::
+
+        @job
+        def my_pipeline():
+            @task
+            def discover():
+                set_task_value("countries", ["US", "UK", "DE"])
+
+            @for_each_task(inputs=task_value(discover, "countries"))
+            def process(inputs: str):
+                print(f"Processing {inputs}")
+    """
+    resolved_key = _resolve_task_ref(task_ref, "task_value()")
+    return TaskValueRef(task_key=resolved_key, key=key)
+
+
+def for_each_task(
+    *,
+    inputs: TaskValueRef | list[Any],
+    concurrency: int | None = None,
+    io_manager: IoManager | None = None,
+    depends_on: _TaskRef | list[_TaskRef] | None = None,
+    **kwargs: Unpack[TaskConfig],
+) -> _TaskDecorator:
+    """Register a function as a Databricks **for-each** task.
+
+    A for-each task iterates over a list of inputs and executes the
+    decorated function once per element.  The iteration list is
+    specified via the ``inputs`` decorator argument — either a
+    `TaskValueRef` created by `task_value` (referencing a specific
+    upstream task-value) or a static Python list.
+
+    The decorated function **must** have a parameter named ``inputs``.
+    At runtime the framework injects the current element from the
+    iteration list into that parameter.
+
+    Inside a ``@job`` body the function must be **called** to add it
+    to the DAG — just like ``@task``.  Call arguments wire `IoManager`
+    data dependencies.
+
+    Parameters
+    ----------
+    inputs:
+        The iteration source.  Use ``task_value(upstream_task, "key")``
+        to iterate over a task-value published by an upstream task via
+        `set_task_value`.  Pass a plain Python list (must be
+        JSON-serialisable) for static iteration.
+    concurrency:
+        Maximum number of parallel iterations.  Maps to the
+        ``ForEachTask.concurrency`` field in the Databricks SDK.
+    io_manager:
+        An `IoManager` instance for persisting the task's return value,
+        identical in behaviour to ``@task(io_manager=...)``.
+    depends_on:
+        Control-flow-only dependencies, identical to
+        ``@task(depends_on=...)``.  Accepts ``@task``-decorated
+        functions or `TaskProxy` objects.
+    **kwargs:
+        SDK-native ``Task`` fields forwarded to the **inner** task
+        (e.g. ``max_retries``, ``timeout_seconds``).  See `TaskConfig`.
+
+    Examples
+    --------
+    Dynamic inputs from an upstream task with an IoManager data dependency::
+
+        @job
+        def my_pipeline():
+            @task
+            def get_files():
+                set_task_value("files", ["a.csv", "b.csv", "c.csv"])
+
+            @task(io_manager=staging_io)
+            def load_data():
+                return pl.read_parquet("s3://bucket/data.parquet")
+
+            data = load_data()
+
+            @for_each_task(inputs=task_value(get_files, "files"), concurrency=5)
+            def process(inputs: str, data):
+                subset = data.filter(pl.col("file") == inputs)
+                print(f"Processing {inputs}: {len(subset)} rows")
+
+            process(data=data)
+
+    Static inputs::
+
+        @job
+        def static_pipeline():
+            @for_each_task(inputs=["us-east-1", "eu-west-1"])
+            def ingest(inputs: str):
+                print(f"Ingesting {inputs}")
+
+            ingest()
+    """
+
+    if _current_job_name is None:
+        raise RuntimeError("@for_each_task can only be used inside a @job body.")
+
+    # --- resolve inputs ---------------------------------------------------
+    inputs_task_key: str | None = None
+    inputs_value_key: str | None = None
+    static_inputs: list[Any] | None = None
+    inputs_dep_key: str | None = None
+
+    if isinstance(inputs, list):
+        try:
+            json.dumps(inputs)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                f"@for_each_task: static inputs must be "
+                f"JSON-serialisable, got error: {exc}"
+            ) from exc
+        static_inputs = inputs
+    elif isinstance(inputs, TaskValueRef):
+        inputs_task_key = inputs.task_key
+        inputs_value_key = inputs.key
+        inputs_dep_key = inputs.task_key
+    else:
+        raise TypeError(
+            f"@for_each_task(inputs=...) expects a TaskValueRef from "
+            f"task_value() or a static list, got {type(inputs).__name__!r}. "
+            f"Use task_value(upstream_task, 'key_name') to reference "
+            f"a task-value from an upstream task."
+        )
+
+    # --- resolve depends_on -----------------------------------------------
+    depends_on_keys: list[str] = []
+    if depends_on is not None:
+        deps = depends_on if isinstance(depends_on, list) else [depends_on]
+        for dep in deps:
+            depends_on_keys.append(
+                _resolve_task_ref(dep, "@for_each_task(depends_on=...)")
+            )
+
+    # Merge inputs dep into depends_on list
+    all_dep_keys = list(depends_on_keys)
+    if inputs_dep_key is not None:
+        all_dep_keys.append(inputs_dep_key)
+    # Deduplicate while preserving order
+    all_dep_keys = list(dict.fromkeys(all_dep_keys))
+
+    def decorator(fn: types.FunctionType) -> Callable[..., Any]:
+        task_key = fn.__name__
+
+        # Validate that the function has an 'inputs' parameter
+        sig = inspect.signature(fn)
+        if "inputs" not in sig.parameters:
+            raise ValueError(
+                f"@for_each_task: function '{task_key}' must have a "
+                f"parameter named 'inputs' to receive each element "
+                f"from the iteration list. "
+                f"Parameters: {list(sig.parameters.keys())}."
+            )
+
+        meta = TaskMeta(
+            fn=fn,
+            task_key=task_key,
+            io_manager=io_manager,
+            sdk_config=dict(kwargs),
+            depends_on=all_dep_keys,
+        )
+
+        assert _current_job_name is not None  # guaranteed by outer check
+
+        qualified_key = f"{_current_job_name}.{task_key}"
+        _register_unique(_TASK_REGISTRY, qualified_key, meta, "task")
+        _current_job_tasks[task_key] = meta
+
+        # Record ForEachMeta immediately — no call required.
+        _current_job_for_each[task_key] = ForEachMeta(
+            inputs_task_key=inputs_task_key,
+            inputs_value_key=inputs_value_key,
+            static_inputs=static_inputs,
+            concurrency=concurrency,
+        )
+
+        @functools.wraps(fn)
+        def wrapper(*args, **call_kwargs):
+            if _current_job_name is None:
+                # Normal execution (runtime / tests) — call directly.
+                return fn(*args, **call_kwargs)
+
+            # Inside a @job body — wire data-dependency edges.
+            if task_key in _current_job_dag:
+                raise DuplicateResourceError(
+                    f"Task '{task_key}' is called more than once in job "
+                    f"'{_current_job_name}'. Each @task / @for_each_task "
+                    "may only be invoked once per @job body."
+                )
+
+            # Map positional args to parameter names (skip 'inputs')
+            param_names = [p for p in sig.parameters.keys() if p != "inputs"]
+            all_call_kwargs: dict[str, Any] = {}
+            for idx, arg in enumerate(args):
+                p_name = param_names[idx] if idx < len(param_names) else f"arg{idx}"
+                all_call_kwargs[p_name] = arg
+            all_call_kwargs.update(call_kwargs)
+
+            upstream_deps: list[str] = list(all_dep_keys)
+            edge_map: dict[str, str] = {}
+
+            # Process call args as data deps (same as @task)
+            for kw_name, kw_val in all_call_kwargs.items():
+                if isinstance(kw_val, TaskProxy):
+                    upstream_deps.append(kw_val.task_key)
+                    edge_map[kw_name] = kw_val.task_key
+                elif kw_val is not None:
+                    warnings.warn(
+                        f"for_each_task '{task_key}' in job "
+                        f"'{_current_job_name}' received a non-TaskProxy "
+                        f"argument ({type(kw_val).__name__!r}) for "
+                        f"parameter '{kw_name}'. Inside a @job body, "
+                        f"task calls only build the DAG.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+
+            upstream_deps = list(dict.fromkeys(upstream_deps))
+            _current_job_dag[task_key] = upstream_deps
+            _current_job_edges[task_key] = edge_map
+
+            return TaskProxy(task_key)
+
+        wrapper._task_meta = meta  # type: ignore[attr-defined]
+        return wrapper
+
+    return decorator
+
+
+def _resolve_task_ref(ref: Any, context: str) -> str:
+    """Extract a task key from a function reference or `TaskProxy`.
+
+    Parameters
+    ----------
+    ref:
+        Either a ``@task``-decorated function (has ``_task_meta``) or a
+        `TaskProxy`.
+    context:
+        Human-readable label for error messages.
+    """
+    if isinstance(ref, TaskProxy):
+        return ref.task_key
+    if callable(ref) and hasattr(ref, "_task_meta"):
+        return ref._task_meta.task_key
+    raise TypeError(
+        f"{context} expects a @task-decorated function or a TaskProxy "
+        f"returned by calling one, got {type(ref).__name__!r}."
+    )
