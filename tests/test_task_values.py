@@ -31,17 +31,29 @@ class TestSetTaskValue:
         set_task_value("flag", True)
         assert _local_task_values["__current__"]["flag"] is True
 
-    def test_rejects_list(self):
-        with pytest.raises(TypeError, match="primitive types"):
-            set_task_value("bad", [1, 2, 3])  # type: ignore[arg-type]
+    def test_set_none(self):
+        set_task_value("empty", None)
+        assert _local_task_values["__current__"]["empty"] is None
 
-    def test_rejects_dict(self):
-        with pytest.raises(TypeError, match="primitive types"):
-            set_task_value("bad", {"a": 1})  # type: ignore[arg-type]
+    def test_set_list(self):
+        set_task_value("regions", ["us-east-1", "eu-west-1"])
+        assert _local_task_values["__current__"]["regions"] == [
+            "us-east-1",
+            "eu-west-1",
+        ]
 
-    def test_rejects_none(self):
-        with pytest.raises(TypeError, match="primitive types"):
-            set_task_value("bad", None)  # type: ignore[arg-type]
+    def test_set_dict(self):
+        set_task_value("meta", {"rows": 100, "ok": True})
+        assert _local_task_values["__current__"]["meta"] == {"rows": 100, "ok": True}
+
+    def test_set_nested(self):
+        value = {"regions": ["us-east-1"], "counts": [1, 2, 3]}
+        set_task_value("nested", value)
+        assert _local_task_values["__current__"]["nested"] == value
+
+    def test_rejects_non_serializable(self):
+        with pytest.raises(TypeError, match="JSON-serializable"):
+            set_task_value("bad", object())  # type: ignore[arg-type]
 
 
 class TestGetTaskValue:

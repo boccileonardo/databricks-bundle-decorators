@@ -1,13 +1,18 @@
-"""Explicit task-value helpers (small scalar data, akin to Airflow XComs).
+"""Explicit task-value helpers (small JSON-serializable data, akin to Airflow XComs).
 
 For *large* data (DataFrames, datasets, etc.) use an
-`IoManager` instead.  Task values are limited to
-small primitive payloads (~48 KB) and must be opted-in explicitly by calling
+`IoManager` instead.  Task values are intended for small,
+JSON-serializable payloads and must be opted-in explicitly by calling
 `set_task_value` inside a ``@task`` function.
 """
 
+import json
 import os
 from typing import Any
+
+type TaskValue = (
+    str | int | float | bool | None | list[TaskValue] | dict[str, TaskValue]
+)
 
 # Module-level fallback store used during local / test execution.
 _local_task_values: dict[str, dict[str, Any]] = {}
@@ -22,7 +27,7 @@ def _is_databricks_runtime() -> bool:
     return bool(os.environ.get("DATABRICKS_RUNTIME_VERSION"))
 
 
-def set_task_value(key: str, value: str | int | float | bool) -> None:
+def set_task_value(key: str, value: TaskValue) -> None:
     """Write a small value into Databricks task values.
 
     Parameters
@@ -30,18 +35,22 @@ def set_task_value(key: str, value: str | int | float | bool) -> None:
     key:
         Unique key for the value within this task.
     value:
-        A primitive (``str``, ``int``, ``float``, ``bool``).
+        Any JSON-serializable value (``str``, ``int``, ``float``, ``bool``,
+        ``None``, ``list``, or ``dict``).
 
     Raises
     ------
     TypeError
-        If *value* is not a supported primitive type.
+        If *value* is not JSON-serializable.
     """
-    if not isinstance(value, (str, int, float, bool)):
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError) as exc:
         raise TypeError(
-            f"TaskValues only support primitive types (str, int, float, bool), "
-            f"got {type(value).__name__}. Use an IoManager for complex data."
-        )
+            f"TaskValues must be JSON-serializable, "
+            f"got {type(value).__name__}: {exc}. "
+            f"Use an IoManager for complex data."
+        ) from exc
 
     if _is_databricks_runtime():
         # On Databricks: let any API/permission error propagate so that

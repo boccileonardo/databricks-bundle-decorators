@@ -39,10 +39,10 @@ At deploy time this produces a two-task job where `b` runs after `a`. At runtime
 
 There are two mechanisms, suited to different data sizes:
 
-| Mechanism | Use case | Size limit |
+| Mechanism | Use case | Notes |
 |-----------|----------|------------|
-| `IoManager` | DataFrames, datasets, large objects | Unlimited (external storage) |
-| `set_task_value` / `get_task_value` | Row counts, status flags, small strings | < 48 KB |
+| `IoManager` | DataFrames, datasets, large objects | Unlimited size - external storage) |
+| `set_task_value` / `get_task_value` | Row counts, status flags, iteration lists, small JSON data | JSON-serializable small values |
 
 ### IoManager (large data)
 
