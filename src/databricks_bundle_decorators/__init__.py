@@ -20,8 +20,8 @@ DAG wiring:
 Data management:
     ``IoManager``, ``OutputContext``, ``InputContext``
 
-Task values (small scalars):
-    ``set_task_value``, ``get_task_value``
+Task values (small JSON-serializable data):
+    ``set_task_value``, ``get_task_value``, ``TaskValue``
 
 Databricks utilities:
     ``get_dbutils``
@@ -54,6 +54,7 @@ from databricks_bundle_decorators.sdk_types import JobConfig as JobConfig
 from databricks_bundle_decorators.sdk_types import TaskConfig as TaskConfig
 from databricks_bundle_decorators.task_values import get_task_value as get_task_value
 from databricks_bundle_decorators.task_values import set_task_value as set_task_value
+from databricks_bundle_decorators.task_values import TaskValue as TaskValue
 
 __all__ = [
     "task",
@@ -74,6 +75,7 @@ __all__ = [
     "TaskConfig",
     "set_task_value",
     "get_task_value",
+    "TaskValue",
     "get_dbutils",
     "params",
 ]
