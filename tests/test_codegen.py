@@ -215,3 +215,38 @@ class TestForEachCodegen:
         inner = tasks["work"].for_each_task.task
         assert inner.max_retries == 3
         assert inner.timeout_seconds == 600
+
+    def test_for_each_outer_has_no_cluster(self):
+        """Outer for-each wrapper must never carry compute."""
+        test_cluster = job_cluster(
+            name="shared", spark_version="15.0.x-scala2.12", num_workers=2
+        )
+
+        @job(cluster=test_cluster)
+        def fe_cluster_job():
+            @for_each_task(inputs=["a", "b"])
+            def work(inputs: str):
+                pass
+
+        resources = generate_resources(package_name="test_pkg")
+        outer = resources["fe_cluster_job"].tasks[0]
+
+        assert outer.for_each_task is not None
+        assert outer.job_cluster_key is None
+
+    def test_for_each_inner_inherits_job_cluster(self):
+        """Inner task inherits job_cluster_key when no explicit compute."""
+        test_cluster = job_cluster(
+            name="shared", spark_version="15.0.x-scala2.12", num_workers=2
+        )
+
+        @job(cluster=test_cluster)
+        def fe_inherit_job():
+            @for_each_task(inputs=["x"])
+            def work(inputs: str):
+                pass
+
+        resources = generate_resources(package_name="test_pkg")
+        inner = resources["fe_inherit_job"].tasks[0].for_each_task.task
+
+        assert inner.job_cluster_key == "shared"
