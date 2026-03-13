@@ -7,15 +7,24 @@ Usage::
     uv run dbxdec init
 """
 
-import argparse
+from __future__ import annotations
+
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
+
+import typer
 
 try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
     import tomli as tomllib  # type: ignore[no-redef]
+
+app = typer.Typer(
+    name="dbxdec",
+    help="databricks-bundle-decorators CLI",
+    no_args_is_help=True,
+)
 
 
 def _read_pyproject(cwd: Path) -> dict:
@@ -328,14 +337,13 @@ def _add_entry_point_to_pyproject(cwd: Path, package_name: str) -> bool:
 # --- Init command ----------------------------------------------------------
 
 
-def _cmd_init(args: argparse.Namespace) -> None:
+def _cmd_init(*, docker: bool = False) -> None:
     """Scaffold a new databricks-bundle-decorators pipeline project."""
     cwd = Path.cwd()
     pyproject = _read_pyproject(cwd)
     package_name = _detect_package_name(pyproject)
     project_name = pyproject["project"]["name"]
     pkg_dir = _detect_src_layout(cwd, package_name)
-    docker: bool = getattr(args, "docker", False)
 
     created: list[str] = []
     skipped: list[str] = []
@@ -403,7 +411,18 @@ def _cmd_init(args: argparse.Namespace) -> None:
 # --- Backfill command ------------------------------------------------------
 
 
-def _cmd_backfill(args: argparse.Namespace) -> None:
+def _cmd_backfill(
+    *,
+    job_name: str,
+    start: str | None = None,
+    end: str | None = None,
+    keys: str | None = None,
+    max_concurrent: int | None = None,
+    dry_run: bool = False,
+    wait: bool = False,
+    profile: str | None = None,
+    host: str | None = None,
+) -> None:
     """Trigger one Databricks job run per partition key."""
     import asyncio
 
@@ -417,7 +436,6 @@ def _cmd_backfill(args: argparse.Namespace) -> None:
     # 1. Populate registries
     discover_pipelines()
 
-    job_name: str = args.job_name
     job_meta = _JOB_REGISTRY.get(job_name)
     if job_meta is None:
         available = sorted(_JOB_REGISTRY.keys())
@@ -427,7 +445,7 @@ def _cmd_backfill(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     partition: PartitionDef | None = job_meta.partition
-    if partition is None and args.keys is None:
+    if partition is None and keys is None:
         print(
             f"Error: Job '{job_name}' has no partition definition. "
             f"Use --keys to specify partition keys explicitly.",
@@ -436,24 +454,21 @@ def _cmd_backfill(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # 2. Enumerate keys
-    if args.keys is not None:
-        keys = [k.strip() for k in args.keys.split(",") if k.strip()]
+    if keys is not None:
+        key_list = [k.strip() for k in keys.split(",") if k.strip()]
     elif partition is not None:
-        keys = partition.partition_keys(start=args.start, end=args.end)
+        key_list = partition.partition_keys(start=start, end=end)
     else:
-        keys = []
+        key_list = []
 
-    if not keys:
+    if not key_list:
         print("No partition keys to process.", file=sys.stderr)
         sys.exit(1)
 
-    dry_run: bool = args.dry_run
-    wait: bool = args.wait
-
     print(f"Job: {job_name}")
-    print(f"Partition keys ({len(keys)}): {', '.join(keys[:10])}", end="")
-    if len(keys) > 10:
-        print(f" ... and {len(keys) - 10} more")
+    print(f"Partition keys ({len(key_list)}): {', '.join(key_list[:10])}", end="")
+    if len(key_list) > 10:
+        print(f" ... and {len(key_list) - 10} more")
     else:
         print()
 
@@ -473,10 +488,10 @@ def _cmd_backfill(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     sdk_kwargs: dict[str, str] = {}
-    if args.profile:
-        sdk_kwargs["profile"] = args.profile
-    if args.host:
-        sdk_kwargs["host"] = args.host
+    if profile:
+        sdk_kwargs["profile"] = profile
+    if host:
+        sdk_kwargs["host"] = host
 
     w = WorkspaceClient(**sdk_kwargs)
 
@@ -503,14 +518,14 @@ def _cmd_backfill(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    job_id = matching_jobs[0].job_id
+    db_job_id = matching_jobs[0].job_id
 
-    max_concurrent: int = args.max_concurrent or len(keys)
+    concurrency: int = max_concurrent or len(key_list)
     submitted: list[str] = []
     failed: list[str] = []
 
     async def _submit_all() -> None:
-        sem = asyncio.Semaphore(max_concurrent)
+        sem = asyncio.Semaphore(concurrency)
         waiters: list[tuple[str, Any]] = []  # (key, Wait[Run])
 
         async def _submit_one(key: str) -> None:
@@ -518,7 +533,7 @@ def _cmd_backfill(args: argparse.Namespace) -> None:
                 try:
                     waiter = await asyncio.to_thread(
                         w.jobs.run_now,
-                        job_id=job_id,
+                        job_id=db_job_id,
                         job_parameters={LOGICAL_DATE_PARAM: key},
                     )
                     msg = f"  {key} -> run_id={waiter.run_id}"
@@ -530,7 +545,7 @@ def _cmd_backfill(args: argparse.Namespace) -> None:
                     print(f"  {key} -> FAILED: {exc}", file=sys.stderr)
 
         async with asyncio.TaskGroup() as tg:
-            for key in keys:
+            for key in key_list:
                 tg.create_task(_submit_one(key))
 
         if wait and waiters:
@@ -564,7 +579,7 @@ def _cmd_backfill(args: argparse.Namespace) -> None:
         print("\nBackfill interrupted.", file=sys.stderr)
         sys.exit(130)
 
-    print(f"\nSubmitted {len(submitted)}/{len(keys)} runs.")
+    print(f"\nSubmitted {len(submitted)}/{len(key_list)} runs.")
     if failed:
         print(
             f"Failed keys ({len(failed)}): {', '.join(failed)}",
@@ -573,89 +588,87 @@ def _cmd_backfill(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+# --- Typer commands --------------------------------------------------------
+
+
+@app.command("init")
+def init(
+    docker: Annotated[
+        bool,
+        typer.Option(
+            help="Generate a Docker-based example pipeline where the "
+            "package is pre-installed in a custom container image "
+            "instead of uploaded as a wheel.",
+        ),
+    ] = False,
+) -> None:
+    """Scaffold a new databricks-bundle-decorators pipeline project."""
+    _cmd_init(docker=docker)
+
+
+@app.command("backfill")
+def backfill(
+    job_name: Annotated[
+        str,
+        typer.Argument(help="Name of the @job to backfill"),
+    ],
+    start: Annotated[
+        str | None,
+        typer.Option(help="Start of partition range (inclusive), e.g. 2024-01-01"),
+    ] = None,
+    end: Annotated[
+        str | None,
+        typer.Option(help="End of partition range (inclusive), e.g. 2024-01-31"),
+    ] = None,
+    keys: Annotated[
+        str | None,
+        typer.Option(help="Comma-separated list of explicit partition keys"),
+    ] = None,
+    max_concurrent: Annotated[
+        int | None,
+        typer.Option(help="Maximum number of concurrent run submissions"),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print partition keys without submitting runs"),
+    ] = False,
+    wait: Annotated[
+        bool,
+        typer.Option(help="Wait for all runs to complete and report success/failure"),
+    ] = False,
+    profile: Annotated[
+        str | None,
+        typer.Option(help="Databricks CLI profile name"),
+    ] = None,
+    host: Annotated[
+        str | None,
+        typer.Option(help="Databricks workspace URL"),
+    ] = None,
+) -> None:
+    """Submit one Databricks job run per partition key."""
+    _cmd_backfill(
+        job_name=job_name,
+        start=start,
+        end=end,
+        keys=keys,
+        max_concurrent=max_concurrent,
+        dry_run=dry_run,
+        wait=wait,
+        profile=profile,
+        host=host,
+    )
+
+
 # --- Main ------------------------------------------------------------------
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="dbxdec",
-        description="databricks-bundle-decorators CLI",
-    )
-    subparsers = parser.add_subparsers(dest="command")
-
-    init_parser = subparsers.add_parser(
-        "init",
-        help="Scaffold a new databricks-bundle-decorators pipeline project",
-    )
-    init_parser.add_argument(
-        "--docker",
-        action="store_true",
-        help=(
-            "Generate a Docker-based example pipeline where the package "
-            "is pre-installed in a custom container image instead of "
-            "uploaded as a wheel."
-        ),
-    )
-
-    # ---- backfill subcommand ---------------------------------------------
-    backfill_parser = subparsers.add_parser(
-        "backfill",
-        help="Submit one Databricks job run per partition key",
-    )
-    backfill_parser.add_argument(
-        "job_name",
-        help="Name of the @job to backfill",
-    )
-    backfill_parser.add_argument(
-        "--start",
-        default=None,
-        help="Start of partition range (inclusive), e.g. 2024-01-01",
-    )
-    backfill_parser.add_argument(
-        "--end",
-        default=None,
-        help="End of partition range (inclusive), e.g. 2024-01-31",
-    )
-    backfill_parser.add_argument(
-        "--keys",
-        default=None,
-        help="Comma-separated list of explicit partition keys",
-    )
-    backfill_parser.add_argument(
-        "--max-concurrent",
-        type=int,
-        default=None,
-        dest="max_concurrent",
-        help="Maximum number of concurrent run submissions",
-    )
-    backfill_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        dest="dry_run",
-        help="Print partition keys without submitting runs",
-    )
-    backfill_parser.add_argument(
-        "--wait",
-        action="store_true",
-        help="Wait for all runs to complete and report success/failure",
-    )
-    backfill_parser.add_argument(
-        "--profile",
-        default=None,
-        help="Databricks CLI profile name",
-    )
-    backfill_parser.add_argument(
-        "--host",
-        default=None,
-        help="Databricks workspace URL",
-    )
-
-    args = parser.parse_args()
-
-    if args.command == "init":
-        _cmd_init(args)
-    elif args.command == "backfill":
-        _cmd_backfill(args)
-    else:
-        parser.print_help()
+    try:
+        app(standalone_mode=False)
+    except SystemExit:
+        raise
+    except Exception:
+        # standalone_mode=False doesn't convert click errors to SystemExit.
+        # Re-raise as SystemExit so the CLI behaves correctly for end users
+        # (e.g. no-args-is-help, missing required argument, etc.).
         sys.exit(1)

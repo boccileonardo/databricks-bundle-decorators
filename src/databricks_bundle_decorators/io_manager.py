@@ -15,15 +15,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-class AllPartitions:
-    """Marker for reading all partitions from an upstream task.
-
-    .. deprecated::
-        Use the `all_partitions` function or ``@task(all_partitions=True)``
-        instead.  This class is kept for backward compatibility.
-    """
-
-
 def _normalize_partition_by(
     partition_by: str | list[str] | None,
 ) -> list[str] | None:

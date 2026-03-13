@@ -17,6 +17,8 @@ classifiers = [
 ]
 dependencies = [
   "databricks-bundles>=0.275",
+  "typer>=0.16",
+  "whenever>=0.9.5",
 ]
 optional-dependencies.aws = [
   "fsspec",

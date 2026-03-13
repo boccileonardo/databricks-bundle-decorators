@@ -48,7 +48,6 @@ from databricks_bundle_decorators.decorators import TaskProxy as TaskProxy
 from databricks_bundle_decorators.discovery import (
     discover_pipelines as discover_pipelines,
 )
-from databricks_bundle_decorators.io_manager import AllPartitions as AllPartitions
 from databricks_bundle_decorators.io_manager import InputContext as InputContext
 from databricks_bundle_decorators.io_manager import IoManager as IoManager
 from databricks_bundle_decorators.io_manager import OutputContext as OutputContext
@@ -86,7 +85,6 @@ __all__ = [
     "IoManager",
     "OutputContext",
     "InputContext",
-    "AllPartitions",
     "ClusterMeta",
     "DuplicateResourceError",
     "ClusterConfig",

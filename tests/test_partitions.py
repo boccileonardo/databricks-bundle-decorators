@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import warnings
-from datetime import timedelta
 
 import pytest
+import whenever
 
 from databricks_bundle_decorators.context import _populate_params
 from databricks_bundle_decorators.partitions import (
@@ -45,15 +45,11 @@ class TestDailyPartition:
         assert p.partition_keys() == []
 
     def test_default_end_is_yesterday(self):
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-
-        yesterday = (
-            datetime.now(tz=ZoneInfo("UTC")).date() - timedelta(days=1)
-        ).strftime("%Y-%m-%d")
-        p = DailyPartition(start_date=yesterday)
+        yesterday = whenever.ZonedDateTime.now("UTC").date().subtract(days=1)
+        key = yesterday.py_date().strftime("%Y-%m-%d")
+        p = DailyPartition(start_date=key)
         keys = p.partition_keys()
-        assert keys == [yesterday]
+        assert keys == [key]
 
     def test_custom_format(self):
         p = DailyPartition(

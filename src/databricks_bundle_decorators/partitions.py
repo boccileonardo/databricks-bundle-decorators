@@ -21,8 +21,9 @@ import logging
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime
+
+import whenever
 
 _logger = logging.getLogger(__name__)
 
@@ -80,22 +81,24 @@ class DailyPartition(PartitionDef):
     fmt: str = "%Y-%m-%d"
     tz: str = "UTC"
 
+    def _parse(self, key: str) -> whenever.Date:
+        return whenever.Date.from_py_date(datetime.strptime(key, self.fmt).date())
+
     def partition_keys(
         self, start: str | None = None, end: str | None = None
     ) -> list[str]:
-        s = datetime.strptime(start or self.start_date, self.fmt).date()
+        s = self._parse(start or self.start_date)
         if end is not None:
-            e = datetime.strptime(end, self.fmt).date()
+            e = self._parse(end)
         elif self.end_date is not None:
-            e = datetime.strptime(self.end_date, self.fmt).date()
+            e = self._parse(self.end_date)
         else:
-            today = datetime.now(tz=ZoneInfo(self.tz)).date()
-            e = today - timedelta(days=1)
+            e = whenever.ZonedDateTime.now(self.tz).date().subtract(days=1)
 
         keys: list[str] = []
         while s <= e:
-            keys.append(s.strftime(self.fmt))
-            s += timedelta(days=1)
+            keys.append(s.py_date().strftime(self.fmt))
+            s = s.add(days=1)
         return keys
 
 
@@ -128,9 +131,11 @@ class WeeklyPartition(PartitionDef):
     fmt: str = "%G-W%V"
     tz: str = "UTC"
 
-    def _parse_iso_week(self, key: str) -> date:
-        """Parse an ISO-week key into a Monday ``date``."""
-        return datetime.strptime(key + "-1", self.fmt + "-%u").date()
+    def _parse_iso_week(self, key: str) -> whenever.Date:
+        """Parse an ISO-week key into a Monday ``Date``."""
+        return whenever.Date.from_py_date(
+            datetime.strptime(key + "-1", self.fmt + "-%u").date()
+        )
 
     def partition_keys(
         self, start: str | None = None, end: str | None = None
@@ -141,14 +146,16 @@ class WeeklyPartition(PartitionDef):
         elif self.end_date is not None:
             e = self._parse_iso_week(self.end_date)
         else:
-            today = datetime.now(tz=ZoneInfo(self.tz)).date()
+            today = whenever.ZonedDateTime.now(self.tz).date()
             # Most recent completed week: Monday of current week minus 7 days
-            e = today - timedelta(days=today.weekday() + 7)
+            # day_of_week() returns Weekday enum (MONDAY=1..SUNDAY=7)
+            weekday_offset = today.day_of_week().value - 1  # 0 for Monday
+            e = today.subtract(days=weekday_offset + 7)
 
         keys: list[str] = []
         while s <= e:
-            keys.append(s.strftime(self.fmt))
-            s += timedelta(weeks=1)
+            keys.append(s.py_date().strftime(self.fmt))
+            s = s.add(weeks=1)
         return keys
 
 
@@ -177,15 +184,10 @@ class MonthlyPartition(PartitionDef):
     fmt: str = "%Y-%m"
     tz: str = "UTC"
 
-    def _parse_month(self, key: str) -> date:
+    def _parse_month(self, key: str) -> whenever.Date:
         """Parse a month key into the first day of that month."""
-        return datetime.strptime(key, self.fmt).date().replace(day=1)
-
-    def _next_month(self, d: date) -> date:
-        """Advance *d* to the first day of the next month."""
-        if d.month == 12:
-            return d.replace(year=d.year + 1, month=1)
-        return d.replace(month=d.month + 1)
+        d = datetime.strptime(key, self.fmt).date()
+        return whenever.Date(d.year, d.month, 1)
 
     def partition_keys(
         self, start: str | None = None, end: str | None = None
@@ -196,14 +198,14 @@ class MonthlyPartition(PartitionDef):
         elif self.end_date is not None:
             e = self._parse_month(self.end_date)
         else:
-            today = datetime.now(tz=ZoneInfo(self.tz)).date()
+            today = whenever.ZonedDateTime.now(self.tz).date()
             # Previous completed month
-            e = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
+            e = today.replace(day=1).subtract(days=1).replace(day=1)
 
         keys: list[str] = []
         while s <= e:
-            keys.append(s.strftime(self.fmt))
-            s = self._next_month(s)
+            keys.append(s.py_date().strftime(self.fmt))
+            s = s.add(months=1)
         return keys
 
 
@@ -236,44 +238,39 @@ class HourlyPartition(PartitionDef):
     fmt: str = "%Y-%m-%dT%H"
     tz: str = "UTC"
 
-    def _parse_hour(self, key: str) -> datetime:
-        """Parse an hour key into a timezone-aware ``datetime``.
+    def _parse_hour(self, key: str) -> whenever.ZonedDateTime:
+        """Parse an hour key into a ``ZonedDateTime``.
 
-        Uses ``fold=0`` so that ambiguous wall-clock times (e.g. the
-        repeated hour during a fall-back DST transition) resolve
-        deterministically to the *first* occurrence.
+        Ambiguous wall-clock times (e.g. the repeated hour during a
+        fall-back DST transition) resolve to the *first* occurrence.
         """
         naive = datetime.strptime(key, self.fmt)
-        return naive.replace(tzinfo=ZoneInfo(self.tz), fold=0)
+        return whenever.ZonedDateTime(
+            naive.year, naive.month, naive.day, naive.hour, tz=self.tz
+        )
 
     def partition_keys(
         self, start: str | None = None, end: str | None = None
     ) -> list[str]:
-        tzinfo = ZoneInfo(self.tz)
         s = self._parse_hour(start or self.start_date)
         if end is not None:
             e = self._parse_hour(end)
         elif self.end_date is not None:
             e = self._parse_hour(self.end_date)
         else:
-            now = datetime.now(tz=tzinfo)
+            now = whenever.ZonedDateTime.now(self.tz)
             # Previous completed hour
-            e = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
-
-        # Step via UTC to avoid DST ambiguity, then convert back
-        s_utc = s.astimezone(timezone.utc)
-        e_utc = e.astimezone(timezone.utc)
+            e = now.replace(minute=0, second=0, nanosecond=0).subtract(hours=1)
 
         keys: list[str] = []
         seen: set[str] = set()
-        cur = s_utc
-        while cur <= e_utc:
-            local = cur.astimezone(tzinfo)
-            key = local.strftime(self.fmt)
+        cur = s
+        while cur <= e:
+            key = cur.py_datetime().strftime(self.fmt)
             if key not in seen:
                 keys.append(key)
                 seen.add(key)
-            cur += timedelta(hours=1)
+            cur = cur.add(hours=1)
         return keys
 
 

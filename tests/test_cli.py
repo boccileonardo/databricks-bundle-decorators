@@ -1,6 +1,5 @@
 """Tests for the CLI scaffolding command (dbxdec init)."""
 
-import argparse
 import sys
 from pathlib import Path
 
@@ -72,9 +71,8 @@ class TestCmdInit:
     def test_creates_all_files(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         self._make_project(tmp_path)
         monkeypatch.chdir(tmp_path)
-        import argparse
 
-        _cmd_init(argparse.Namespace())
+        _cmd_init()
 
         assert (tmp_path / "resources" / "__init__.py").exists()
         assert (
@@ -104,9 +102,7 @@ class TestCmdInit:
         resources_dir.mkdir()
         (resources_dir / "__init__.py").write_text("# existing")
 
-        import argparse
-
-        _cmd_init(argparse.Namespace())
+        _cmd_init()
 
         # Should not overwrite
         assert (resources_dir / "__init__.py").read_text() == "# existing"
@@ -118,9 +114,8 @@ class TestCmdInit:
     ):
         self._make_project(tmp_path, "my-pipeline")
         monkeypatch.chdir(tmp_path)
-        import argparse
 
-        _cmd_init(argparse.Namespace())
+        _cmd_init()
 
         content = (tmp_path / "databricks.yaml").read_text()
         assert "my-pipeline" in content
@@ -134,9 +129,8 @@ class TestCmdInit:
     ):
         self._make_project(tmp_path)
         monkeypatch.chdir(tmp_path)
-        import argparse
 
-        _cmd_init(argparse.Namespace())
+        _cmd_init()
 
         captured = capsys.readouterr()
         assert "Modified" in captured.out
@@ -160,9 +154,8 @@ class TestCmdInit:
         )
         (tmp_path / "pyproject.toml").write_text(pyproject)
         monkeypatch.chdir(tmp_path)
-        import argparse
 
-        _cmd_init(argparse.Namespace())
+        _cmd_init()
 
         captured = capsys.readouterr()
         assert "Modified" not in captured.out
@@ -178,9 +171,8 @@ class TestCmdInit:
     ):
         self._make_project(tmp_path)
         monkeypatch.chdir(tmp_path)
-        import argparse
 
-        _cmd_init(argparse.Namespace(docker=True))
+        _cmd_init(docker=True)
 
         example_path = tmp_path / "src" / "test_project" / "pipelines" / "example.py"
         assert example_path.exists()
@@ -202,9 +194,8 @@ class TestCmdInit:
     ):
         self._make_project(tmp_path)
         monkeypatch.chdir(tmp_path)
-        import argparse
 
-        _cmd_init(argparse.Namespace(docker=False))
+        _cmd_init(docker=False)
 
         example_path = tmp_path / "src" / "test_project" / "pipelines" / "example.py"
         content = example_path.read_text()
@@ -307,18 +298,10 @@ class TestBackfillCmd:
             lambda: None,
         )
 
-        ns = argparse.Namespace(
+        _cmd_backfill(
             job_name="test_pipeline",
-            start=None,
-            end=None,
-            keys=None,
-            max_concurrent=None,
             dry_run=True,
-            profile=None,
-            host=None,
-            wait=False,
         )
-        _cmd_backfill(ns)
 
         out = capsys.readouterr().out
         assert "test_pipeline" in out
@@ -334,18 +317,11 @@ class TestBackfillCmd:
             lambda: None,
         )
 
-        ns = argparse.Namespace(
+        _cmd_backfill(
             job_name="test_pipeline",
-            start=None,
-            end=None,
             keys="a,b,c",
-            max_concurrent=None,
             dry_run=True,
-            profile=None,
-            host=None,
-            wait=False,
         )
-        _cmd_backfill(ns)
 
         out = capsys.readouterr().out
         assert "a" in out
@@ -361,18 +337,12 @@ class TestBackfillCmd:
             lambda: None,
         )
 
-        ns = argparse.Namespace(
+        _cmd_backfill(
             job_name="test_pipeline",
             start="2024-01-02",
             end="2024-01-03",
-            keys=None,
-            max_concurrent=None,
             dry_run=True,
-            profile=None,
-            host=None,
-            wait=False,
         )
-        _cmd_backfill(ns)
 
         out = capsys.readouterr().out
         assert "2024-01-02" in out
@@ -386,21 +356,10 @@ class TestBackfillCmd:
             lambda: None,
         )
 
-        ns = argparse.Namespace(
-            job_name="nonexistent",
-            start=None,
-            end=None,
-            keys=None,
-            max_concurrent=None,
-            dry_run=False,
-            profile=None,
-            host=None,
-            wait=False,
-        )
         with pytest.raises(SystemExit):
             from databricks_bundle_decorators.cli import _cmd_backfill
 
-            _cmd_backfill(ns)
+            _cmd_backfill(job_name="nonexistent")
 
     def test_no_partition_no_keys_exits(self, monkeypatch):
         """Exit when job has no partition and --keys is not provided."""
@@ -411,21 +370,10 @@ class TestBackfillCmd:
             lambda: None,
         )
 
-        ns = argparse.Namespace(
-            job_name="no_part_job",
-            start=None,
-            end=None,
-            keys=None,
-            max_concurrent=None,
-            dry_run=False,
-            profile=None,
-            host=None,
-            wait=False,
-        )
         with pytest.raises(SystemExit):
             from databricks_bundle_decorators.cli import _cmd_backfill
 
-            _cmd_backfill(ns)
+            _cmd_backfill(job_name="no_part_job")
 
     def test_explicit_keys_on_unpartitioned_job(self, monkeypatch, capsys):
         """--keys works even when job has no partition definition."""
@@ -436,20 +384,13 @@ class TestBackfillCmd:
             lambda: None,
         )
 
-        ns = argparse.Namespace(
-            job_name="no_part_job",
-            start=None,
-            end=None,
-            keys="x,y",
-            max_concurrent=None,
-            dry_run=True,
-            profile=None,
-            host=None,
-            wait=False,
-        )
         from databricks_bundle_decorators.cli import _cmd_backfill
 
-        _cmd_backfill(ns)
+        _cmd_backfill(
+            job_name="no_part_job",
+            keys="x,y",
+            dry_run=True,
+        )
 
         out = capsys.readouterr().out
         assert "x" in out
@@ -464,18 +405,10 @@ class TestBackfillCmd:
             lambda: None,
         )
 
-        ns = argparse.Namespace(
-            job_name="test_pipeline",
-            start=None,
-            end=None,
-            keys=",,,",
-            max_concurrent=None,
-            dry_run=False,
-            profile=None,
-            host=None,
-            wait=False,
-        )
         with pytest.raises(SystemExit):
             from databricks_bundle_decorators.cli import _cmd_backfill
 
-            _cmd_backfill(ns)
+            _cmd_backfill(
+                job_name="test_pipeline",
+                keys=",,,",
+            )
