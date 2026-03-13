@@ -598,7 +598,7 @@ requires-dist = [
     { name = "polars", marker = "extra == 'polars'" },
     { name = "s3fs", marker = "extra == 'aws'" },
     { name = "typer", specifier = ">=0.16" },
-    { name = "whenever", specifier = ">=0.9.5" },
+    { name = "whenever", specifier = ">=0.6.16" },
 ]
 provides-extras = ["aws", "azure", "gcp", "polars"]
 
