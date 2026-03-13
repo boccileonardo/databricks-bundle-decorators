@@ -21,6 +21,9 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
+    _format_logical_date,
+    _needs_logical_date_col,
+    _normalize_partition_by,
 )
 
 
@@ -104,11 +107,13 @@ class PolarsJsonIoManager(IoManager):
         storage_options: dict[str, str] | Callable[[], dict[str, str]] | None = None,
         write_options: dict[str, Any] | None = None,
         read_options: dict[str, Any] | None = None,
+        partition_by: str | list[str] | None = None,
     ) -> None:
         self.base_path = base_path.rstrip("/")
         self._storage_options = storage_options
         self._write_options = write_options or {}
         self._read_options = read_options or {}
+        self._partition_by = _normalize_partition_by(partition_by)
 
     @property
     def storage_options(self) -> dict[str, str] | None:
@@ -118,35 +123,63 @@ class PolarsJsonIoManager(IoManager):
         return self._storage_options
 
     def _uri(self, key: str) -> str:
-        return f"{self.base_path}/{key}.ndjson"
+        return f"{self.base_path}/{key}"
 
     def write(self, context: OutputContext, obj: Any) -> None:
         """Write a Polars DataFrame or LazyFrame as NDJSON.
 
-        Both types are routed through ``sink_ndjson`` for consistent
-        cloud storage support via ``storage_options``.
-
         - `polars.LazyFrame` → ``sink_ndjson``
         - `polars.DataFrame` → ``.lazy()`` then ``sink_ndjson``
+
+        When ``partition_by`` is set, writes to Hive-style partitioned
+        directories using ``pl.PartitionByKey``.
         """
         import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional
 
-        uri = self._uri(context.task_key)
+        base_uri = self._uri(context.task_key)
 
-        if isinstance(obj, pl.LazyFrame):
-            obj.sink_ndjson(
-                uri, storage_options=self.storage_options, **self._write_options
-            )
-        elif isinstance(obj, pl.DataFrame):
-            obj.lazy().sink_ndjson(
-                uri, storage_options=self.storage_options, **self._write_options
-            )
+        # Inject logical_date column if it's a partition column
+        if _needs_logical_date_col(self._partition_by):
+            ld_str = _format_logical_date(context.logical_date)
+            obj = obj.with_columns(pl.lit(ld_str).alias("logical_date"))
+
+        if self._partition_by:
+            if isinstance(obj, pl.LazyFrame):
+                obj.sink_ndjson(
+                    pl.PartitionByKey(base_uri, by=self._partition_by),
+                    mkdir=True,
+                    storage_options=self.storage_options,
+                    **self._write_options,
+                )
+            elif isinstance(obj, pl.DataFrame):
+                obj.lazy().sink_ndjson(
+                    pl.PartitionByKey(base_uri, by=self._partition_by),
+                    mkdir=True,
+                    storage_options=self.storage_options,
+                    **self._write_options,
+                )
+            else:
+                msg = (
+                    f"PolarsJsonIoManager.write() expects a polars.DataFrame or "
+                    f"polars.LazyFrame, got {type(obj).__name__}"
+                )
+                raise TypeError(msg)
         else:
-            msg = (
-                f"PolarsJsonIoManager.write() expects a polars.DataFrame or "
-                f"polars.LazyFrame, got {type(obj).__name__}"
-            )
-            raise TypeError(msg)
+            uri = f"{base_uri}.ndjson"
+            if isinstance(obj, pl.LazyFrame):
+                obj.sink_ndjson(
+                    uri, storage_options=self.storage_options, **self._write_options
+                )
+            elif isinstance(obj, pl.DataFrame):
+                obj.lazy().sink_ndjson(
+                    uri, storage_options=self.storage_options, **self._write_options
+                )
+            else:
+                msg = (
+                    f"PolarsJsonIoManager.write() expects a polars.DataFrame or "
+                    f"polars.LazyFrame, got {type(obj).__name__}"
+                )
+                raise TypeError(msg)
 
     def read(self, context: InputContext) -> Any:
         """Read NDJSON as a LazyFrame or DataFrame.
@@ -155,11 +188,42 @@ class PolarsJsonIoManager(IoManager):
         returns ``read_ndjson`` (eager).  Otherwise returns ``scan_ndjson``
         (lazy `polars.LazyFrame`) — this is the default for
         unannotated parameters.
+
+        When ``partition_by`` is set, reads from the Hive-partitioned
+        directory.  By default only the current ``logical_date``
+        partition is returned; use `all_partitions()` on the
+        upstream dependency or ``@task(all_partitions=True)`` on
+        the consuming task to read all partitions.
         """
         import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional
 
-        uri = self._uri(context.upstream_task_key)
+        base_uri = self._uri(context.upstream_task_key)
 
+        if self._partition_by:
+            glob_uri = f"{base_uri}/**/*.ndjson"
+            if context.expected_type is pl.DataFrame:
+                result = pl.read_ndjson(
+                    glob_uri,
+                    hive_partitioning=True,
+                    storage_options=self.storage_options,
+                    **self._read_options,
+                )
+            else:
+                result = pl.scan_ndjson(
+                    glob_uri,
+                    hive_partitioning=True,
+                    storage_options=self.storage_options,
+                    **self._read_options,
+                )
+            if (
+                _needs_logical_date_col(self._partition_by)
+                and not context.all_partitions
+            ):
+                ld_str = _format_logical_date(context.logical_date)
+                result = result.filter(pl.col("logical_date") == ld_str)
+            return result
+
+        uri = f"{base_uri}.ndjson"
         if context.expected_type is pl.DataFrame:
             return pl.read_ndjson(
                 uri, storage_options=self.storage_options, **self._read_options

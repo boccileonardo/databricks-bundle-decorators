@@ -60,6 +60,11 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
             for param_name, upstream_task in edges.items():
                 named_params[f"__upstream__{param_name}"] = upstream_task
 
+            # All-partitions flags for upstream reads
+            ap_params = job_meta.all_partitions_edges.get(task_key, set())
+            for param_name in ap_params:
+                named_params[f"__all_partitions__{param_name}"] = "true"
+
             # Forward every job-level parameter to the task CLI
             for param_name in job_meta.params:
                 named_params[param_name] = (

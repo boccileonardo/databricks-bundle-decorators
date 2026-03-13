@@ -10,6 +10,7 @@ Usage::
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 try:
     import tomllib
@@ -399,6 +400,179 @@ def _cmd_init(args: argparse.Namespace) -> None:
     print("Done! Define your @task and @job functions in the pipelines/ directory.")
 
 
+# --- Backfill command ------------------------------------------------------
+
+
+def _cmd_backfill(args: argparse.Namespace) -> None:
+    """Trigger one Databricks job run per partition key."""
+    import asyncio
+
+    from databricks_bundle_decorators.discovery import discover_pipelines
+    from databricks_bundle_decorators.partitions import (
+        LOGICAL_DATE_PARAM,
+        PartitionDef,
+    )
+    from databricks_bundle_decorators.registry import _JOB_REGISTRY
+
+    # 1. Populate registries
+    discover_pipelines()
+
+    job_name: str = args.job_name
+    job_meta = _JOB_REGISTRY.get(job_name)
+    if job_meta is None:
+        available = sorted(_JOB_REGISTRY.keys())
+        print(f"Error: Job '{job_name}' not found.", file=sys.stderr)
+        if available:
+            print(f"Available jobs: {', '.join(available)}", file=sys.stderr)
+        sys.exit(1)
+
+    partition: PartitionDef | None = job_meta.partition
+    if partition is None and args.keys is None:
+        print(
+            f"Error: Job '{job_name}' has no partition definition. "
+            f"Use --keys to specify partition keys explicitly.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # 2. Enumerate keys
+    if args.keys is not None:
+        keys = [k.strip() for k in args.keys.split(",") if k.strip()]
+    elif partition is not None:
+        keys = partition.partition_keys(start=args.start, end=args.end)
+    else:
+        keys = []
+
+    if not keys:
+        print("No partition keys to process.", file=sys.stderr)
+        sys.exit(1)
+
+    dry_run: bool = args.dry_run
+    wait: bool = args.wait
+
+    print(f"Job: {job_name}")
+    print(f"Partition keys ({len(keys)}): {', '.join(keys[:10])}", end="")
+    if len(keys) > 10:
+        print(f" ... and {len(keys) - 10} more")
+    else:
+        print()
+
+    if dry_run:
+        print("\n[DRY RUN] No runs submitted.")
+        return
+
+    # 3. Submit runs via Databricks SDK
+    try:
+        from databricks.sdk import WorkspaceClient  # type: ignore[import-untyped]
+    except ImportError:
+        print(
+            "Error: databricks-sdk is required for backfill. "
+            "Install it with: uv add databricks-sdk",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    sdk_kwargs: dict[str, str] = {}
+    if args.profile:
+        sdk_kwargs["profile"] = args.profile
+    if args.host:
+        sdk_kwargs["host"] = args.host
+
+    w = WorkspaceClient(**sdk_kwargs)
+
+    # Find the job by name (exact match)
+    matching_jobs = [
+        j
+        for j in w.jobs.list(name=job_name)
+        if j.settings and j.settings.name == job_name
+    ]
+    if not matching_jobs:
+        print(
+            f"Error: No deployed job named '{job_name}' found in the workspace.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if len(matching_jobs) > 1:
+        job_ids = [str(j.job_id) for j in matching_jobs]
+        print(
+            f"Error: Multiple jobs named '{job_name}' found "
+            f"(job_ids: {', '.join(job_ids)}). "
+            f"Rename the jobs to be unique.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    job_id = matching_jobs[0].job_id
+
+    max_concurrent: int = args.max_concurrent or len(keys)
+    submitted: list[str] = []
+    failed: list[str] = []
+
+    async def _submit_all() -> None:
+        sem = asyncio.Semaphore(max_concurrent)
+        waiters: list[tuple[str, Any]] = []  # (key, Wait[Run])
+
+        async def _submit_one(key: str) -> None:
+            async with sem:
+                try:
+                    waiter = await asyncio.to_thread(
+                        w.jobs.run_now,
+                        job_id=job_id,
+                        job_parameters={LOGICAL_DATE_PARAM: key},
+                    )
+                    msg = f"  {key} -> run_id={waiter.run_id}"
+                    submitted.append(msg)
+                    waiters.append((key, waiter))
+                    print(msg)
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(key)
+                    print(f"  {key} -> FAILED: {exc}", file=sys.stderr)
+
+        async with asyncio.TaskGroup() as tg:
+            for key in keys:
+                tg.create_task(_submit_one(key))
+
+        if wait and waiters:
+            print(f"\nWaiting for {len(waiters)} runs to complete...")
+
+            async def _wait_one(key: str, waiter: Any) -> None:
+                try:
+                    result = await asyncio.to_thread(waiter.result)
+                    state = result.state
+                    result_state = (
+                        state.result_state.value
+                        if state and state.result_state
+                        else "UNKNOWN"
+                    )
+                    if result_state == "SUCCESS":
+                        print(f"  {key} -> SUCCESS")
+                    else:
+                        failed.append(key)
+                        print(f"  {key} -> {result_state}", file=sys.stderr)
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(key)
+                    print(f"  {key} -> ERROR: {exc}", file=sys.stderr)
+
+            async with asyncio.TaskGroup() as tg:
+                for key, waiter in waiters:
+                    tg.create_task(_wait_one(key, waiter))
+
+    try:
+        asyncio.run(_submit_all())
+    except KeyboardInterrupt:
+        print("\nBackfill interrupted.", file=sys.stderr)
+        sys.exit(130)
+
+    print(f"\nSubmitted {len(submitted)}/{len(keys)} runs.")
+    if failed:
+        print(
+            f"Failed keys ({len(failed)}): {', '.join(failed)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 # --- Main ------------------------------------------------------------------
 
 
@@ -423,10 +597,65 @@ def main() -> None:
         ),
     )
 
+    # ---- backfill subcommand ---------------------------------------------
+    backfill_parser = subparsers.add_parser(
+        "backfill",
+        help="Submit one Databricks job run per partition key",
+    )
+    backfill_parser.add_argument(
+        "job_name",
+        help="Name of the @job to backfill",
+    )
+    backfill_parser.add_argument(
+        "--start",
+        default=None,
+        help="Start of partition range (inclusive), e.g. 2024-01-01",
+    )
+    backfill_parser.add_argument(
+        "--end",
+        default=None,
+        help="End of partition range (inclusive), e.g. 2024-01-31",
+    )
+    backfill_parser.add_argument(
+        "--keys",
+        default=None,
+        help="Comma-separated list of explicit partition keys",
+    )
+    backfill_parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=None,
+        dest="max_concurrent",
+        help="Maximum number of concurrent run submissions",
+    )
+    backfill_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="Print partition keys without submitting runs",
+    )
+    backfill_parser.add_argument(
+        "--wait",
+        action="store_true",
+        help="Wait for all runs to complete and report success/failure",
+    )
+    backfill_parser.add_argument(
+        "--profile",
+        default=None,
+        help="Databricks CLI profile name",
+    )
+    backfill_parser.add_argument(
+        "--host",
+        default=None,
+        help="Databricks workspace URL",
+    )
+
     args = parser.parse_args()
 
     if args.command == "init":
         _cmd_init(args)
+    elif args.command == "backfill":
+        _cmd_backfill(args)
     else:
         parser.print_help()
         sys.exit(1)

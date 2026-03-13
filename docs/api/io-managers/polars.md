@@ -1,5 +1,27 @@
 # Polars
 
+## Partitioning
+
+All Polars IoManagers support Hive-style partitioning via the
+`partition_by` constructor parameter.  When `partition_by` includes
+`"logical_date"`, the column is auto-injected before writing and
+auto-filtered on read.
+
+```python
+io = PolarsParquetIoManager(
+    base_path="abfss://lake@acct.dfs.core.windows.net/data",
+    partition_by=["logical_date", "region"],
+)
+```
+
+Parquet, CSV, and NDJSON use `pl.PartitionByKey` for LazyFrame sinks.
+DataFrame writes use native `partition_by` (Parquet) or
+`.lazy().sink_*` with `PartitionByKey` (CSV/NDJSON).
+Delta uses `delta_write_options={"partition_by": ...}`.
+
+Reads use `hive_partitioning=True` (Parquet, CSV, NDJSON) or
+Delta's native partition pruning.
+
 ## Parquet
 
 ::: databricks_bundle_decorators.io_managers.PolarsParquetIoManager

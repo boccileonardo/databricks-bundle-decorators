@@ -1,5 +1,6 @@
 """Tests for the CLI scaffolding command (dbxdec init)."""
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 
 from databricks_bundle_decorators.cli import (
     _cmd_init,
+    _cmd_backfill,
     _detect_package_name,
     _detect_src_layout,
     _read_pyproject,
@@ -256,3 +258,224 @@ class TestMainCli:
         (tmp_path / "pyproject.toml").write_text(
             '[project]\nname = "test-project"\nversion = "0.1.0"\n'
         )
+
+
+# ---------------------------------------------------------------------------
+# Backfill CLI tests
+# ---------------------------------------------------------------------------
+
+
+class TestBackfillCmd:
+    """Tests for the ``dbxdec backfill`` subcommand."""
+
+    def setup_method(self):
+        from databricks_bundle_decorators.registry import (
+            reset_registries,
+        )
+
+        reset_registries()
+
+    def _make_job_with_partition(self):
+        """Register a job with a daily partition in the registry."""
+        from databricks_bundle_decorators.decorators import job, task
+        from databricks_bundle_decorators.partitions import DailyPartition
+
+        @job(partition=DailyPartition(start_date="2024-01-01", end_date="2024-01-05"))
+        def test_pipeline():
+            @task
+            def step():
+                pass
+
+    def _make_job_without_partition(self):
+        from databricks_bundle_decorators.decorators import job, task
+
+        @job
+        def no_part_job():
+            @task
+            def step():
+                pass
+
+    def test_dry_run_lists_keys(self, monkeypatch, capsys):
+        """--dry-run prints partition keys without submitting."""
+        self._make_job_with_partition()
+
+        from databricks_bundle_decorators.cli import _cmd_backfill
+
+        # Monkeypatch discover_pipelines to no-op (registry already populated)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+
+        ns = argparse.Namespace(
+            job_name="test_pipeline",
+            start=None,
+            end=None,
+            keys=None,
+            max_concurrent=None,
+            dry_run=True,
+            profile=None,
+            host=None,
+            wait=False,
+        )
+        _cmd_backfill(ns)
+
+        out = capsys.readouterr().out
+        assert "test_pipeline" in out
+        assert "2024-01-01" in out
+        assert "DRY RUN" in out
+
+    def test_dry_run_with_explicit_keys(self, monkeypatch, capsys):
+        """--keys provides explicit partition keys."""
+        self._make_job_with_partition()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+
+        ns = argparse.Namespace(
+            job_name="test_pipeline",
+            start=None,
+            end=None,
+            keys="a,b,c",
+            max_concurrent=None,
+            dry_run=True,
+            profile=None,
+            host=None,
+            wait=False,
+        )
+        _cmd_backfill(ns)
+
+        out = capsys.readouterr().out
+        assert "a" in out
+        assert "b" in out
+        assert "DRY RUN" in out
+
+    def test_dry_run_with_range_override(self, monkeypatch, capsys):
+        """--start/--end overrides the partition definition range."""
+        self._make_job_with_partition()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+
+        ns = argparse.Namespace(
+            job_name="test_pipeline",
+            start="2024-01-02",
+            end="2024-01-03",
+            keys=None,
+            max_concurrent=None,
+            dry_run=True,
+            profile=None,
+            host=None,
+            wait=False,
+        )
+        _cmd_backfill(ns)
+
+        out = capsys.readouterr().out
+        assert "2024-01-02" in out
+        assert "2024-01-03" in out
+        assert "Partition keys (2)" in out
+
+    def test_job_not_found_exits(self, monkeypatch):
+        """Exit with error when job name is not in the registry."""
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+
+        ns = argparse.Namespace(
+            job_name="nonexistent",
+            start=None,
+            end=None,
+            keys=None,
+            max_concurrent=None,
+            dry_run=False,
+            profile=None,
+            host=None,
+            wait=False,
+        )
+        with pytest.raises(SystemExit):
+            from databricks_bundle_decorators.cli import _cmd_backfill
+
+            _cmd_backfill(ns)
+
+    def test_no_partition_no_keys_exits(self, monkeypatch):
+        """Exit when job has no partition and --keys is not provided."""
+        self._make_job_without_partition()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+
+        ns = argparse.Namespace(
+            job_name="no_part_job",
+            start=None,
+            end=None,
+            keys=None,
+            max_concurrent=None,
+            dry_run=False,
+            profile=None,
+            host=None,
+            wait=False,
+        )
+        with pytest.raises(SystemExit):
+            from databricks_bundle_decorators.cli import _cmd_backfill
+
+            _cmd_backfill(ns)
+
+    def test_explicit_keys_on_unpartitioned_job(self, monkeypatch, capsys):
+        """--keys works even when job has no partition definition."""
+        self._make_job_without_partition()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+
+        ns = argparse.Namespace(
+            job_name="no_part_job",
+            start=None,
+            end=None,
+            keys="x,y",
+            max_concurrent=None,
+            dry_run=True,
+            profile=None,
+            host=None,
+            wait=False,
+        )
+        from databricks_bundle_decorators.cli import _cmd_backfill
+
+        _cmd_backfill(ns)
+
+        out = capsys.readouterr().out
+        assert "x" in out
+        assert "DRY RUN" in out
+
+    def test_empty_keys_exits(self, monkeypatch):
+        """Exit when --keys resolves to empty list."""
+        self._make_job_with_partition()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+
+        ns = argparse.Namespace(
+            job_name="test_pipeline",
+            start=None,
+            end=None,
+            keys=",,,",
+            max_concurrent=None,
+            dry_run=False,
+            profile=None,
+            host=None,
+            wait=False,
+        )
+        with pytest.raises(SystemExit):
+            from databricks_bundle_decorators.cli import _cmd_backfill
+
+            _cmd_backfill(ns)

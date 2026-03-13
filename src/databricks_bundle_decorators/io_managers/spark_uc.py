@@ -12,7 +12,7 @@ Unity Catalog authentication is handled by the workspace — no
 - `SparkUCVolumeDeltaIoManager` – Delta tables stored in UC Volumes
   (``/Volumes/catalog/schema/volume/task_key``)
 - `SparkUCVolumeParquetIoManager` – Parquet files stored in UC Volumes
-  (``/Volumes/catalog/schema/volume/task_key.parquet``)
+  (``/Volumes/catalog/schema/volume/task_key``)
 
 Requires PySpark, which is pre-installed on Databricks clusters.
 """
@@ -25,6 +25,9 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
+    _format_logical_date,
+    _needs_logical_date_col,
+    _normalize_partition_by,
 )
 
 
@@ -86,7 +89,7 @@ class SparkUCTableIoManager(IoManager):
     ) -> None:
         self.catalog = catalog
         self.schema = schema
-        self._partition_by = partition_by
+        self._partition_by = _normalize_partition_by(partition_by)
         self._write_options = write_options or {}
         self._read_options = read_options or {}
         self._mode = mode
@@ -109,6 +112,9 @@ class SparkUCTableIoManager(IoManager):
         - If *obj* is a ``DeltaMergeBuilder``, calls ``.execute()``.
         - Otherwise writes via ``saveAsTable`` with the configured
           ``mode``, ``partition_by``, and ``write_options``.
+
+        When ``partition_by`` includes ``"logical_date"``, the column
+        is injected automatically from the context.
         """
         _merge_cls: type | None = None
         try:
@@ -122,23 +128,39 @@ class SparkUCTableIoManager(IoManager):
             obj.execute()
             return
 
+        # Inject logical_date column if it's a partition column
+        if _needs_logical_date_col(self._partition_by):
+            from pyspark.sql import functions as F  # type: ignore[import-untyped]
+
+            ld_str = _format_logical_date(context.logical_date)
+            obj = obj.withColumn("logical_date", F.lit(ld_str))
+
         table = self._table_name(context.task_key)
         writer = obj.write.format("delta").mode(self._mode)
         if self._partition_by:
-            cols = (
-                [self._partition_by]
-                if isinstance(self._partition_by, str)
-                else self._partition_by
-            )
-            writer = writer.partitionBy(*cols)
+            writer = writer.partitionBy(*self._partition_by)
         for k, v in self._write_options.items():
             writer = writer.option(k, v)
         writer.saveAsTable(table)
 
     def read(self, context: InputContext) -> Any:
-        """Read a Unity Catalog managed table as a PySpark DataFrame."""
+        """Read a Unity Catalog managed table as a PySpark DataFrame.
+
+        When ``partition_by`` includes ``"logical_date"``, reads are
+        filtered to the current partition unless the upstream
+        dependency uses `all_partitions()` or the consuming
+        task uses ``@task(all_partitions=True)``.
+        """
         table = self._table_name(context.upstream_task_key)
-        return self._spark.table(table)
+        result = self._spark.table(table)
+
+        if _needs_logical_date_col(self._partition_by) and not context.all_partitions:
+            from pyspark.sql import functions as F  # type: ignore[import-untyped]
+
+            ld_str = _format_logical_date(context.logical_date)
+            result = result.filter(F.col("logical_date") == ld_str)
+
+        return result
 
 
 class SparkUCVolumeDeltaIoManager(IoManager):
@@ -201,7 +223,7 @@ class SparkUCVolumeDeltaIoManager(IoManager):
         self.catalog = catalog
         self.schema = schema
         self.volume = volume
-        self._partition_by = partition_by
+        self._partition_by = _normalize_partition_by(partition_by)
         self._write_options = write_options or {}
         self._read_options = read_options or {}
         self._mode = mode
@@ -224,6 +246,9 @@ class SparkUCVolumeDeltaIoManager(IoManager):
         - If *obj* is a ``DeltaMergeBuilder``, calls ``.execute()``.
         - Otherwise writes via ``save()`` with the configured
           ``mode``, ``partition_by``, and ``write_options``.
+
+        When ``partition_by`` includes ``"logical_date"``, the column
+        is injected automatically from the context.
         """
         _merge_cls: type | None = None
         try:
@@ -237,26 +262,42 @@ class SparkUCVolumeDeltaIoManager(IoManager):
             obj.execute()
             return
 
+        # Inject logical_date column if it's a partition column
+        if _needs_logical_date_col(self._partition_by):
+            from pyspark.sql import functions as F  # type: ignore[import-untyped]
+
+            ld_str = _format_logical_date(context.logical_date)
+            obj = obj.withColumn("logical_date", F.lit(ld_str))
+
         uri = self._uri(context.task_key)
         writer = obj.write.format("delta").mode(self._mode)
         if self._partition_by:
-            cols = (
-                [self._partition_by]
-                if isinstance(self._partition_by, str)
-                else self._partition_by
-            )
-            writer = writer.partitionBy(*cols)
+            writer = writer.partitionBy(*self._partition_by)
         for k, v in self._write_options.items():
             writer = writer.option(k, v)
         writer.save(uri)
 
     def read(self, context: InputContext) -> Any:
-        """Read Delta from a UC Volume path as a PySpark DataFrame."""
+        """Read Delta from a UC Volume path as a PySpark DataFrame.
+
+        When ``partition_by`` includes ``"logical_date"``, reads are
+        filtered to the current partition unless the upstream
+        dependency uses `all_partitions()` or the consuming
+        task uses ``@task(all_partitions=True)``.
+        """
         uri = self._uri(context.upstream_task_key)
         reader = self._spark.read.format("delta")
         for k, v in self._read_options.items():
             reader = reader.option(k, v)
-        return reader.load(uri)
+        result = reader.load(uri)
+
+        if _needs_logical_date_col(self._partition_by) and not context.all_partitions:
+            from pyspark.sql import functions as F  # type: ignore[import-untyped]
+
+            ld_str = _format_logical_date(context.logical_date)
+            result = result.filter(F.col("logical_date") == ld_str)
+
+        return result
 
 
 class SparkUCVolumeParquetIoManager(IoManager):
@@ -313,12 +354,12 @@ class SparkUCVolumeParquetIoManager(IoManager):
         self.catalog = catalog
         self.schema = schema
         self.volume = volume
-        self._partition_by = partition_by
+        self._partition_by = _normalize_partition_by(partition_by)
         self._write_options = write_options or {}
         self._read_options = read_options or {}
 
     def _uri(self, key: str) -> str:
-        return f"/Volumes/{self.catalog}/{self.schema}/{self.volume}/{key}.parquet"
+        return f"/Volumes/{self.catalog}/{self.schema}/{self.volume}/{key}"
 
     def setup(self) -> None:
         """Obtain the active SparkSession."""
@@ -330,24 +371,44 @@ class SparkUCVolumeParquetIoManager(IoManager):
             raise RuntimeError(msg)
 
     def write(self, context: OutputContext, obj: Any) -> None:
-        """Write a PySpark DataFrame as Parquet to a UC Volume path."""
+        """Write a PySpark DataFrame as Parquet to a UC Volume path.
+
+        When ``partition_by`` includes ``"logical_date"``, the column
+        is injected automatically from the context.
+        """
+        # Inject logical_date column if it's a partition column
+        if _needs_logical_date_col(self._partition_by):
+            from pyspark.sql import functions as F  # type: ignore[import-untyped]
+
+            ld_str = _format_logical_date(context.logical_date)
+            obj = obj.withColumn("logical_date", F.lit(ld_str))
+
         uri = self._uri(context.task_key)
         writer = obj.write.format("parquet").mode("overwrite")
         if self._partition_by:
-            cols = (
-                [self._partition_by]
-                if isinstance(self._partition_by, str)
-                else self._partition_by
-            )
-            writer = writer.partitionBy(*cols)
+            writer = writer.partitionBy(*self._partition_by)
         for k, v in self._write_options.items():
             writer = writer.option(k, v)
         writer.save(uri)
 
     def read(self, context: InputContext) -> Any:
-        """Read Parquet from a UC Volume path as a PySpark DataFrame."""
+        """Read Parquet from a UC Volume path as a PySpark DataFrame.
+
+        When ``partition_by`` includes ``"logical_date"``, reads are
+        filtered to the current partition unless the upstream
+        dependency uses `all_partitions()` or the consuming
+        task uses ``@task(all_partitions=True)``.
+        """
         uri = self._uri(context.upstream_task_key)
         reader = self._spark.read.format("parquet")
         for k, v in self._read_options.items():
             reader = reader.option(k, v)
-        return reader.load(uri)
+        result = reader.load(uri)
+
+        if _needs_logical_date_col(self._partition_by) and not context.all_partitions:
+            from pyspark.sql import functions as F  # type: ignore[import-untyped]
+
+            ld_str = _format_logical_date(context.logical_date)
+            result = result.filter(F.col("logical_date") == ld_str)
+
+        return result

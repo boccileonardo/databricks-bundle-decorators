@@ -9,6 +9,7 @@ nav = [
     { "Home" = "index.md" },
     { "Getting Started" = "getting-started.md" },
     { "How It Works" = "how-it-works.md" },
+    { "Partitioning" = "partitioning.md" },
     { "Docker Deployment" = "docker-deployment.md" },
     { "Examples" = [
         "examples/index.md",
@@ -31,6 +32,7 @@ nav = [
             { "Spark \u2013 Unity Catalog" = "api/io-managers/spark-uc.md" },
         ]},
         { "Custom IoManagers" = "api/custom-io-manager.md" },
+        { "Partitions" = "api/partitions.md" },
     ]},
     { "Internals" = [
         "internals/index.md",

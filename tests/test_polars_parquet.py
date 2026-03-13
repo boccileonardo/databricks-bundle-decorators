@@ -127,7 +127,7 @@ class TestConstruction:
         from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
         io = PolarsParquetIoManager(base_path="s3://bucket/prefix")
-        assert io._uri("extract") == "s3://bucket/prefix/extract.parquet"
+        assert io._uri("extract") == "s3://bucket/prefix/extract"
 
 
 # ---------------------------------------------------------------------------
@@ -372,3 +372,52 @@ class TestReadOptions:
 
         io = PolarsParquetIoManager(base_path="/data")
         assert io._read_options == {}
+
+
+# ---------------------------------------------------------------------------
+# Partitioned paths
+# ---------------------------------------------------------------------------
+
+
+class TestPaths:
+    def test_uri(self):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        io = PolarsParquetIoManager(base_path="s3://bucket/prefix")
+        assert io._uri("extract") == "s3://bucket/prefix/extract"
+
+    def test_write_no_partition(self, _mock_polars):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        io = PolarsParquetIoManager(base_path="/data")
+        df = _mock_polars.DataFrame()
+        ctx = OutputContext(
+            job_name="j",
+            task_key="extract",
+            run_id="r1",
+        )
+
+        io.write(ctx, df)
+
+        df.write_parquet.assert_called_once_with(
+            "/data/extract.parquet",
+            storage_options=None,
+        )
+
+    def test_read_no_partition(self, _mock_polars):
+        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+        io = PolarsParquetIoManager(base_path="/data")
+        ctx = InputContext(
+            job_name="j",
+            task_key="consumer",
+            upstream_task_key="extract",
+            run_id="r1",
+        )
+
+        io.read(ctx)
+
+        _mock_polars.scan_parquet.assert_called_once_with(
+            "/data/extract.parquet",
+            storage_options=None,
+        )
