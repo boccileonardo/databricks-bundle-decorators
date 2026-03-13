@@ -19,6 +19,7 @@ from databricks_bundle_decorators.decorators import (
     for_each_task,
     task_value,
 )
+from databricks_bundle_decorators.partitions import DailyPartition
 
 
 class TestTaskDecorator:
@@ -347,7 +348,7 @@ class TestSdkConfigForwarding:
             step()
 
         job_meta = _JOB_REGISTRY["combo_job"]
-        assert job_meta.params == {"url": "http://example.com"}
+        assert job_meta.params == {"url": "http://example.com", "logical_date": ""}
         assert job_meta.sdk_config == {
             "tags": {"team": "data"},
             "max_concurrent_runs": 1,
@@ -544,6 +545,17 @@ class TestReservedParamValidation:
 
                 noop()
 
+    def test_reserved_prefix_all_partitions_raises(self):
+        with pytest.raises(ValueError, match="reserved for internal runtime use"):
+
+            @job(params={"__all_partitions__data": "bad"})
+            def bad_job5():
+                @task
+                def noop():
+                    pass
+
+                noop()
+
     def test_safe_param_names_accepted(self):
         @job(params={"url": "http://x", "env": "prod"})
         def good_job():
@@ -553,7 +565,11 @@ class TestReservedParamValidation:
 
             noop()
 
-        assert _JOB_REGISTRY["good_job"].params == {"url": "http://x", "env": "prod"}
+        assert _JOB_REGISTRY["good_job"].params == {
+            "url": "http://x",
+            "env": "prod",
+            "logical_date": "",
+        }
 
 
 class TestDuplicateTaskInvocation:
@@ -1031,3 +1047,223 @@ class TestForEachTask:
                 @for_each_task(inputs=[object()])
                 def work(inputs):
                     pass
+
+
+class TestJobPartition:
+    """Tests for @job(partition=...) support."""
+
+    def setup_method(self):
+        reset_registries()
+
+    def test_partition_stored_on_job_meta(self):
+        part = DailyPartition(start_date="2024-01-01")
+
+        @job(partition=part)
+        def my_job():
+            @task
+            def step():
+                pass
+
+        assert _JOB_REGISTRY["my_job"].partition is part
+
+    def test_logical_date_auto_injected_on_all_jobs(self):
+        """logical_date param is always injected on every job."""
+
+        @job
+        def my_job():
+            @task
+            def step():
+                pass
+
+        assert "logical_date" in _JOB_REGISTRY["my_job"].params
+        assert _JOB_REGISTRY["my_job"].params["logical_date"] == ""
+
+    def test_partition_preserves_existing_params(self):
+        part = DailyPartition(start_date="2024-01-01")
+
+        @job(partition=part, params={"source": "api"})
+        def my_job():
+            @task
+            def step():
+                pass
+
+        meta = _JOB_REGISTRY["my_job"]
+        assert meta.params["source"] == "api"
+        assert meta.params["logical_date"] == ""
+
+    def test_logical_date_does_not_overwrite_user_param(self):
+        """If user explicitly sets logical_date param, don't overwrite."""
+        part = DailyPartition(start_date="2024-01-01")
+
+        @job(partition=part, params={"logical_date": "2024-06-01T00:00:00+00:00"})
+        def my_job():
+            @task
+            def step():
+                pass
+
+        assert (
+            _JOB_REGISTRY["my_job"].params["logical_date"]
+            == "2024-06-01T00:00:00+00:00"
+        )
+
+    def test_partition_none_by_default(self):
+        @job
+        def my_job():
+            @task
+            def step():
+                pass
+
+        assert _JOB_REGISTRY["my_job"].partition is None
+
+    def test_partition_invalid_type_raises(self):
+        with pytest.raises(TypeError, match="PartitionDef"):
+
+            @job(partition="daily")  # type: ignore[arg-type]
+            def my_job():
+                @task
+                def step():
+                    pass
+
+
+class TestAllPartitions:
+    """Tests for all_partitions() wrapper and @task(all_partitions=True)."""
+
+    def setup_method(self):
+        reset_registries()
+
+    def test_all_partitions_wrapper_records_edge(self):
+        """all_partitions(proxy) records the param in all_partitions_edges."""
+        from databricks_bundle_decorators.decorators import all_partitions
+
+        @job
+        def ap_job():
+            @task
+            def produce():
+                pass
+
+            @task
+            def consume(data):
+                pass
+
+            x = produce()
+            consume(all_partitions(x))
+
+        meta = _JOB_REGISTRY["ap_job"]
+        assert meta.dag_edges["consume"] == {"data": "produce"}
+        assert meta.all_partitions_edges["consume"] == {"data"}
+
+    def test_all_partitions_kwarg(self):
+        """all_partitions(proxy) works as a keyword argument."""
+        from databricks_bundle_decorators.decorators import all_partitions
+
+        @job
+        def ap_kw_job():
+            @task
+            def produce():
+                pass
+
+            @task
+            def consume(data):
+                pass
+
+            x = produce()
+            consume(data=all_partitions(x))
+
+        meta = _JOB_REGISTRY["ap_kw_job"]
+        assert meta.dag_edges["consume"] == {"data": "produce"}
+        assert meta.all_partitions_edges["consume"] == {"data"}
+
+    def test_task_level_all_partitions_flag(self):
+        """@task(all_partitions=True) marks all upstream edges."""
+
+        @job
+        def ap_flag_job():
+            @task
+            def a():
+                pass
+
+            @task
+            def b():
+                pass
+
+            @task(all_partitions=True)
+            def consume(x, y):
+                pass
+
+            r_a = a()
+            r_b = b()
+            consume(r_a, r_b)
+
+        meta = _JOB_REGISTRY["ap_flag_job"]
+        assert meta.all_partitions_edges["consume"] == {"x", "y"}
+
+    def test_mixed_all_partitions_and_normal(self):
+        """Only the wrapped proxy is in all_partitions_edges, not the normal one."""
+        from databricks_bundle_decorators.decorators import all_partitions
+
+        @job
+        def mixed_ap_job():
+            @task
+            def a():
+                pass
+
+            @task
+            def b():
+                pass
+
+            @task
+            def consume(current, historical):
+                pass
+
+            r_a = a()
+            r_b = b()
+            consume(r_a, all_partitions(r_b))
+
+        meta = _JOB_REGISTRY["mixed_ap_job"]
+        assert meta.dag_edges["consume"] == {"current": "a", "historical": "b"}
+        assert meta.all_partitions_edges["consume"] == {"historical"}
+
+    def test_all_partitions_no_upstream_no_edges(self):
+        """Task with no upstream proxies has no all_partitions_edges."""
+
+        @job
+        def no_ap_job():
+            @task
+            def leaf():
+                pass
+
+            leaf()
+
+        meta = _JOB_REGISTRY["no_ap_job"]
+        assert meta.all_partitions_edges == {}
+
+    def test_all_partitions_non_proxy_raises(self):
+        """all_partitions() with a non-TaskProxy raises TypeError."""
+        from databricks_bundle_decorators.decorators import all_partitions
+
+        with pytest.raises(TypeError, match="expects a TaskProxy"):
+            all_partitions("not_a_proxy")  # type: ignore[arg-type]
+
+    def test_all_partitions_codegen(self):
+        """all_partitions edges produce __all_partitions__ named parameters."""
+        from databricks_bundle_decorators.codegen import generate_resources
+        from databricks_bundle_decorators.decorators import all_partitions
+
+        @job
+        def codegen_ap_job():
+            @task
+            def produce():
+                pass
+
+            @task
+            def consume(data):
+                pass
+
+            x = produce()
+            consume(all_partitions(x))
+
+        resources = generate_resources(package_name="test_pkg")
+        tasks = {t.task_key: t for t in resources["codegen_ap_job"].tasks}
+        named_params = tasks["consume"].python_wheel_task.named_parameters
+        assert named_params["__all_partitions__data"] == "true"
+        assert named_params["__upstream__data"] == "produce"

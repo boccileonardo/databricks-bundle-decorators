@@ -110,7 +110,7 @@ class TestSparkParquetIoManagerConstruction:
         )
         assert (
             io._uri("extract")
-            == "abfss://container@sa.dfs.core.windows.net/prefix/extract.parquet"
+            == "abfss://container@sa.dfs.core.windows.net/prefix/extract"
         )
 
 
@@ -175,32 +175,39 @@ class TestSparkParquetIoManagerWrite:
         spark_df.write.format.assert_called_once_with("parquet")
         spark_df.write.format.return_value.mode.assert_called_once_with("overwrite")
         spark_df.write.format.return_value.mode.return_value.save.assert_called_once_with(
-            "/data/my_task.parquet"
+            "/data/my_task"
         )
 
     def test_write_with_partition_by_string(self, _mock_pyspark):
         from databricks_bundle_decorators.io_managers import SparkParquetIoManager
 
-        io = SparkParquetIoManager(base_path="/data", partition_by="region")
+        io = SparkParquetIoManager(base_path="/data")
         io.setup()
 
         spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        ctx = OutputContext(
+            job_name="j", task_key="my_task", run_id="r1", partition_by=["region"]
+        )
+        io.write(ctx, spark_df)
 
         writer = spark_df.write.format.return_value.mode.return_value
         writer.partitionBy.assert_called_once_with("region")
-        writer.partitionBy.return_value.save.assert_called_once_with(
-            "/data/my_task.parquet"
-        )
+        writer.partitionBy.return_value.save.assert_called_once_with("/data/my_task")
 
     def test_write_with_partition_by_list(self, _mock_pyspark):
         from databricks_bundle_decorators.io_managers import SparkParquetIoManager
 
-        io = SparkParquetIoManager(base_path="/data", partition_by=["region", "date"])
+        io = SparkParquetIoManager(base_path="/data")
         io.setup()
 
         spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        ctx = OutputContext(
+            job_name="j",
+            task_key="my_task",
+            run_id="r1",
+            partition_by=["region", "date"],
+        )
+        io.write(ctx, spark_df)
 
         writer = spark_df.write.format.return_value.mode.return_value
         writer.partitionBy.assert_called_once_with("region", "date")
@@ -232,7 +239,7 @@ class TestSparkParquetIoManagerRead:
 
         _mock_pyspark.read.format.assert_called_once_with("parquet")
         _mock_pyspark.read.format.return_value.load.assert_called_once_with(
-            "/data/upstream_task.parquet"
+            "/data/upstream_task"
         )
 
     def test_read_with_read_options(self, _mock_pyspark):
@@ -315,7 +322,7 @@ class TestSparkServerlessParquetIoManagerWrite:
         spark_df.write.format.assert_called_once_with("parquet")
         spark_df.write.format.return_value.mode.assert_called_once_with("overwrite")
         spark_df.write.format.return_value.mode.return_value.save.assert_called_once_with(
-            "/data/my_task.parquet"
+            "/data/my_task"
         )
 
 
@@ -332,5 +339,5 @@ class TestSparkServerlessParquetIoManagerRead:
 
         _mock_pyspark.read.format.assert_called_once_with("parquet")
         _mock_pyspark.read.format.return_value.load.assert_called_once_with(
-            "/data/upstream_task.parquet"
+            "/data/upstream_task"
         )

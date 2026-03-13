@@ -11,7 +11,31 @@ Users implement concrete IoManagers and attach them to tasks via the
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
+
+
+def _normalize_partition_by(
+    partition_by: str | list[str] | None,
+) -> list[str] | None:
+    """Normalize ``partition_by`` to a list or None."""
+    if partition_by is None:
+        return None
+    if isinstance(partition_by, str):
+        return [partition_by]
+    return partition_by
+
+
+def _needs_logical_date_col(partition_by: list[str] | None) -> bool:
+    """Return True if ``"logical_date"`` is in *partition_by*."""
+    return partition_by is not None and "logical_date" in partition_by
+
+
+def _format_logical_date(context_logical_date: datetime | None) -> str:
+    """Format the logical_date for use as a partition column value."""
+    if context_logical_date is not None:
+        return context_logical_date.strftime("%Y-%m-%d")
+    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
 
 
 @dataclass
@@ -21,6 +45,8 @@ class OutputContext:
     job_name: str
     task_key: str
     run_id: str
+    logical_date: datetime | None = None
+    partition_by: list[str] | None = None
 
 
 @dataclass
@@ -33,6 +59,14 @@ class InputContext:
         The type annotation of the downstream task's parameter, if available.
         IoManagers can use this to return the appropriate type (e.g.
         ``polars.LazyFrame`` vs ``polars.DataFrame``).
+    logical_date : datetime | None
+        The logical date of the current run.  IoManagers use this to
+        scope reads to the correct partition.
+    all_partitions : bool
+        When True, the IoManager should read **all** partitions instead
+        of filtering to the current ``logical_date``.  Set when the
+        upstream dependency is wrapped with `all_partitions()` or
+        when the consuming task uses ``@task(all_partitions=True)``.
     """
 
     job_name: str
@@ -40,6 +74,9 @@ class InputContext:
     upstream_task_key: str
     run_id: str
     expected_type: type | None = field(default=None, repr=False)
+    logical_date: datetime | None = None
+    all_partitions: bool = False
+    partition_by: list[str] | None = None
 
 
 class IoManager(ABC):

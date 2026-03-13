@@ -126,13 +126,14 @@ class TestSparkUCTableIoManagerWrite:
     def test_write_with_partition_by(self, _mock_pyspark):
         from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
 
-        io = SparkUCTableIoManager(
-            catalog="main", schema="staging", partition_by="region"
-        )
+        io = SparkUCTableIoManager(catalog="main", schema="staging")
         io.setup()
 
         spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        ctx = OutputContext(
+            job_name="j", task_key="my_task", run_id="r1", partition_by=["region"]
+        )
+        io.write(ctx, spark_df)
 
         writer = spark_df.write.format.return_value.mode.return_value
         writer.partitionBy.assert_called_once_with("region")
@@ -264,12 +265,14 @@ class TestSparkUCVolumeDeltaIoManagerWrite:
             catalog="main",
             schema="staging",
             volume="raw_data",
-            partition_by="region",
         )
         io.setup()
 
         spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        ctx = OutputContext(
+            job_name="j", task_key="my_task", run_id="r1", partition_by=["region"]
+        )
+        io.write(ctx, spark_df)
 
         writer = spark_df.write.format.return_value.mode.return_value
         writer.partitionBy.assert_called_once_with("region")
@@ -357,7 +360,7 @@ class TestSparkUCVolumeParquetIoManagerConstruction:
             schema="staging",
             volume="raw_data",
         )
-        assert io._uri("extract") == "/Volumes/main/staging/raw_data/extract.parquet"
+        assert io._uri("extract") == "/Volumes/main/staging/raw_data/extract"
 
 
 class TestSparkUCVolumeParquetIoManagerSetup:
@@ -422,7 +425,7 @@ class TestSparkUCVolumeParquetIoManagerWrite:
         spark_df.write.format.assert_called_once_with("parquet")
         spark_df.write.format.return_value.mode.assert_called_once_with("overwrite")
         spark_df.write.format.return_value.mode.return_value.save.assert_called_once_with(
-            "/Volumes/main/staging/raw_data/my_task.parquet"
+            "/Volumes/main/staging/raw_data/my_task"
         )
 
     def test_write_with_partition_by(self, _mock_pyspark):
@@ -434,12 +437,17 @@ class TestSparkUCVolumeParquetIoManagerWrite:
             catalog="main",
             schema="staging",
             volume="raw_data",
-            partition_by=["region", "date"],
         )
         io.setup()
 
         spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        ctx = OutputContext(
+            job_name="j",
+            task_key="my_task",
+            run_id="r1",
+            partition_by=["region", "date"],
+        )
+        io.write(ctx, spark_df)
 
         writer = spark_df.write.format.return_value.mode.return_value
         writer.partitionBy.assert_called_once_with("region", "date")
@@ -481,7 +489,7 @@ class TestSparkUCVolumeParquetIoManagerRead:
 
         _mock_pyspark.read.format.assert_called_once_with("parquet")
         _mock_pyspark.read.format.return_value.load.assert_called_once_with(
-            "/Volumes/main/staging/raw_data/upstream_task.parquet"
+            "/Volumes/main/staging/raw_data/upstream_task"
         )
 
     def test_read_with_read_options(self, _mock_pyspark):

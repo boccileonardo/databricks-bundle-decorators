@@ -10,7 +10,7 @@ The package name is `databricks-bundle-decorators`. The Python import name is `d
 
 - **Package manager:** UV only. Use `uv add`, `uv run`, `uv sync`. Never use `pip`, `venv`, `python -m`, or `pip install`.
 
-- Before considering a change completed, must run:
+- Before considering a change completed, must run the following commands in this order:
 
 ```bash
 # Pre-commit multiple check

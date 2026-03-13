@@ -7,14 +7,24 @@ Usage::
     uv run dbxdec init
 """
 
-import argparse
+from __future__ import annotations
+
 import sys
 from pathlib import Path
+from typing import Annotated, Any
+
+import typer
 
 try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
     import tomli as tomllib  # type: ignore[no-redef]
+
+app = typer.Typer(
+    name="dbxdec",
+    help="databricks-bundle-decorators CLI",
+    no_args_is_help=True,
+)
 
 
 def _read_pyproject(cwd: Path) -> dict:
@@ -327,14 +337,13 @@ def _add_entry_point_to_pyproject(cwd: Path, package_name: str) -> bool:
 # --- Init command ----------------------------------------------------------
 
 
-def _cmd_init(args: argparse.Namespace) -> None:
+def _cmd_init(*, docker: bool = False) -> None:
     """Scaffold a new databricks-bundle-decorators pipeline project."""
     cwd = Path.cwd()
     pyproject = _read_pyproject(cwd)
     package_name = _detect_package_name(pyproject)
     project_name = pyproject["project"]["name"]
     pkg_dir = _detect_src_layout(cwd, package_name)
-    docker: bool = getattr(args, "docker", False)
 
     created: list[str] = []
     skipped: list[str] = []
@@ -399,34 +408,267 @@ def _cmd_init(args: argparse.Namespace) -> None:
     print("Done! Define your @task and @job functions in the pipelines/ directory.")
 
 
+# --- Backfill command ------------------------------------------------------
+
+
+def _cmd_backfill(
+    *,
+    job_name: str,
+    start: str | None = None,
+    end: str | None = None,
+    keys: str | None = None,
+    max_concurrent: int | None = None,
+    dry_run: bool = False,
+    wait: bool = False,
+    profile: str | None = None,
+    host: str | None = None,
+) -> None:
+    """Trigger one Databricks job run per partition key."""
+    import asyncio
+
+    from databricks_bundle_decorators.discovery import discover_pipelines
+    from databricks_bundle_decorators.partitions import (
+        LOGICAL_DATE_PARAM,
+        PartitionDef,
+    )
+    from databricks_bundle_decorators.registry import _JOB_REGISTRY
+
+    # 1. Populate registries
+    discover_pipelines()
+
+    job_meta = _JOB_REGISTRY.get(job_name)
+    if job_meta is None:
+        available = sorted(_JOB_REGISTRY.keys())
+        print(f"Error: Job '{job_name}' not found.", file=sys.stderr)
+        if available:
+            print(f"Available jobs: {', '.join(available)}", file=sys.stderr)
+        sys.exit(1)
+
+    partition: PartitionDef | None = job_meta.partition
+    if partition is None and keys is None:
+        print(
+            f"Error: Job '{job_name}' has no partition definition. "
+            f"Use --keys to specify partition keys explicitly.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # 2. Enumerate keys
+    if keys is not None:
+        key_list = [k.strip() for k in keys.split(",") if k.strip()]
+    elif partition is not None:
+        key_list = partition.partition_keys(start=start, end=end)
+    else:
+        key_list = []
+
+    if not key_list:
+        print("No partition keys to process.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Job: {job_name}")
+    print(f"Partition keys ({len(key_list)}): {', '.join(key_list[:10])}", end="")
+    if len(key_list) > 10:
+        print(f" ... and {len(key_list) - 10} more")
+    else:
+        print()
+
+    if dry_run:
+        print("\n[DRY RUN] No runs submitted.")
+        return
+
+    # 3. Submit runs via Databricks SDK
+    try:
+        from databricks.sdk import WorkspaceClient  # type: ignore[import-untyped]
+    except ImportError:
+        print(
+            "Error: databricks-sdk is required for backfill. "
+            "Install it with: uv add databricks-sdk",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    sdk_kwargs: dict[str, str] = {}
+    if profile:
+        sdk_kwargs["profile"] = profile
+    if host:
+        sdk_kwargs["host"] = host
+
+    w = WorkspaceClient(**sdk_kwargs)
+
+    # Find the job by name (exact match)
+    matching_jobs = [
+        j
+        for j in w.jobs.list(name=job_name)
+        if j.settings and j.settings.name == job_name
+    ]
+    if not matching_jobs:
+        print(
+            f"Error: No deployed job named '{job_name}' found in the workspace.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if len(matching_jobs) > 1:
+        job_ids = [str(j.job_id) for j in matching_jobs]
+        print(
+            f"Error: Multiple jobs named '{job_name}' found "
+            f"(job_ids: {', '.join(job_ids)}). "
+            f"Rename the jobs to be unique.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    db_job_id = matching_jobs[0].job_id
+
+    concurrency: int = max_concurrent or len(key_list)
+    submitted: list[str] = []
+    failed: list[str] = []
+
+    async def _submit_all() -> None:
+        sem = asyncio.Semaphore(concurrency)
+        waiters: list[tuple[str, Any]] = []  # (key, Wait[Run])
+
+        async def _submit_one(key: str) -> None:
+            async with sem:
+                try:
+                    waiter = await asyncio.to_thread(
+                        w.jobs.run_now,
+                        job_id=db_job_id,
+                        job_parameters={LOGICAL_DATE_PARAM: key},
+                    )
+                    msg = f"  {key} -> run_id={waiter.run_id}"
+                    submitted.append(msg)
+                    waiters.append((key, waiter))
+                    print(msg)
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(key)
+                    print(f"  {key} -> FAILED: {exc}", file=sys.stderr)
+
+        async with asyncio.TaskGroup() as tg:
+            for key in key_list:
+                tg.create_task(_submit_one(key))
+
+        if wait and waiters:
+            print(f"\nWaiting for {len(waiters)} runs to complete...")
+
+            async def _wait_one(key: str, waiter: Any) -> None:
+                try:
+                    result = await asyncio.to_thread(waiter.result)
+                    state = result.state
+                    result_state = (
+                        state.result_state.value
+                        if state and state.result_state
+                        else "UNKNOWN"
+                    )
+                    if result_state == "SUCCESS":
+                        print(f"  {key} -> SUCCESS")
+                    else:
+                        failed.append(key)
+                        print(f"  {key} -> {result_state}", file=sys.stderr)
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(key)
+                    print(f"  {key} -> ERROR: {exc}", file=sys.stderr)
+
+            async with asyncio.TaskGroup() as tg:
+                for key, waiter in waiters:
+                    tg.create_task(_wait_one(key, waiter))
+
+    try:
+        asyncio.run(_submit_all())
+    except KeyboardInterrupt:
+        print("\nBackfill interrupted.", file=sys.stderr)
+        sys.exit(130)
+
+    print(f"\nSubmitted {len(submitted)}/{len(key_list)} runs.")
+    if failed:
+        print(
+            f"Failed keys ({len(failed)}): {', '.join(failed)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+# --- Typer commands --------------------------------------------------------
+
+
+@app.command("init")
+def init(
+    docker: Annotated[
+        bool,
+        typer.Option(
+            help="Generate a Docker-based example pipeline where the "
+            "package is pre-installed in a custom container image "
+            "instead of uploaded as a wheel.",
+        ),
+    ] = False,
+) -> None:
+    """Scaffold a new databricks-bundle-decorators pipeline project."""
+    _cmd_init(docker=docker)
+
+
+@app.command("backfill")
+def backfill(
+    job_name: Annotated[
+        str,
+        typer.Argument(help="Name of the @job to backfill"),
+    ],
+    start: Annotated[
+        str | None,
+        typer.Option(help="Start of partition range (inclusive), e.g. 2024-01-01"),
+    ] = None,
+    end: Annotated[
+        str | None,
+        typer.Option(help="End of partition range (inclusive), e.g. 2024-01-31"),
+    ] = None,
+    keys: Annotated[
+        str | None,
+        typer.Option(help="Comma-separated list of explicit partition keys"),
+    ] = None,
+    max_concurrent: Annotated[
+        int | None,
+        typer.Option(help="Maximum number of concurrent run submissions"),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print partition keys without submitting runs"),
+    ] = False,
+    wait: Annotated[
+        bool,
+        typer.Option(help="Wait for all runs to complete and report success/failure"),
+    ] = False,
+    profile: Annotated[
+        str | None,
+        typer.Option(help="Databricks CLI profile name"),
+    ] = None,
+    host: Annotated[
+        str | None,
+        typer.Option(help="Databricks workspace URL"),
+    ] = None,
+) -> None:
+    """Submit one Databricks job run per partition key."""
+    _cmd_backfill(
+        job_name=job_name,
+        start=start,
+        end=end,
+        keys=keys,
+        max_concurrent=max_concurrent,
+        dry_run=dry_run,
+        wait=wait,
+        profile=profile,
+        host=host,
+    )
+
+
 # --- Main ------------------------------------------------------------------
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="dbxdec",
-        description="databricks-bundle-decorators CLI",
-    )
-    subparsers = parser.add_subparsers(dest="command")
-
-    init_parser = subparsers.add_parser(
-        "init",
-        help="Scaffold a new databricks-bundle-decorators pipeline project",
-    )
-    init_parser.add_argument(
-        "--docker",
-        action="store_true",
-        help=(
-            "Generate a Docker-based example pipeline where the package "
-            "is pre-installed in a custom container image instead of "
-            "uploaded as a wheel."
-        ),
-    )
-
-    args = parser.parse_args()
-
-    if args.command == "init":
-        _cmd_init(args)
-    else:
-        parser.print_help()
+    try:
+        app(standalone_mode=False)
+    except SystemExit:
+        raise
+    except Exception:
+        # standalone_mode=False doesn't convert click errors to SystemExit.
+        # Re-raise as SystemExit so the CLI behaves correctly for end users
+        # (e.g. no-args-is-help, missing required argument, etc.).
         sys.exit(1)

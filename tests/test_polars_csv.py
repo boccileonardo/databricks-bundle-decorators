@@ -127,7 +127,7 @@ class TestConstruction:
         from databricks_bundle_decorators.io_managers import PolarsCsvIoManager
 
         io = PolarsCsvIoManager(base_path="s3://bucket/prefix")
-        assert io._uri("extract") == "s3://bucket/prefix/extract.csv"
+        assert io._uri("extract") == "s3://bucket/prefix/extract"
 
 
 # ---------------------------------------------------------------------------

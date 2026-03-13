@@ -15,10 +15,14 @@ import json
 import logging
 import os
 import typing
+from datetime import datetime, timezone
 from typing import Any
 
 from databricks_bundle_decorators.context import _populate_params
-from databricks_bundle_decorators.io_manager import InputContext, OutputContext
+from databricks_bundle_decorators.io_manager import (
+    InputContext,
+    OutputContext,
+)
 from databricks_bundle_decorators.registry import _TASK_REGISTRY
 
 _logger = logging.getLogger(__name__)
@@ -52,10 +56,15 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
 
     # ---- extract upstream mappings (__upstream__<param>=<upstream_task>) ---
     upstream_map: dict[str, str] = {}
+    all_partitions_params: set[str] = set()
     for key in list(cli_params):
         if key.startswith("__upstream__"):
             param_name = key[len("__upstream__") :]
             upstream_map[param_name] = cli_params.pop(key)
+        elif key.startswith("__all_partitions__"):
+            param_name = key[len("__all_partitions__") :]
+            all_partitions_params.add(param_name)
+            cli_params.pop(key)
 
     # ---- extract for-each input (if present) -----------------------------
     for_each_input_raw: str | None = cli_params.pop("__for_each_input__", None)
@@ -73,7 +82,16 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
             f"Available: {available}"
         )
 
-    # ---- resolve type hints for the current task's parameters ------------
+    # ---- resolve logical_date ------------------------------------------
+    # logical_date is always available on every job run.  When the param
+    # is empty (the default), it falls back to the current UTC time.
+    _raw_ld = cli_params.get("logical_date", "")
+    if _raw_ld:
+        logical_date: datetime | None = datetime.fromisoformat(_raw_ld)
+    else:
+        logical_date = datetime.now(tz=timezone.utc)
+
+    # ---- resolve type hints for expected_type ----------------------------
     try:
         type_hints = typing.get_type_hints(task_meta.fn)
     except Exception:  # noqa: BLE001 – graceful fallback
@@ -92,6 +110,9 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 upstream_task_key=upstream_task_key,
                 run_id=run_id,
                 expected_type=type_hints.get(param_name),
+                logical_date=logical_date,
+                all_partitions=param_name in all_partitions_params,
+                partition_by=upstream_meta.partition_by,
             )
             kwargs[param_name] = upstream_meta.io_manager.read(context)
         else:
@@ -126,6 +147,8 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
             job_name=job_name,
             task_key=task_key,
             run_id=run_id,
+            logical_date=logical_date,
+            partition_by=task_meta.partition_by,
         )
         task_meta.io_manager.write(context, result)
     elif result is not None and not task_meta.io_manager:

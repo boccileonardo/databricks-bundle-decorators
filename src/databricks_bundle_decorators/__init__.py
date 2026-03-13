@@ -20,6 +20,12 @@ DAG wiring:
 Data management:
     ``IoManager``, ``OutputContext``, ``InputContext``
 
+Cross-partition reads:
+    ``all_partitions()`` — wrap a ``TaskProxy`` to read all partitions
+    from that upstream dependency instead of only the current one.
+    Alternatively, use ``@task(all_partitions=True)`` to apply to
+    all upstream data dependencies of a task.
+
 Task values (small JSON-serializable data):
     ``set_task_value``, ``get_task_value``, ``TaskValue``
 
@@ -32,6 +38,7 @@ Job parameters:
 
 from databricks_bundle_decorators.context import get_dbutils as get_dbutils
 from databricks_bundle_decorators.context import params as params
+from databricks_bundle_decorators.decorators import all_partitions as all_partitions
 from databricks_bundle_decorators.decorators import for_each_task as for_each_task
 from databricks_bundle_decorators.decorators import job as job
 from databricks_bundle_decorators.decorators import job_cluster as job_cluster
@@ -44,6 +51,15 @@ from databricks_bundle_decorators.discovery import (
 from databricks_bundle_decorators.io_manager import InputContext as InputContext
 from databricks_bundle_decorators.io_manager import IoManager as IoManager
 from databricks_bundle_decorators.io_manager import OutputContext as OutputContext
+from databricks_bundle_decorators.partitions import (
+    current_logical_date as current_logical_date,
+    DailyPartition as DailyPartition,
+    HourlyPartition as HourlyPartition,
+    MonthlyPartition as MonthlyPartition,
+    PartitionDef as PartitionDef,
+    StaticPartition as StaticPartition,
+    WeeklyPartition as WeeklyPartition,
+)
 from databricks_bundle_decorators.registry import (
     ClusterMeta as ClusterMeta,
     DuplicateResourceError as DuplicateResourceError,
@@ -57,6 +73,7 @@ from databricks_bundle_decorators.task_values import set_task_value as set_task_
 from databricks_bundle_decorators.task_values import TaskValue as TaskValue
 
 __all__ = [
+    "all_partitions",
     "task",
     "job",
     "job_cluster",
@@ -78,4 +95,11 @@ __all__ = [
     "TaskValue",
     "get_dbutils",
     "params",
+    "PartitionDef",
+    "DailyPartition",
+    "HourlyPartition",
+    "MonthlyPartition",
+    "WeeklyPartition",
+    "StaticPartition",
+    "current_logical_date",
 ]

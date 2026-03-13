@@ -326,3 +326,215 @@ class TestForEachRuntime:
 
         assert captured["inputs"] == "file_a.csv"
         assert captured["data"] == {"rows": [1, 2, 3]}
+
+
+class TestLogicalDateRuntime:
+    """Runtime wires logical_date into IoManager contexts."""
+
+    def setup_method(self):
+        reset_registries()
+        _MemoryIo.storage = {}
+        _local_task_values.clear()
+
+    def test_logical_date_passed_to_output_context(self):
+        """OutputContext receives logical_date as a datetime."""
+        captured_ctx: list[OutputContext] = []
+
+        class _CapturingIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                captured_ctx.append(context)
+
+            def read(self, context: InputContext) -> Any:
+                return None
+
+        io = _CapturingIo()
+        _TASK_REGISTRY["j.t"] = TaskMeta(
+            fn=lambda: "data",
+            task_key="t",
+            io_manager=io,
+        )
+
+        run_task(
+            "t",
+            {
+                "__job_name__": "j",
+                "__task_key__": "t",
+                "logical_date": "2024-01-15T00:00:00+00:00",
+            },
+        )
+
+        assert len(captured_ctx) == 1
+        from datetime import datetime, timezone
+
+        assert captured_ctx[0].logical_date == datetime(
+            2024, 1, 15, tzinfo=timezone.utc
+        )
+
+    def test_empty_logical_date_defaults_to_now_utc(self):
+        """Empty string logical_date defaults to now(UTC)."""
+        captured_ctx: list[OutputContext] = []
+
+        class _CapturingIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                captured_ctx.append(context)
+
+            def read(self, context: InputContext) -> Any:
+                return None
+
+        io = _CapturingIo()
+        _TASK_REGISTRY["j.t"] = TaskMeta(fn=lambda: "data", task_key="t", io_manager=io)
+
+        run_task(
+            "t",
+            {
+                "__job_name__": "j",
+                "__task_key__": "t",
+                "logical_date": "",
+            },
+        )
+
+        from datetime import datetime
+
+        assert isinstance(captured_ctx[0].logical_date, datetime)
+        assert captured_ctx[0].logical_date is not None
+        assert captured_ctx[0].logical_date.tzinfo is not None
+
+    def test_missing_logical_date_defaults_to_now_utc(self):
+        """When logical_date is not in params, defaults to now(UTC)."""
+        captured_ctx: list[OutputContext] = []
+
+        class _CapturingIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                captured_ctx.append(context)
+
+            def read(self, context: InputContext) -> Any:
+                return None
+
+        io = _CapturingIo()
+        _TASK_REGISTRY["j.t"] = TaskMeta(fn=lambda: "data", task_key="t", io_manager=io)
+
+        run_task(
+            "t",
+            {
+                "__job_name__": "j",
+                "__task_key__": "t",
+            },
+        )
+
+        from datetime import datetime
+
+        assert isinstance(captured_ctx[0].logical_date, datetime)
+        assert captured_ctx[0].logical_date is not None
+
+    def test_logical_date_passed_to_input_context(self):
+        """InputContext receives logical_date as a datetime."""
+        captured_ctx: list[InputContext] = []
+
+        class _CapturingIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                captured_ctx.append(context)
+                return "upstream_data"
+
+        io = _CapturingIo()
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=lambda: None,
+            task_key="producer",
+            io_manager=io,
+        )
+        _TASK_REGISTRY["j.consumer"] = TaskMeta(fn=lambda x: x, task_key="consumer")
+
+        run_task(
+            "consumer",
+            {
+                "__job_name__": "j",
+                "__task_key__": "consumer",
+                "__upstream__x": "producer",
+                "logical_date": "2024-06-01T12:00:00+00:00",
+            },
+        )
+
+        assert len(captured_ctx) == 1
+        from datetime import datetime, timezone
+
+        assert captured_ctx[0].logical_date == datetime(
+            2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc
+        )
+
+
+class TestAllPartitionsRuntime:
+    """Runtime handles __all_partitions__ flags from codegen."""
+
+    def setup_method(self):
+        reset_registries()
+        _MemoryIo.storage = {}
+        _local_task_values.clear()
+
+    def test_all_partitions_flag_passed_to_input_context(self):
+        """__all_partitions__<param>=true sets all_partitions on InputContext."""
+        captured_ctx: list[InputContext] = []
+
+        class _CapturingIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                captured_ctx.append(context)
+                return "all_data"
+
+        io = _CapturingIo()
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=lambda: None,
+            task_key="producer",
+            io_manager=io,
+        )
+        _TASK_REGISTRY["j.consumer"] = TaskMeta(fn=lambda x: x, task_key="consumer")
+
+        run_task(
+            "consumer",
+            {
+                "__job_name__": "j",
+                "__task_key__": "consumer",
+                "__upstream__x": "producer",
+                "__all_partitions__x": "true",
+                "logical_date": "2024-01-15T00:00:00+00:00",
+            },
+        )
+
+        assert len(captured_ctx) == 1
+        assert captured_ctx[0].all_partitions is True
+
+    def test_no_all_partitions_flag_defaults_false(self):
+        """Without __all_partitions__ flag, all_partitions is False."""
+        captured_ctx: list[InputContext] = []
+
+        class _CapturingIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                captured_ctx.append(context)
+                return "data"
+
+        io = _CapturingIo()
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=lambda: None,
+            task_key="producer",
+            io_manager=io,
+        )
+        _TASK_REGISTRY["j.consumer"] = TaskMeta(fn=lambda x: x, task_key="consumer")
+
+        run_task(
+            "consumer",
+            {
+                "__job_name__": "j",
+                "__task_key__": "consumer",
+                "__upstream__x": "producer",
+                "logical_date": "2024-01-15T00:00:00+00:00",
+            },
+        )
+
+        assert len(captured_ctx) == 1
+        assert captured_ctx[0].all_partitions is False

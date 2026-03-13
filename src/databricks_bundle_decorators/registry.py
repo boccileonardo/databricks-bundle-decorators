@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from databricks_bundle_decorators.io_manager import IoManager
+    from databricks_bundle_decorators.partitions import PartitionDef
 
 
 @dataclass
@@ -21,6 +22,7 @@ class TaskMeta:
     fn: Callable
     task_key: str
     io_manager: IoManager | None = None
+    partition_by: list[str] | None = None
     sdk_config: dict[str, Any] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)
 
@@ -88,9 +90,14 @@ class JobMeta:
     dag: dict[str, list[str]] = field(default_factory=dict)
     # task_key -> {param_name: upstream_task_key}
     dag_edges: dict[str, dict[str, str]] = field(default_factory=dict)
+    # task_key -> set of param names that read all partitions
+    all_partitions_edges: dict[str, set[str]] = field(default_factory=dict)
     sdk_config: dict[str, Any] = field(default_factory=dict)
     # task_key -> ForEachMeta (for tasks that are for_each wrappers)
     for_each_tasks: dict[str, ForEachMeta] = field(default_factory=dict)
+    partition: PartitionDef | None = None
+    """Partition definition for backfill enumeration.  Does not affect
+    runtime behaviour — ``logical_date`` is always available."""
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ import warnings
 from typing import Any, Callable, Unpack, overload
 
 from databricks_bundle_decorators.io_manager import IoManager
+from databricks_bundle_decorators.partitions import LOGICAL_DATE_PARAM, PartitionDef
 from databricks_bundle_decorators.registry import (
     ClusterMeta,
     DuplicateResourceError,
@@ -32,6 +33,8 @@ from databricks_bundle_decorators.registry import (
     _register_unique,
 )
 from databricks_bundle_decorators.sdk_types import ClusterConfig, JobConfig, TaskConfig
+
+from databricks_bundle_decorators.io_manager import _normalize_partition_by
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +52,7 @@ _RESERVED_PARAM_NAMES: frozenset[str] = frozenset(
 )
 
 #: Parameter name prefixes that are reserved for internal runtime wiring.
-_RESERVED_PARAM_PREFIXES: tuple[str, ...] = ("__upstream__",)
+_RESERVED_PARAM_PREFIXES: tuple[str, ...] = ("__upstream__", "__all_partitions__")
 
 
 def _validate_user_params(params: dict[str, str], context: str) -> None:
@@ -96,6 +99,68 @@ class TaskProxy:
         return f"TaskProxy({self.task_key!r})"
 
 
+class _AllPartitionsProxy:
+    """Marker wrapper around a `TaskProxy` for all-partitions reads.
+
+    Created by `all_partitions()`.  When passed as a task argument the
+    framework records that the corresponding edge should instruct the
+    IoManager to read **all** partitions instead of the current one.
+    """
+
+    __slots__ = ("task_key",)
+
+    def __init__(self, task_key: str) -> None:
+        self.task_key = task_key
+
+    def __repr__(self) -> str:
+        return f"_AllPartitionsProxy({self.task_key!r})"
+
+
+def all_partitions(proxy: TaskProxy) -> _AllPartitionsProxy:
+    """Wrap a `TaskProxy` so the downstream task receives all partitions.
+
+    Use inside a ``@job`` body to indicate that the downstream task
+    should read the **entire** dataset from the upstream task, across
+    all partitions, rather than filtering to the current ``logical_date``.
+
+    Parameters
+    ----------
+    proxy:
+        A `TaskProxy` returned by calling a ``@task``-decorated
+        function inside a ``@job`` body.
+
+    Returns
+    -------
+    `_AllPartitionsProxy`
+        A wrapped proxy that records the all-partitions flag on the
+        dependency edge.
+
+    Example
+    -------
+    ::
+
+        @job(partition=DailyPartition(start_date="2024-01-01"))
+        def my_pipeline():
+            @task(io_manager=io)
+            def extract():
+                ...
+
+            @task
+            def aggregate(data):
+                ...
+
+            data = extract()
+            aggregate(all_partitions(data))
+    """
+    if not isinstance(proxy, TaskProxy):
+        raise TypeError(
+            f"all_partitions() expects a TaskProxy returned by calling "
+            f"a @task-decorated function inside a @job body, "
+            f"got {type(proxy).__name__!r}."
+        )
+    return _AllPartitionsProxy(proxy.task_key)
+
+
 # ---------------------------------------------------------------------------
 # @task
 # ---------------------------------------------------------------------------
@@ -108,6 +173,8 @@ def task(
     *,
     io_manager: IoManager | None = ...,
     depends_on: TaskProxy | list[TaskProxy] | None = ...,
+    all_partitions: bool = ...,
+    partition_by: str | list[str] | None = ...,
     **kwargs: Unpack[TaskConfig],
 ) -> _TaskDecorator: ...
 
@@ -121,6 +188,8 @@ def task(
     *,
     io_manager: IoManager | None = None,
     depends_on: TaskProxy | list[TaskProxy] | None = None,
+    all_partitions: bool = False,
+    partition_by: str | list[str] | None = None,
     **kwargs: Unpack[TaskConfig],
 ):
     """Register a function as a Databricks task.
@@ -149,6 +218,12 @@ def task(
         transferred via `IoManager`.  Use this when a task must wait
         for another to finish without consuming its output.  For
         data dependencies, pass `TaskProxy` objects as regular function
+        arguments instead.
+    all_partitions:
+        When ``True``, **all** upstream data dependencies read the
+        entire dataset (all partitions) instead of filtering to the
+        current ``logical_date``.  For fine-grained control, use the
+        `all_partitions` function to wrap individual `TaskProxy`
         arguments instead.
     **kwargs:
         Any additional SDK-native ``Task`` fields (e.g. ``max_retries``,
@@ -183,6 +258,7 @@ def task(
             fn=fn,
             task_key=task_key,
             io_manager=io_manager,
+            partition_by=_normalize_partition_by(partition_by),
             sdk_config=dict(kwargs),
             depends_on=depends_on_keys,
         )
@@ -214,16 +290,19 @@ def task(
 
                 upstream_deps: list[str] = list(meta.depends_on)
                 edge_map: dict[str, str] = {}
+                ap_params: set[str] = set()
 
                 param_names = list(inspect.signature(fn).parameters.keys())
 
                 for idx, arg in enumerate(args):
-                    if isinstance(arg, TaskProxy):
+                    if isinstance(arg, (_AllPartitionsProxy, TaskProxy)):
                         upstream_deps.append(arg.task_key)
                         p_name = (
                             param_names[idx] if idx < len(param_names) else f"arg{idx}"
                         )
                         edge_map[p_name] = arg.task_key
+                        if isinstance(arg, _AllPartitionsProxy) or all_partitions:
+                            ap_params.add(p_name)
                     elif arg is not None:
                         p_name = (
                             param_names[idx] if idx < len(param_names) else f"arg{idx}"
@@ -243,9 +322,11 @@ def task(
                         )
 
                 for kw_name, kw_val in kwargs.items():
-                    if isinstance(kw_val, TaskProxy):
+                    if isinstance(kw_val, (_AllPartitionsProxy, TaskProxy)):
                         upstream_deps.append(kw_val.task_key)
                         edge_map[kw_name] = kw_val.task_key
+                        if isinstance(kw_val, _AllPartitionsProxy) or all_partitions:
+                            ap_params.add(kw_name)
                     elif kw_val is not None:
                         warnings.warn(
                             f"Task '{task_key}' in job '{_current_job_name}' "
@@ -265,6 +346,8 @@ def task(
                 upstream_deps = list(dict.fromkeys(upstream_deps))
                 _current_job_dag[task_key] = upstream_deps
                 _current_job_edges[task_key] = edge_map
+                if ap_params:
+                    _current_job_all_partitions[task_key] = ap_params
 
                 return TaskProxy(task_key)
             else:
@@ -322,6 +405,7 @@ _current_job_tasks: dict[str, TaskMeta] = {}
 _current_job_dag: dict[str, list[str]] = {}
 _current_job_edges: dict[str, dict[str, str]] = {}
 _current_job_for_each: dict[str, ForEachMeta] = {}
+_current_job_all_partitions: dict[str, set[str]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +421,7 @@ def job(
     params: dict[str, str] | None = ...,
     cluster: ClusterMeta | None = ...,
     libraries: list | None = ...,
+    partition: PartitionDef | None = ...,
     **kwargs: Unpack[JobConfig],
 ) -> _JobDecorator: ...
 
@@ -351,6 +436,7 @@ def job(
     params: dict[str, str] | None = None,
     cluster: ClusterMeta | None = None,
     libraries: list | None = None,
+    partition: PartitionDef | None = None,
     **kwargs: Unpack[JobConfig],
 ):
     """Register a function as a Databricks job.
@@ -369,6 +455,11 @@ def job(
     cluster:
         A `ClusterMeta` returned by `job_cluster()` to use
         as the shared job cluster for all tasks.
+    partition:
+        A `PartitionDef` that declares the universe of valid
+        ``logical_date`` values for this job.  The ``dbxdec backfill``
+        CLI command uses this to enumerate dates when submitting bulk
+        runs.  Has no effect on runtime behaviour.
     libraries:
         Library dependencies to attach to each task.  When ``None``
         (the default), the framework uses ``[Library(whl="dist/*.whl")]``
@@ -408,11 +499,24 @@ def job(
                 f"of a string."
             )
 
+        # --- validate and wire partition -----------------------------------
+        if partition is not None and not isinstance(partition, PartitionDef):
+            raise TypeError(
+                f"@job(partition=...) expects a PartitionDef instance "
+                f"(e.g. DailyPartition, StaticPartition), "
+                f"got {type(partition).__name__!r}."
+            )
+
+        # Auto-inject the logical_date parameter into job params
+        effective_params: dict[str, str] = dict(params) if params else {}
+        effective_params.setdefault(LOGICAL_DATE_PARAM, "")
+
         # --- execute the body to collect tasks and build the DAG ----------
         _current_job_tasks.clear()
         _current_job_dag.clear()
         _current_job_edges.clear()
         _current_job_for_each.clear()
+        _current_job_all_partitions.clear()
         _current_job_name = job_name
 
         try:
@@ -423,6 +527,7 @@ def job(
         dag = dict(_current_job_dag)
         dag_edges = dict(_current_job_edges)
         for_each_tasks = dict(_current_job_for_each)
+        all_partitions_edges = dict(_current_job_all_partitions)
 
         # Ensure tasks that were defined but never called (no outgoing
         # edges recorded yet) still appear in the DAG.  If the task has
@@ -433,13 +538,15 @@ def job(
         meta = JobMeta(
             fn=fn,
             name=job_name,
-            params=params or {},
+            params=effective_params,
             cluster=cluster,
             libraries=libraries,
             dag=dag,
             dag_edges=dag_edges,
+            all_partitions_edges=all_partitions_edges,
             sdk_config=dict(kwargs),
             for_each_tasks=for_each_tasks,
+            partition=partition,
         )
         _JOB_REGISTRY[job_name] = meta
 
