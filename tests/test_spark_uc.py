@@ -126,13 +126,14 @@ class TestSparkUCTableIoManagerWrite:
     def test_write_with_partition_by(self, _mock_pyspark):
         from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
 
-        io = SparkUCTableIoManager(
-            catalog="main", schema="staging", partition_by="region"
-        )
+        io = SparkUCTableIoManager(catalog="main", schema="staging")
         io.setup()
 
         spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        ctx = OutputContext(
+            job_name="j", task_key="my_task", run_id="r1", partition_by=["region"]
+        )
+        io.write(ctx, spark_df)
 
         writer = spark_df.write.format.return_value.mode.return_value
         writer.partitionBy.assert_called_once_with("region")
@@ -264,12 +265,14 @@ class TestSparkUCVolumeDeltaIoManagerWrite:
             catalog="main",
             schema="staging",
             volume="raw_data",
-            partition_by="region",
         )
         io.setup()
 
         spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        ctx = OutputContext(
+            job_name="j", task_key="my_task", run_id="r1", partition_by=["region"]
+        )
+        io.write(ctx, spark_df)
 
         writer = spark_df.write.format.return_value.mode.return_value
         writer.partitionBy.assert_called_once_with("region")
@@ -434,12 +437,17 @@ class TestSparkUCVolumeParquetIoManagerWrite:
             catalog="main",
             schema="staging",
             volume="raw_data",
-            partition_by=["region", "date"],
         )
         io.setup()
 
         spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        ctx = OutputContext(
+            job_name="j",
+            task_key="my_task",
+            run_id="r1",
+            partition_by=["region", "date"],
+        )
+        io.write(ctx, spark_df)
 
         writer = spark_df.write.format.return_value.mode.return_value
         writer.partitionBy.assert_called_once_with("region", "date")

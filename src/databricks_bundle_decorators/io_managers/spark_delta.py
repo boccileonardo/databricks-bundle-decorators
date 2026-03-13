@@ -22,7 +22,6 @@ from databricks_bundle_decorators.io_manager import (
     OutputContext,
     _format_logical_date,
     _needs_logical_date_col,
-    _normalize_partition_by,
 )
 
 
@@ -34,13 +33,11 @@ class _SparkDeltaBase(IoManager):
     def __init__(
         self,
         base_path: str,
-        partition_by: str | list[str] | None = None,
         write_options: dict[str, str] | None = None,
         read_options: dict[str, str] | None = None,
         mode: str = "error",
     ) -> None:
         self.base_path = base_path.rstrip("/")
-        self._partition_by = _normalize_partition_by(partition_by)
         self._write_options = write_options or {}
         self._read_options = read_options or {}
         self._mode = mode
@@ -72,8 +69,10 @@ class _SparkDeltaBase(IoManager):
             obj.execute()
             return
 
+        partition_by = context.partition_by
+
         # Inject logical_date column if it's a partition column
-        if _needs_logical_date_col(self._partition_by):
+        if _needs_logical_date_col(partition_by):
             from pyspark.sql import functions as F  # type: ignore[import-untyped]
 
             ld_str = _format_logical_date(context.logical_date)
@@ -81,8 +80,8 @@ class _SparkDeltaBase(IoManager):
 
         uri = self._uri(context.task_key)
         writer = obj.write.format("delta").mode(self._mode)
-        if self._partition_by:
-            writer = writer.partitionBy(*self._partition_by)
+        if partition_by:
+            writer = writer.partitionBy(*partition_by)
         for k, v in self._write_options.items():
             writer = writer.option(k, v)
         writer.save(uri)
@@ -101,7 +100,7 @@ class _SparkDeltaBase(IoManager):
             reader = reader.option(k, v)
         result = reader.load(uri)
 
-        if _needs_logical_date_col(self._partition_by) and not context.all_partitions:
+        if _needs_logical_date_col(context.partition_by) and not context.all_partitions:
             from pyspark.sql import functions as F  # type: ignore[import-untyped]
 
             ld_str = _format_logical_date(context.logical_date)
@@ -145,9 +144,6 @@ class SparkDeltaIoManager(_SparkDeltaBase):
                 spark_configs=_configs,
             )
 
-    partition_by : str | list[str] | None
-        Column(s) to partition by when writing.  Forwarded to
-        Spark's ``partitionBy()``.
     write_options : dict[str, str] | None
         Extra Spark writer options applied via ``.option(k, v)``.
     read_options : dict[str, str] | None
@@ -198,14 +194,12 @@ class SparkDeltaIoManager(_SparkDeltaBase):
         self,
         base_path: str,
         spark_configs: dict[str, str] | Callable[[], dict[str, str]] | None = None,
-        partition_by: str | list[str] | None = None,
         write_options: dict[str, str] | None = None,
         read_options: dict[str, str] | None = None,
         mode: str = "error",
     ) -> None:
         super().__init__(
             base_path,
-            partition_by=partition_by,
             write_options=write_options,
             read_options=read_options,
             mode=mode,
@@ -250,9 +244,6 @@ class SparkServerlessDeltaIoManager(_SparkDeltaBase):
         Root URI for Delta tables.  Must be a path governed by a
         Unity Catalog external location (e.g.
         ``abfss://container@account.dfs.core.windows.net/staging``).
-    partition_by : str | list[str] | None
-        Column(s) to partition by when writing.  Forwarded to
-        Spark's ``partitionBy()``.
     write_options : dict[str, str] | None
         Extra Spark writer options applied via ``.option(k, v)``.
     read_options : dict[str, str] | None

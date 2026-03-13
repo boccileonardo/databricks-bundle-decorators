@@ -112,6 +112,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 expected_type=type_hints.get(param_name),
                 logical_date=logical_date,
                 all_partitions=param_name in all_partitions_params,
+                partition_by=upstream_meta.partition_by,
             )
             kwargs[param_name] = upstream_meta.io_manager.read(context)
         else:
@@ -147,6 +148,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
             task_key=task_key,
             run_id=run_id,
             logical_date=logical_date,
+            partition_by=task_meta.partition_by,
         )
         task_meta.io_manager.write(context, result)
     elif result is not None and not task_meta.io_manager:

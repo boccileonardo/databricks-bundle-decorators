@@ -8,9 +8,9 @@ not registered as external locations will fail at runtime.
 
 ## Partitioning
 
-Same behaviour as classic compute — `partition_by` uses Spark's
-native `partitionBy()`, and `"logical_date"` is auto-injected on
-write and auto-filtered on read.
+Same behaviour as classic compute — `partition_by` is specified on the
+`@task` decorator and uses Spark's native `partitionBy()`.  
+`"logical_date"` is auto-injected on write and auto-filtered on read.
 
 ## Delta
 

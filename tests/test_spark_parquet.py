@@ -181,11 +181,14 @@ class TestSparkParquetIoManagerWrite:
     def test_write_with_partition_by_string(self, _mock_pyspark):
         from databricks_bundle_decorators.io_managers import SparkParquetIoManager
 
-        io = SparkParquetIoManager(base_path="/data", partition_by="region")
+        io = SparkParquetIoManager(base_path="/data")
         io.setup()
 
         spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        ctx = OutputContext(
+            job_name="j", task_key="my_task", run_id="r1", partition_by=["region"]
+        )
+        io.write(ctx, spark_df)
 
         writer = spark_df.write.format.return_value.mode.return_value
         writer.partitionBy.assert_called_once_with("region")
@@ -194,11 +197,17 @@ class TestSparkParquetIoManagerWrite:
     def test_write_with_partition_by_list(self, _mock_pyspark):
         from databricks_bundle_decorators.io_managers import SparkParquetIoManager
 
-        io = SparkParquetIoManager(base_path="/data", partition_by=["region", "date"])
+        io = SparkParquetIoManager(base_path="/data")
         io.setup()
 
         spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        ctx = OutputContext(
+            job_name="j",
+            task_key="my_task",
+            run_id="r1",
+            partition_by=["region", "date"],
+        )
+        io.write(ctx, spark_df)
 
         writer = spark_df.write.format.return_value.mode.return_value
         writer.partitionBy.assert_called_once_with("region", "date")

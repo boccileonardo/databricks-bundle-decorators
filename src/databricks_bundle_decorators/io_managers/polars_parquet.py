@@ -19,7 +19,6 @@ from databricks_bundle_decorators.io_manager import (
     OutputContext,
     _format_logical_date,
     _needs_logical_date_col,
-    _normalize_partition_by,
 )
 
 
@@ -107,13 +106,11 @@ class PolarsParquetIoManager(IoManager):
         storage_options: dict[str, str] | Callable[[], dict[str, str]] | None = None,
         write_options: dict[str, Any] | None = None,
         read_options: dict[str, Any] | None = None,
-        partition_by: str | list[str] | None = None,
     ) -> None:
         self.base_path = base_path.rstrip("/")
         self._storage_options = storage_options
         self._write_options = write_options or {}
         self._read_options = read_options or {}
-        self._partition_by = _normalize_partition_by(partition_by)
 
     @property
     def storage_options(self) -> dict[str, str] | None:
@@ -131,22 +128,23 @@ class PolarsParquetIoManager(IoManager):
         - `polars.DataFrame` → ``write_parquet`` (native ``partition_by``)
         - `polars.LazyFrame` → ``sink_parquet`` (``pl.PartitionByKey``)
 
-        When ``partition_by`` is set, writes to Hive-style partitioned
-        directories.
+        When ``partition_by`` is set on the ``@task`` decorator, writes
+        to Hive-style partitioned directories.
         """
         import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional
 
         base_uri = self._uri(context.task_key)
+        partition_by = context.partition_by
 
         # Inject logical_date column if it's a partition column
-        if _needs_logical_date_col(self._partition_by):
+        if _needs_logical_date_col(partition_by):
             ld_str = _format_logical_date(context.logical_date)
             obj = obj.with_columns(pl.lit(ld_str).alias("logical_date"))
 
-        if self._partition_by:
+        if partition_by:
             if isinstance(obj, pl.LazyFrame):
                 obj.sink_parquet(
-                    pl.PartitionByKey(base_uri, by=self._partition_by),
+                    pl.PartitionByKey(base_uri, by=partition_by),
                     mkdir=True,
                     storage_options=self.storage_options,
                     **self._write_options,
@@ -154,7 +152,7 @@ class PolarsParquetIoManager(IoManager):
             elif isinstance(obj, pl.DataFrame):
                 obj.write_parquet(
                     base_uri,
-                    partition_by=self._partition_by,
+                    partition_by=partition_by,
                     mkdir=True,
                     storage_options=self.storage_options,
                     **self._write_options,
@@ -190,17 +188,19 @@ class PolarsParquetIoManager(IoManager):
         (lazy `polars.LazyFrame`) — this is the default for
         unannotated parameters.
 
-        When ``partition_by`` is set, reads from the Hive-partitioned
-        directory.  By default only the current ``logical_date`` partition
-        is returned; use `all_partitions()` on the upstream
-        dependency or ``@task(all_partitions=True)`` on the consuming
-        task to read all partitions.
+        When ``partition_by`` is set on the producing ``@task``, reads
+        from the Hive-partitioned directory.  By default only the
+        current ``logical_date`` partition is returned; use
+        `all_partitions()` on the upstream dependency or
+        ``@task(all_partitions=True)`` on the consuming task to read
+        all partitions.
         """
         import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional
 
         base_uri = self._uri(context.upstream_task_key)
+        partition_by = context.partition_by
 
-        if self._partition_by:
+        if partition_by:
             glob_uri = f"{base_uri}/**/*.parquet"
             if context.expected_type is pl.DataFrame:
                 result = pl.read_parquet(
@@ -216,10 +216,7 @@ class PolarsParquetIoManager(IoManager):
                     storage_options=self.storage_options,
                     **self._read_options,
                 )
-            if (
-                _needs_logical_date_col(self._partition_by)
-                and not context.all_partitions
-            ):
+            if _needs_logical_date_col(partition_by) and not context.all_partitions:
                 ld_str = _format_logical_date(context.logical_date)
                 result = result.filter(pl.col("logical_date") == ld_str)
             return result

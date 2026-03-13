@@ -34,6 +34,8 @@ from databricks_bundle_decorators.registry import (
 )
 from databricks_bundle_decorators.sdk_types import ClusterConfig, JobConfig, TaskConfig
 
+from databricks_bundle_decorators.io_manager import _normalize_partition_by
+
 
 # ---------------------------------------------------------------------------
 # Reserved parameter namespace
@@ -172,6 +174,7 @@ def task(
     io_manager: IoManager | None = ...,
     depends_on: TaskProxy | list[TaskProxy] | None = ...,
     all_partitions: bool = ...,
+    partition_by: str | list[str] | None = ...,
     **kwargs: Unpack[TaskConfig],
 ) -> _TaskDecorator: ...
 
@@ -186,6 +189,7 @@ def task(
     io_manager: IoManager | None = None,
     depends_on: TaskProxy | list[TaskProxy] | None = None,
     all_partitions: bool = False,
+    partition_by: str | list[str] | None = None,
     **kwargs: Unpack[TaskConfig],
 ):
     """Register a function as a Databricks task.
@@ -254,6 +258,7 @@ def task(
             fn=fn,
             task_key=task_key,
             io_manager=io_manager,
+            partition_by=_normalize_partition_by(partition_by),
             sdk_config=dict(kwargs),
             depends_on=depends_on_keys,
         )

@@ -55,6 +55,7 @@ class OutputContext:
     task_key: str
     run_id: str
     logical_date: datetime | None = None
+    partition_by: list[str] | None = None
 
 
 @dataclass
@@ -84,6 +85,7 @@ class InputContext:
     expected_type: type | None = field(default=None, repr=False)
     logical_date: datetime | None = None
     all_partitions: bool = False
+    partition_by: list[str] | None = None
 
 
 class IoManager(ABC):

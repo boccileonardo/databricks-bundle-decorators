@@ -5,9 +5,10 @@ Every job run has a **logical date** — a `datetime` that represents
 Dagster's partition key).  By default it's the current UTC time; for
 backfills it's a specific date set via job parameters.
 
-Data partitioning is handled by IoManagers via their `partition_by`
-constructor parameter — see [Built-in IoManagers](api/io-managers/index.md)
-for format-specific details.
+Data partitioning is handled via the `partition_by` parameter on the
+`@task` decorator of the producing task — see
+[Built-in IoManagers](api/io-managers/index.md) for format-specific
+details.
 
 ## Quick start
 
@@ -18,12 +19,11 @@ from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
 io = PolarsParquetIoManager(
     base_path="abfss://lake@acct.dfs.core.windows.net/data",
-    partition_by="logical_date",
 )
 
 @job(partition=DailyPartition(start_date="2024-01-01"))
 def daily_pipeline():
-    @task(io_manager=io)
+    @task(io_manager=io, partition_by="logical_date")
     def extract():
         date = current_logical_date()
         return fetch_data(date.strftime("%Y-%m-%d"))
@@ -41,6 +41,10 @@ All `partition_by` columns produce Hive-style partitioned output
 `partition_by` is used to filter the data to the current partition
 automatically.
 
+The `partition_by` parameter lives on the **producing** `@task`
+decorator, not on the IoManager.  This means you can reuse the same
+IoManager instance across datasets partitioned by different columns.
+
 The special column name `"logical_date"` adds one extra convenience:
 the IoManager **auto-injects** a `logical_date` column on write (so
 your DataFrame doesn't need to contain it).  Any other column name
@@ -55,12 +59,11 @@ injection occurs, but filtering on read still applies:
 ```python
 io = PolarsParquetIoManager(
     base_path="abfss://lake@acct.dfs.core.windows.net/data",
-    partition_by="event_date",  # column must exist in the DataFrame
 )
 
 @job(partition=DailyPartition(start_date="2024-01-01"))
 def daily_pipeline():
-    @task(io_manager=io)
+    @task(io_manager=io, partition_by="event_date")
     def extract() -> pl.LazyFrame:
         date = current_logical_date()
         # The data already contains 'event_date' — no injection needed
@@ -216,12 +219,11 @@ from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
 io = PolarsParquetIoManager(
     base_path="abfss://lake@acct.dfs.core.windows.net/data",
-    partition_by="logical_date",
 )
 
 @job(partition=DailyPartition(start_date="2024-01-01"))
 def daily_pipeline():
-    @task(io_manager=io)
+    @task(io_manager=io, partition_by="logical_date")
     def extract():
         ...
 

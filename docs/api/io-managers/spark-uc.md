@@ -6,18 +6,20 @@ is needed.
 
 ## Partitioning
 
-All UC IoManagers support `partition_by`.  `"logical_date"` is
-auto-injected on write and auto-filtered on read.  Managed tables use
-`partitionBy()` with `saveAsTable()`; volume paths use `partitionBy()`
-with `save()`.
+All UC IoManagers support `partition_by` via the `@task` decorator.
+`"logical_date"` is auto-injected on write and auto-filtered on read.
+Managed tables use `partitionBy()` with `saveAsTable()`; volume paths
+use `partitionBy()` with `save()`.
 
 ```python
 io = SparkUCTableIoManager(
     catalog="main",
     schema="staging",
-    partition_by="logical_date",
     mode="overwrite",
 )
+
+@task(io_manager=io, partition_by="logical_date")
+def extract(): ...
 ```
 
 ## Managed Tables
