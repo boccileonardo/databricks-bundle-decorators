@@ -23,6 +23,8 @@ from databricks_bundle_decorators.io_manager import (
     OutputContext,
     _format_logical_date,
     _needs_logical_date_col,
+    _polars_apply_partition_filter,
+    _polars_extract_partition_values,
 )
 
 
@@ -106,11 +108,14 @@ class PolarsJsonIoManager(IoManager):
         storage_options: dict[str, str] | Callable[[], dict[str, str]] | None = None,
         write_options: dict[str, Any] | None = None,
         read_options: dict[str, Any] | None = None,
+        *,
+        auto_filter: bool = True,
     ) -> None:
         self.base_path = base_path.rstrip("/")
         self._storage_options = storage_options
         self._write_options = write_options or {}
         self._read_options = read_options or {}
+        self.auto_filter = auto_filter
 
     @property
     def storage_options(self) -> dict[str, str] | None:
@@ -180,6 +185,18 @@ class PolarsJsonIoManager(IoManager):
                 )
                 raise TypeError(msg)
 
+    def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:
+        import polars as pl  # ty: ignore[unresolved-import]
+
+        assert context.partition_by is not None
+        base_uri = self._uri(context.task_key)
+        scan = pl.scan_ndjson(
+            f"{base_uri}/**/*.ndjson",
+            hive_partitioning=True,
+            storage_options=self.storage_options,
+        )
+        return _polars_extract_partition_values(scan, context.partition_by)
+
     def read(self, context: InputContext) -> Any:
         """Read NDJSON as a LazyFrame or DataFrame.
 
@@ -215,7 +232,11 @@ class PolarsJsonIoManager(IoManager):
                     storage_options=self.storage_options,
                     **self._read_options,
                 )
-            if _needs_logical_date_col(partition_by) and not context.all_partitions:
+            if context.partition_filter and not context.all_partitions:
+                result = _polars_apply_partition_filter(
+                    result, context.partition_filter
+                )
+            elif _needs_logical_date_col(partition_by) and not context.all_partitions:
                 result = result.filter(
                     pl.col("logical_date") == _format_logical_date(context.logical_date)
                 )

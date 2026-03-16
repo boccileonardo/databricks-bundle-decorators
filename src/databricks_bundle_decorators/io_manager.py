@@ -38,6 +38,52 @@ def _format_logical_date(context_logical_date: datetime | None) -> str:
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
 
 
+def _polars_extract_partition_values(
+    scan: Any, partition_by: list[str]
+) -> dict[str, list[str]]:
+    """Extract distinct partition values from a Polars scan (LazyFrame)."""
+    import polars as pl  # ty: ignore[unresolved-import]
+
+    df = scan.select(partition_by).unique().collect()
+    return {col: sorted(df[col].cast(pl.Utf8).to_list()) for col in partition_by}
+
+
+def _polars_apply_partition_filter(
+    result: Any, partition_filter: dict[str, list[str]]
+) -> Any:
+    """Filter a Polars DataFrame/LazyFrame to matching partition values."""
+    import polars as pl  # ty: ignore[unresolved-import]
+
+    for col, values in partition_filter.items():
+        if len(values) == 1:
+            result = result.filter(pl.col(col) == values[0])
+        else:
+            result = result.filter(pl.col(col).is_in(values))
+    return result
+
+
+def _spark_extract_partition_values(
+    df: Any, partition_by: list[str]
+) -> dict[str, list[str]]:
+    """Extract distinct partition values from a PySpark DataFrame."""
+    rows = df.select(*partition_by).distinct().collect()
+    return {col: sorted({str(row[col]) for row in rows}) for col in partition_by}
+
+
+def _spark_apply_partition_filter(
+    result: Any, partition_filter: dict[str, list[str]]
+) -> Any:
+    """Filter a PySpark DataFrame to matching partition values."""
+    from pyspark.sql import functions as F  # type: ignore[import-untyped]
+
+    for col, values in partition_filter.items():
+        if len(values) == 1:
+            result = result.filter(F.col(col) == values[0])
+        else:
+            result = result.filter(F.col(col).isin(values))
+    return result
+
+
 @dataclass
 class OutputContext:
     """Context provided to `IoManager.write` when persisting a task's return value."""
@@ -67,6 +113,12 @@ class InputContext:
         of filtering to the current ``logical_date``.  Set when the
         upstream dependency is wrapped with `all_partitions()` or
         when the consuming task uses ``@task(all_partitions=True)``.
+    partition_filter : dict[str, list[str]] | None
+        Mapping of partition column names to their written values,
+        pushed by the producing task via task values.  When set, the
+        IoManager uses these values to filter the read result.  Populated
+        automatically when ``auto_filter=True`` on the producing
+        IoManager.
     """
 
     job_name: str
@@ -77,6 +129,7 @@ class InputContext:
     logical_date: datetime | None = None
     all_partitions: bool = False
     partition_by: list[str] | None = None
+    partition_filter: dict[str, list[str]] | None = None
 
 
 class IoManager(ABC):
@@ -126,6 +179,10 @@ class IoManager(ABC):
     _is_setup: bool = False
     """Internal flag to ensure `setup` is called at most once."""
 
+    auto_filter: bool = True
+    """When True, partition values are pushed via task values on write
+    and used to auto-filter reads.  Set to False to disable."""
+
     def setup(self) -> None:
         """Initialise runtime-only resources.
 
@@ -143,6 +200,23 @@ class IoManager(ABC):
         if not self._is_setup:
             self.setup()
             self._is_setup = True
+
+    def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:
+        """Extract distinct partition column values from written data.
+
+        Called by the runtime after `write` when ``auto_filter=True``
+        and ``partition_by`` is set.  The returned dict is pushed as a
+        task value so downstream tasks can filter reads automatically.
+
+        Subclasses **must** implement this method to support
+        ``auto_filter=True``.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement "
+            f"_extract_partition_values(). "
+            f"Set auto_filter=False to disable automatic partition "
+            f"filtering."
+        )
 
     @abstractmethod
     def write(self, context: OutputContext, obj: Any) -> None:
