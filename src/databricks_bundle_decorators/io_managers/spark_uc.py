@@ -27,6 +27,8 @@ from databricks_bundle_decorators.io_manager import (
     OutputContext,
     _format_logical_date,
     _needs_logical_date_col,
+    _spark_apply_partition_filter,
+    _spark_extract_partition_values,
 )
 
 
@@ -81,12 +83,15 @@ class SparkUCTableIoManager(IoManager):
         write_options: dict[str, str] | None = None,
         read_options: dict[str, str] | None = None,
         mode: str = "error",
+        *,
+        auto_filter: bool = True,
     ) -> None:
         self.catalog = catalog
         self.schema = schema
         self._write_options = write_options or {}
         self._read_options = read_options or {}
         self._mode = mode
+        self.auto_filter = auto_filter
 
     def _table_name(self, key: str) -> str:
         return f"{self.catalog}.{self.schema}.{key}"
@@ -139,6 +144,12 @@ class SparkUCTableIoManager(IoManager):
             writer = writer.option(k, v)
         writer.saveAsTable(table)
 
+    def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:
+        assert context.partition_by is not None
+        table = self._table_name(context.task_key)
+        df = self._spark.table(table)
+        return _spark_extract_partition_values(df, context.partition_by)
+
     def read(self, context: InputContext) -> Any:
         """Read a Unity Catalog managed table as a PySpark DataFrame.
 
@@ -150,7 +161,11 @@ class SparkUCTableIoManager(IoManager):
         table = self._table_name(context.upstream_task_key)
         result = self._spark.table(table)
 
-        if _needs_logical_date_col(context.partition_by) and not context.all_partitions:
+        if context.partition_filter and not context.all_partitions:
+            result = _spark_apply_partition_filter(result, context.partition_filter)
+        elif (
+            _needs_logical_date_col(context.partition_by) and not context.all_partitions
+        ):
             from pyspark.sql import functions as F  # type: ignore[import-untyped]
 
             result = result.filter(
@@ -212,6 +227,8 @@ class SparkUCVolumeDeltaIoManager(IoManager):
         write_options: dict[str, str] | None = None,
         read_options: dict[str, str] | None = None,
         mode: str = "error",
+        *,
+        auto_filter: bool = True,
     ) -> None:
         self.catalog = catalog
         self.schema = schema
@@ -219,6 +236,7 @@ class SparkUCVolumeDeltaIoManager(IoManager):
         self._write_options = write_options or {}
         self._read_options = read_options or {}
         self._mode = mode
+        self.auto_filter = auto_filter
 
     def _uri(self, key: str) -> str:
         return f"/Volumes/{self.catalog}/{self.schema}/{self.volume}/{key}"
@@ -271,6 +289,12 @@ class SparkUCVolumeDeltaIoManager(IoManager):
             writer = writer.option(k, v)
         writer.save(uri)
 
+    def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:
+        assert context.partition_by is not None
+        uri = self._uri(context.task_key)
+        df = self._spark.read.format("delta").load(uri)
+        return _spark_extract_partition_values(df, context.partition_by)
+
     def read(self, context: InputContext) -> Any:
         """Read Delta from a UC Volume path as a PySpark DataFrame.
 
@@ -285,7 +309,11 @@ class SparkUCVolumeDeltaIoManager(IoManager):
             reader = reader.option(k, v)
         result = reader.load(uri)
 
-        if _needs_logical_date_col(context.partition_by) and not context.all_partitions:
+        if context.partition_filter and not context.all_partitions:
+            result = _spark_apply_partition_filter(result, context.partition_filter)
+        elif (
+            _needs_logical_date_col(context.partition_by) and not context.all_partitions
+        ):
             from pyspark.sql import functions as F  # type: ignore[import-untyped]
 
             result = result.filter(
@@ -341,12 +369,15 @@ class SparkUCVolumeParquetIoManager(IoManager):
         volume: str,
         write_options: dict[str, str] | None = None,
         read_options: dict[str, str] | None = None,
+        *,
+        auto_filter: bool = True,
     ) -> None:
         self.catalog = catalog
         self.schema = schema
         self.volume = volume
         self._write_options = write_options or {}
         self._read_options = read_options or {}
+        self.auto_filter = auto_filter
 
     def _uri(self, key: str) -> str:
         return f"/Volumes/{self.catalog}/{self.schema}/{self.volume}/{key}"
@@ -383,6 +414,12 @@ class SparkUCVolumeParquetIoManager(IoManager):
             writer = writer.option(k, v)
         writer.save(uri)
 
+    def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:
+        assert context.partition_by is not None
+        uri = self._uri(context.task_key)
+        df = self._spark.read.format("parquet").load(uri)
+        return _spark_extract_partition_values(df, context.partition_by)
+
     def read(self, context: InputContext) -> Any:
         """Read Parquet from a UC Volume path as a PySpark DataFrame.
 
@@ -397,7 +434,11 @@ class SparkUCVolumeParquetIoManager(IoManager):
             reader = reader.option(k, v)
         result = reader.load(uri)
 
-        if _needs_logical_date_col(context.partition_by) and not context.all_partitions:
+        if context.partition_filter and not context.all_partitions:
+            result = _spark_apply_partition_filter(result, context.partition_filter)
+        elif (
+            _needs_logical_date_col(context.partition_by) and not context.all_partitions
+        ):
             from pyspark.sql import functions as F  # type: ignore[import-untyped]
 
             result = result.filter(

@@ -538,3 +538,203 @@ class TestAllPartitionsRuntime:
 
         assert len(captured_ctx) == 1
         assert captured_ctx[0].all_partitions is False
+
+
+class TestAutoFilterRuntime:
+    """Runtime pushes partition values via task values and populates partition_filter."""
+
+    def setup_method(self):
+        reset_registries()
+        _MemoryIo.storage = {}
+        _local_task_values.clear()
+
+    def test_auto_filter_pushes_partition_values(self):
+        """Write with auto_filter=True pushes __partition_values__ task value."""
+
+        class _PartitionedIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                return "data"
+
+            def _extract_partition_values(
+                self, context: OutputContext
+            ) -> dict[str, list[str]]:
+                return {"event_date": ["2024-01-15"]}
+
+        io = _PartitionedIo()
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=lambda: "data",
+            task_key="producer",
+            io_manager=io,
+            partition_by=["event_date"],
+        )
+
+        run_task(
+            "producer",
+            {"__job_name__": "j", "__task_key__": "producer"},
+        )
+
+        assert get_task_value("producer", "__partition_values__") == {
+            "event_date": ["2024-01-15"],
+        }
+
+    def test_auto_filter_false_skips_extraction(self):
+        """Write with auto_filter=False does not push __partition_values__."""
+
+        class _NoFilterIo(IoManager):
+            auto_filter = False
+
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                return "data"
+
+        io = _NoFilterIo()
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=lambda: "data",
+            task_key="producer",
+            io_manager=io,
+            partition_by=["event_date"],
+        )
+
+        run_task(
+            "producer",
+            {"__job_name__": "j", "__task_key__": "producer"},
+        )
+
+        assert get_task_value("producer", "__partition_values__") is None
+
+    def test_partition_filter_populated_on_read(self):
+        """InputContext gets partition_filter from upstream task values."""
+        captured_ctx: list[InputContext] = []
+
+        class _PartitionedIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                captured_ctx.append(context)
+                return "data"
+
+            def _extract_partition_values(
+                self, context: OutputContext
+            ) -> dict[str, list[str]]:
+                return {"event_date": ["2024-01-15"]}
+
+        io = _PartitionedIo()
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=lambda: "data",
+            task_key="producer",
+            io_manager=io,
+            partition_by=["event_date"],
+        )
+        _TASK_REGISTRY["j.consumer"] = TaskMeta(fn=lambda x: x, task_key="consumer")
+
+        # Run producer (pushes __partition_values__)
+        run_task(
+            "producer",
+            {"__job_name__": "j", "__task_key__": "producer"},
+        )
+
+        # Run consumer (reads __partition_values__)
+        run_task(
+            "consumer",
+            {
+                "__job_name__": "j",
+                "__task_key__": "consumer",
+                "__upstream__x": "producer",
+            },
+        )
+
+        assert len(captured_ctx) == 1
+        assert captured_ctx[0].partition_filter == {
+            "event_date": ["2024-01-15"],
+        }
+
+    def test_all_partitions_suppresses_partition_filter(self):
+        """all_partitions=True skips partition_filter even when available."""
+        captured_ctx: list[InputContext] = []
+
+        class _PartitionedIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                captured_ctx.append(context)
+                return "data"
+
+            def _extract_partition_values(
+                self, context: OutputContext
+            ) -> dict[str, list[str]]:
+                return {"event_date": ["2024-01-15"]}
+
+        io = _PartitionedIo()
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=lambda: "data",
+            task_key="producer",
+            io_manager=io,
+            partition_by=["event_date"],
+        )
+        _TASK_REGISTRY["j.consumer"] = TaskMeta(fn=lambda x: x, task_key="consumer")
+
+        run_task(
+            "producer",
+            {"__job_name__": "j", "__task_key__": "producer"},
+        )
+
+        run_task(
+            "consumer",
+            {
+                "__job_name__": "j",
+                "__task_key__": "consumer",
+                "__upstream__x": "producer",
+                "__all_partitions__x": "true",
+            },
+        )
+
+        assert len(captured_ctx) == 1
+        assert captured_ctx[0].partition_filter is None
+
+    def test_auto_filter_false_warns_for_non_ld_columns(self, caplog):
+        """auto_filter=False with non-logical_date cols emits a warning."""
+
+        class _NoFilterIo(IoManager):
+            auto_filter = False
+
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                return "data"
+
+        io = _NoFilterIo()
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=lambda: "data",
+            task_key="producer",
+            io_manager=io,
+            partition_by=["event_date"],
+        )
+        _TASK_REGISTRY["j.consumer"] = TaskMeta(fn=lambda x: x, task_key="consumer")
+
+        run_task(
+            "producer",
+            {"__job_name__": "j", "__task_key__": "producer"},
+        )
+
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            run_task(
+                "consumer",
+                {
+                    "__job_name__": "j",
+                    "__task_key__": "consumer",
+                    "__upstream__x": "producer",
+                },
+            )
+
+        assert "auto_filter=False" in caplog.text
+        assert "event_date" in caplog.text

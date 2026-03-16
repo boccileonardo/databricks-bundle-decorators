@@ -39,25 +39,41 @@ def daily_pipeline():
 All `partition_by` columns produce Hive-style partitioned output
 (`column=value/` directory layout).
 
-The special column name `"logical_date"` has two extra conveniences:
+### Auto-filtering (default)
 
-1. **Auto-inject on write:** the IoManager adds a `logical_date` column
-   automatically (your DataFrame doesn't need to contain it).
-2. **Auto-filter on read:** downstream reads are scoped to the current
-   `logical_date` partition automatically.
+By default (`auto_filter=True`), all built-in IoManagers automatically
+push the distinct partition column values written by the producing task
+to downstream consumers via Databricks task values.  Downstream reads
+are then filtered to exactly the partition values that were written —
+regardless of column name.  This works for `logical_date`, custom date
+columns, categorical columns, and multi-column partitioning alike.
 
-Any other column name in `partition_by` must already exist in the
-DataFrame.  No auto-filtering is applied — the IoManager writes
-Hive-style directories, but reads return all partitions.  Your task
-code is responsible for filtering if needed.
+The special column name `"logical_date"` has one extra convenience on
+top of auto-filtering: the IoManager **auto-injects** a `logical_date`
+column on write (your DataFrame doesn't need to contain it).  Any other
+column name must already exist in the DataFrame.
+
+### Disabling auto-filtering
+
+Pass `auto_filter=False` when constructing the IoManager to disable
+partition value pushdown.  In this mode, only `logical_date` is
+auto-filtered (via the runtime context), and a warning is logged for
+any non-`logical_date` partition columns reminding you to filter
+manually.
+
+```python
+io = PolarsParquetIoManager(
+    base_path="...",
+    auto_filter=False,   # only logical_date will be auto-filtered
+)
+```
 
 ### Using an existing date column
 
 If your dataset already has a date column that maps to the logical
-date, use `partition_by` with that column name directly — no column
-injection occurs, and no auto-filtering is applied on read.  Your
-task code can read the current partition key via
-`current_logical_date()` and filter manually:
+date, use `partition_by` with that column name directly.  With the
+default `auto_filter=True`, downstream reads are automatically
+filtered to the written values — no manual filtering needed:
 
 ```python
 io = PolarsParquetIoManager(
@@ -74,9 +90,7 @@ def daily_pipeline():
 
     @task
     def transform(df: pl.LazyFrame):
-        # df contains all event_date partitions — filter if needed
-        date = current_logical_date()
-        df = df.filter(pl.col("event_date") == date.strftime("%Y-%m-%d"))
+        # df is automatically filtered to the written event_date values
         ...
 
     data = extract()

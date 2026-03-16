@@ -9,12 +9,31 @@ Subclass `IoManager` to implement your own storage backend when the
 When building a custom IoManager, use `context.logical_date` to scope
 storage to the current partition, and `context.all_partitions` to
 support cross-partition reads (triggered by the `all_partitions()`
-wrapper or `@task(all_partitions=True)`):
+wrapper or `@task(all_partitions=True)`).
+
+### Auto-filtering via task values
+
+By default (`auto_filter=True`), the runtime pushes the distinct
+partition values written by the producer to downstream consumers via
+Databricks task values.  On the read side, these values are available
+in `context.partition_filter` — a `dict[str, list[str]]` mapping
+column names to the values that were written.
+
+To opt into auto-filtering in a custom IoManager:
+
+1. Accept `auto_filter` in your `__init__` and set `self.auto_filter`.
+2. Override `_extract_partition_values` to return the distinct values
+   for each partition column after a write.
+3. In `read()`, check `context.partition_filter` and apply it.
 
 ```python
 from databricks_bundle_decorators import IoManager, OutputContext, InputContext
 
 class MyIoManager(IoManager):
+    def __init__(self, base_path: str, *, auto_filter: bool = True) -> None:
+        self.base_path = base_path
+        self.auto_filter = auto_filter
+
     def write(self, context: OutputContext, obj):
         path = f"/data/{context.task_key}"
         if context.logical_date:
@@ -22,15 +41,26 @@ class MyIoManager(IoManager):
             path = f"{path}/logical_date={date_str}"
         save(path, obj)
 
+    def _extract_partition_values(
+        self, context: OutputContext
+    ) -> dict[str, list[str]]:
+        path = f"/data/{context.task_key}"
+        return extract_distinct_values(path, context.partition_by)
+
     def read(self, context: InputContext):
         path = f"/data/{context.upstream_task_key}"
         if context.all_partitions:
             return load_all(path)  # Read all partition directories
+        if context.partition_filter:
+            return load_filtered(path, context.partition_filter)
         if context.logical_date:
             date_str = context.logical_date.strftime("%Y-%m-%d")
             path = f"{path}/logical_date={date_str}"
         return load(path)
 ```
+
+If you set `auto_filter=False`, `context.partition_filter` will
+always be `None` and only the `logical_date` fallback applies.
 
 ### Delta replaceWhere example
 

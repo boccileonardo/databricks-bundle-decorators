@@ -22,6 +22,8 @@ from databricks_bundle_decorators.io_manager import (
     OutputContext,
     _format_logical_date,
     _needs_logical_date_col,
+    _spark_apply_partition_filter,
+    _spark_extract_partition_values,
 )
 
 
@@ -35,10 +37,13 @@ class _SparkParquetBase(IoManager):
         base_path: str,
         write_options: dict[str, str] | None = None,
         read_options: dict[str, str] | None = None,
+        *,
+        auto_filter: bool = True,
     ) -> None:
         self.base_path = base_path.rstrip("/")
         self._write_options = write_options or {}
         self._read_options = read_options or {}
+        self.auto_filter = auto_filter
 
     def _uri(self, key: str) -> str:
         return f"{self.base_path}/{key}"
@@ -69,6 +74,12 @@ class _SparkParquetBase(IoManager):
             writer = writer.option(k, v)
         writer.save(uri)
 
+    def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:
+        assert context.partition_by is not None
+        uri = self._uri(context.task_key)
+        df = self._spark.read.format("parquet").load(uri)
+        return _spark_extract_partition_values(df, context.partition_by)
+
     def read(self, context: InputContext) -> Any:
         """Read Parquet files as a PySpark DataFrame.
 
@@ -83,7 +94,11 @@ class _SparkParquetBase(IoManager):
             reader = reader.option(k, v)
         result = reader.load(uri)
 
-        if _needs_logical_date_col(context.partition_by) and not context.all_partitions:
+        if context.partition_filter and not context.all_partitions:
+            result = _spark_apply_partition_filter(result, context.partition_filter)
+        elif (
+            _needs_logical_date_col(context.partition_by) and not context.all_partitions
+        ):
             from pyspark.sql import functions as F  # type: ignore[import-untyped]
 
             result = result.filter(
@@ -158,11 +173,14 @@ class SparkParquetIoManager(_SparkParquetBase):
         spark_configs: dict[str, str] | Callable[[], dict[str, str]] | None = None,
         write_options: dict[str, str] | None = None,
         read_options: dict[str, str] | None = None,
+        *,
+        auto_filter: bool = True,
     ) -> None:
         super().__init__(
             base_path,
             write_options=write_options,
             read_options=read_options,
+            auto_filter=auto_filter,
         )
         self._spark_configs = spark_configs
 

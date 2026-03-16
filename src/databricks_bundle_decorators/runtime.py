@@ -105,6 +105,37 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
         upstream_meta = _TASK_REGISTRY.get(upstream_qualified)
         if upstream_meta and upstream_meta.io_manager:
             upstream_meta.io_manager._ensure_setup()
+
+            # Retrieve partition filter from upstream task values
+            partition_filter: dict[str, list[str]] | None = None
+            is_all_partitions = param_name in all_partitions_params
+            if (
+                upstream_meta.io_manager.auto_filter
+                and upstream_meta.partition_by
+                and not is_all_partitions
+            ):
+                from databricks_bundle_decorators.task_values import get_task_value
+
+                partition_filter = get_task_value(
+                    upstream_task_key, "__partition_values__"
+                )
+            elif (
+                not upstream_meta.io_manager.auto_filter
+                and upstream_meta.partition_by
+                and not is_all_partitions
+            ):
+                non_ld = [c for c in upstream_meta.partition_by if c != "logical_date"]
+                if non_ld:
+                    _logger.warning(
+                        "IoManager for task '%s' has auto_filter=False. "
+                        "Downstream reads for partition columns %s will "
+                        "not be filtered automatically. Use "
+                        "all_partitions() to suppress this warning, or "
+                        "filter manually in your task code.",
+                        upstream_task_key,
+                        non_ld,
+                    )
+
             context = InputContext(
                 job_name=job_name,
                 task_key=task_key,
@@ -112,8 +143,9 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 run_id=run_id,
                 expected_type=type_hints.get(param_name),
                 logical_date=logical_date,
-                all_partitions=param_name in all_partitions_params,
+                all_partitions=is_all_partitions,
                 partition_by=upstream_meta.partition_by,
+                partition_filter=partition_filter,
             )
             kwargs[param_name] = upstream_meta.io_manager.read(context)
         else:
@@ -138,26 +170,35 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
     _tv._current_task_key = task_key
     try:
         result = task_meta.fn(**kwargs)
+
+        # ---- persist output via IoManager.write() ------------------------
+        if result is not None and task_meta.io_manager:
+            task_meta.io_manager._ensure_setup()
+            context = OutputContext(
+                job_name=job_name,
+                task_key=task_key,
+                run_id=run_id,
+                logical_date=logical_date,
+                partition_by=task_meta.partition_by,
+            )
+            task_meta.io_manager.write(context, result)
+
+            # Push partition values for downstream auto-filtering
+            if task_meta.io_manager.auto_filter and task_meta.partition_by:
+                partition_values = task_meta.io_manager._extract_partition_values(
+                    context
+                )
+                from databricks_bundle_decorators.task_values import set_task_value
+
+                set_task_value("__partition_values__", partition_values)  # type: ignore[arg-type]
+        elif result is not None and not task_meta.io_manager:
+            _logger.warning(
+                "Task '%s' returned a value but has no IoManager – "
+                "the return value will be discarded.",
+                task_key,
+            )
     finally:
         _tv._current_task_key = None
-
-    # ---- persist output via IoManager.write() ----------------------------
-    if result is not None and task_meta.io_manager:
-        task_meta.io_manager._ensure_setup()
-        context = OutputContext(
-            job_name=job_name,
-            task_key=task_key,
-            run_id=run_id,
-            logical_date=logical_date,
-            partition_by=task_meta.partition_by,
-        )
-        task_meta.io_manager.write(context, result)
-    elif result is not None and not task_meta.io_manager:
-        _logger.warning(
-            "Task '%s' returned a value but has no IoManager – "
-            "the return value will be discarded.",
-            task_key,
-        )
 
 
 def main() -> None:
