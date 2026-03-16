@@ -1,4 +1,4 @@
-"""Tests for backfill definitions and current_logical_date helper."""
+"""Tests for backfill definitions and get_run_logical_date helper."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from databricks_bundle_decorators.backfill import (
     StaticBackfill,
     WeeklyBackfill,
     _parse_logical_date_str,
-    current_logical_date,
+    get_run_logical_date,
 )
 
 
@@ -178,35 +178,35 @@ class TestStaticBackfill:
             p._keys = ["b"]  # type: ignore[misc]
 
 
-class TestCurrentLogicalDate:
+class TestGetRunLogicalDate:
     def test_reads_from_params(self):
         _populate_params({"logical_date": "2024-01-15T00:00:00+00:00"})
-        result = current_logical_date()
+        result = get_run_logical_date(validate=False)
         from datetime import datetime, timezone
 
         assert result == datetime(2024, 1, 15, tzinfo=timezone.utc)
 
     def test_monthly_format_parsed(self):
-        """MonthlyPartition keys ('YYYY-MM-01') should be parseable."""
+        """MonthlyBackfill keys ('YYYY-MM-01') should be parseable."""
         _populate_params({"logical_date": "2024-01-01"})
-        result = current_logical_date()
+        result = get_run_logical_date(validate=False)
         from datetime import datetime, timezone
 
         assert result == datetime(2024, 1, 1, tzinfo=timezone.utc)
 
     def test_weekly_format_parsed(self):
-        """WeeklyPartition keys ('YYYY-WNN') should be parseable."""
+        """WeeklyBackfill keys ('YYYY-WNN') should be parseable."""
         _populate_params({"logical_date": "2024-W03"})
-        result = current_logical_date()
+        result = get_run_logical_date(validate=False)
         from datetime import datetime, timezone
 
         # 2024-W03 Monday = 2024-01-15
         assert result == datetime(2024, 1, 15, tzinfo=timezone.utc)
 
     def test_daily_format_parsed(self):
-        """DailyPartition keys ('YYYY-MM-DD') should work."""
+        """DailyBackfill keys ('YYYY-MM-DD') should work."""
         _populate_params({"logical_date": "2024-06-15"})
-        result = current_logical_date()
+        result = get_run_logical_date(validate=False)
         from datetime import datetime, timezone
 
         assert result == datetime(2024, 6, 15, tzinfo=timezone.utc)
@@ -214,17 +214,17 @@ class TestCurrentLogicalDate:
     def test_unparseable_raises(self):
         _populate_params({"logical_date": "not-a-date"})
         with pytest.raises(ValueError, match="Cannot parse"):
-            current_logical_date()
+            get_run_logical_date(validate=False)
 
     def test_empty_raises(self):
         _populate_params({"logical_date": ""})
         with pytest.raises(RuntimeError, match="logical_date is not set"):
-            current_logical_date()
+            get_run_logical_date()
 
     def test_missing_raises(self):
         _populate_params({})
         with pytest.raises(RuntimeError, match="logical_date is not set"):
-            current_logical_date()
+            get_run_logical_date()
 
     def teardown_method(self):
         _populate_params({})
@@ -292,3 +292,124 @@ class TestParseLogicalDateStr:
     def test_invalid_raises_value_error(self):
         with pytest.raises(ValueError, match="Cannot parse"):
             _parse_logical_date_str("not-a-date")
+
+
+class TestGetRunLogicalDateValidation:
+    """Tests for boundary validation in get_run_logical_date."""
+
+    def setup_method(self):
+        from databricks_bundle_decorators.registry import reset_registries
+
+        reset_registries()
+
+    def teardown_method(self):
+        _populate_params({})
+
+    def _register_job(self, backfill_def):
+        """Register a minimal job with the given backfill def."""
+        from databricks_bundle_decorators.registry import JobMeta, _JOB_REGISTRY
+
+        _JOB_REGISTRY["test_job"] = JobMeta(
+            fn=lambda: None,
+            name="test_job",
+            backfill=backfill_def,
+        )
+
+    def test_daily_in_range_passes(self):
+        self._register_job(
+            DailyBackfill(start_date="2024-01-01", end_date="2024-12-31")
+        )
+        _populate_params({"logical_date": "2024-06-15", "__job_name__": "test_job"})
+        dt = get_run_logical_date()
+        assert dt.day == 15
+
+    def test_daily_before_start_raises(self):
+        self._register_job(
+            DailyBackfill(start_date="2024-03-01", end_date="2024-12-31")
+        )
+        _populate_params({"logical_date": "2024-01-15", "__job_name__": "test_job"})
+        with pytest.raises(ValueError, match="before the backfill start_date"):
+            get_run_logical_date()
+
+    def test_daily_after_end_raises(self):
+        self._register_job(
+            DailyBackfill(start_date="2024-01-01", end_date="2024-06-30")
+        )
+        _populate_params({"logical_date": "2024-07-01", "__job_name__": "test_job"})
+        with pytest.raises(ValueError, match="after the backfill end_date"):
+            get_run_logical_date()
+
+    def test_daily_on_boundary_passes(self):
+        self._register_job(
+            DailyBackfill(start_date="2024-01-01", end_date="2024-01-01")
+        )
+        _populate_params({"logical_date": "2024-01-01", "__job_name__": "test_job"})
+        dt = get_run_logical_date()
+        assert dt.day == 1
+
+    def test_monthly_in_range_passes(self):
+        self._register_job(
+            MonthlyBackfill(start_date="2024-01-01", end_date="2024-12-01")
+        )
+        _populate_params({"logical_date": "2024-06-01", "__job_name__": "test_job"})
+        dt = get_run_logical_date()
+        assert dt.month == 6
+
+    def test_hourly_in_range_passes(self):
+        self._register_job(
+            HourlyBackfill(start_date="2024-01-01T00", end_date="2024-01-01T23")
+        )
+        _populate_params({"logical_date": "2024-01-01T12", "__job_name__": "test_job"})
+        dt = get_run_logical_date()
+        assert dt.hour == 12
+
+    def test_hourly_before_start_raises(self):
+        self._register_job(
+            HourlyBackfill(start_date="2024-01-01T10", end_date="2024-01-01T23")
+        )
+        _populate_params({"logical_date": "2024-01-01T05", "__job_name__": "test_job"})
+        with pytest.raises(ValueError, match="before the backfill start_date"):
+            get_run_logical_date()
+
+    def test_static_valid_date_key_passes(self):
+        self._register_job(StaticBackfill(keys=["2024-01-01", "2024-06-15"]))
+        _populate_params({"logical_date": "2024-06-15", "__job_name__": "test_job"})
+        dt = get_run_logical_date()
+        assert dt.day == 15
+
+    def test_static_invalid_key_raises(self):
+        self._register_job(StaticBackfill(keys=["2024-01-01", "2024-06-15"]))
+        _populate_params({"logical_date": "2024-03-01", "__job_name__": "test_job"})
+        with pytest.raises(ValueError, match="not in the StaticBackfill"):
+            get_run_logical_date()
+
+    def test_validate_false_skips_check(self):
+        self._register_job(
+            DailyBackfill(start_date="2024-06-01", end_date="2024-06-30")
+        )
+        _populate_params({"logical_date": "2024-01-01", "__job_name__": "test_job"})
+        # Out of range but validate=False
+        dt = get_run_logical_date(validate=False)
+        assert dt.month == 1
+
+    def test_no_job_context_skips_validation(self):
+        """When __job_name__ is absent from params, validation is skipped."""
+        _populate_params({"logical_date": "2024-01-01"})
+        dt = get_run_logical_date()
+        assert dt.day == 1
+
+    def test_no_backfill_def_skips_validation(self):
+        """Jobs without backfill= skip validation."""
+        from databricks_bundle_decorators.registry import JobMeta, _JOB_REGISTRY
+
+        _JOB_REGISTRY["test_job"] = JobMeta(fn=lambda: None, name="test_job")
+        _populate_params({"logical_date": "2024-01-01", "__job_name__": "test_job"})
+        dt = get_run_logical_date()
+        assert dt.day == 1
+
+    def test_no_end_date_only_validates_start(self):
+        """When end_date is None, only start boundary is checked."""
+        self._register_job(DailyBackfill(start_date="2024-06-01"))
+        _populate_params({"logical_date": "2024-01-01", "__job_name__": "test_job"})
+        with pytest.raises(ValueError, match="before the backfill start_date"):
+            get_run_logical_date()

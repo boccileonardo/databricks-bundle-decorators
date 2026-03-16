@@ -52,7 +52,7 @@ from databricks_bundle_decorators.io_manager import InputContext as InputContext
 from databricks_bundle_decorators.io_manager import IoManager as IoManager
 from databricks_bundle_decorators.io_manager import OutputContext as OutputContext
 from databricks_bundle_decorators.backfill import (
-    current_logical_date as current_logical_date,
+    get_run_logical_date as get_run_logical_date,
     DailyBackfill as DailyBackfill,
     HourlyBackfill as HourlyBackfill,
     MonthlyBackfill as MonthlyBackfill,
@@ -101,5 +101,5 @@ __all__ = [
     "MonthlyBackfill",
     "WeeklyBackfill",
     "StaticBackfill",
-    "current_logical_date",
+    "get_run_logical_date",
 ]

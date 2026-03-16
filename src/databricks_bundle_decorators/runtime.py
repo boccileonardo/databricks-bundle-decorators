@@ -51,9 +51,9 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
         ``python_wheel_task`` invocation.
     """
     # ---- extract internal parameters -------------------------------------
-    job_name = cli_params.pop("__job_name__", "unknown")
-    cli_params.pop("__task_key__", None)
-    run_id = cli_params.pop("__run_id__", os.environ.get("DATABRICKS_RUN_ID", "local"))
+    job_name = cli_params.get("__job_name__", "unknown")
+    task_key_param = cli_params.get("__task_key__")  # noqa: F841
+    run_id = cli_params.get("__run_id__", os.environ.get("DATABRICKS_RUN_ID", "local"))
 
     # ---- extract upstream mappings (__upstream__<param>=<upstream_task>) ---
     upstream_map: dict[str, str] = {}
@@ -61,14 +61,13 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
     for key in list(cli_params):
         if key.startswith("__upstream__"):
             param_name = key[len("__upstream__") :]
-            upstream_map[param_name] = cli_params.pop(key)
+            upstream_map[param_name] = cli_params[key]
         elif key.startswith("__all_partitions__"):
             param_name = key[len("__all_partitions__") :]
             all_partitions_params.add(param_name)
-            cli_params.pop(key)
 
     # ---- extract for-each input (if present) -----------------------------
-    for_each_input_raw: str | None = cli_params.pop("__for_each_input__", None)
+    for_each_input_raw: str | None = cli_params.get("__for_each_input__")
 
     # ---- remaining keys are job-level parameters -------------------------
     _populate_params(cli_params)

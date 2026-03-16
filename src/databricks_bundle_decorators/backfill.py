@@ -7,11 +7,11 @@ to enumerate dates for bulk run submission.
 Every job automatically receives a ``logical_date`` parameter.  At
 runtime, task code reads it via the convenience helper::
 
-    from databricks_bundle_decorators.backfill import current_logical_date
+    from databricks_bundle_decorators.backfill import get_run_logical_date
 
     @task
     def extract() -> pl.DataFrame:
-        dt = current_logical_date()  # returns datetime, raises if unset
+        dt = get_run_logical_date()  # returns datetime, raises if unset
         ...
 """
 
@@ -294,11 +294,21 @@ class StaticBackfill(BackfillDef):
         return list(self._keys)
 
 
-def current_logical_date() -> datetime:
-    """Read the current logical date from ``params["logical_date"]``.
+def get_run_logical_date(*, validate: bool = True) -> datetime:
+    """Return the logical date for the current job run.
 
-    The value is always an ISO-8601 string in *params* and is parsed
-    into a timezone-aware ``datetime`` before returning.
+    Reads the ``logical_date`` job parameter, parses it into a
+    timezone-aware ``datetime``, and optionally validates it against
+    the job's `BackfillDef` boundaries.
+
+    Parameters
+    ----------
+    validate:
+        When ``True`` (the default), verify that the logical date
+        falls within the ``start_date`` / ``end_date`` range declared
+        by the job's `BackfillDef`.  A `ValueError` is raised if the
+        date is out of range.  Ignored when the job has no backfill
+        definition.
 
     Raises
     ------
@@ -306,6 +316,9 @@ def current_logical_date() -> datetime:
         If ``logical_date`` is missing or empty.  This indicates the
         job has no backfill definition and was not started via the
         backfill CLI.
+    ValueError
+        If *validate* is ``True`` and the logical date is outside the
+        backfill definition's boundaries.
 
     Returns
     -------
@@ -322,7 +335,56 @@ def current_logical_date() -> datetime:
             "logical_date parameter. Use @job(backfill=...) and "
             "the backfill CLI, or pass logical_date explicitly."
         )
+    if validate:
+        job_name: str | None = params.get("__job_name__")
+        _validate_logical_date(raw, job_name)
+
     return _parse_logical_date_str(raw)
+
+
+def _validate_logical_date(raw: str, job_name: str | None) -> None:
+    """Check *raw* is within the current job's backfill boundaries."""
+    from databricks_bundle_decorators.registry import _JOB_REGISTRY
+
+    if job_name is None:
+        return
+    job_meta = _JOB_REGISTRY.get(job_name)
+    if job_meta is None or job_meta.backfill is None:
+        return
+
+    backfill = job_meta.backfill
+
+    if isinstance(backfill, StaticBackfill):
+        if raw not in backfill._keys:
+            raise ValueError(
+                f"logical_date {raw!r} is not in the StaticBackfill "
+                f"keys for job {job_name!r}. "
+                f"Valid keys: {backfill._keys}"
+            )
+        return
+
+    # Time-based backfill defs all have start_date and end_date
+    start: str | None = getattr(backfill, "start_date", None)
+    if start is None:
+        return
+
+    dt = _parse_logical_date_str(raw)
+    start_dt = _parse_logical_date_str(start)
+
+    if dt < start_dt:
+        raise ValueError(
+            f"logical_date {raw!r} is before the backfill "
+            f"start_date {start!r} for job {job_name!r}."
+        )
+
+    end: str | None = getattr(backfill, "end_date", None)
+    if end is not None:
+        end_dt = _parse_logical_date_str(end)
+        if dt > end_dt:
+            raise ValueError(
+                f"logical_date {raw!r} is after the backfill "
+                f"end_date {end!r} for job {job_name!r}."
+            )
 
 
 def _parse_logical_date_str(raw: str) -> datetime:

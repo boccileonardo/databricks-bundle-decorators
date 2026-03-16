@@ -14,7 +14,7 @@ details.
 
 ```python
 from databricks_bundle_decorators import job, task
-from databricks_bundle_decorators.backfill import DailyBackfill, current_logical_date
+from databricks_bundle_decorators.backfill import DailyBackfill, get_run_logical_date
 from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
 io = PolarsParquetIoManager(
@@ -25,7 +25,7 @@ io = PolarsParquetIoManager(
 def daily_pipeline():
     @task(io_manager=io, partition_by="logical_date")
     def extract():
-        date = current_logical_date()
+        date = get_run_logical_date()
         return fetch_data(date.strftime("%Y-%m-%d"))
 
     @task
@@ -84,7 +84,7 @@ io = PolarsParquetIoManager(
 def daily_pipeline():
     @task(io_manager=io, partition_by="event_date")
     def extract() -> pl.LazyFrame:
-        date = current_logical_date()
+        date = get_run_logical_date()
         # The data already contains 'event_date' — no injection needed
         return pl.scan_ndjson(f"s3://raw/{date:%Y-%m-%d}/*.jsonl")
 
@@ -117,7 +117,7 @@ When `logical_date` is present as a job parameter:
   to `datetime.now(tz=timezone.utc)`.
 
 This value is passed to all IoManager contexts and is available via
-`current_logical_date()`.
+`get_run_logical_date()`.
 
 When `logical_date` is **not** a job parameter (no `backfill=` and
 not added manually), the IoManager contexts receive `logical_date=None`.
@@ -127,16 +127,21 @@ not added manually), the IoManager contexts receive `logical_date=None`.
 Inside a task, use the convenience helper:
 
 ```python
-from databricks_bundle_decorators.backfill import current_logical_date
+from databricks_bundle_decorators.backfill import get_run_logical_date
 
-date = current_logical_date()  # returns datetime
+date = get_run_logical_date()  # returns datetime
 ```
 
-`current_logical_date()` raises `RuntimeError` if `logical_date` is
+`get_run_logical_date()` raises `RuntimeError` if `logical_date` is
 empty or missing — i.e. when the job has no backfill definition and
 was not invoked with a `logical_date` parameter.  This strict behaviour
 prevents silent bugs where tasks assume a logical date that was never
 set.
+
+When `validate=True` (the default), the function also checks that the
+logical date falls within the `start_date` / `end_date` boundaries
+declared by the job's `BackfillDef`.  Pass `validate=False` to skip
+this check.
 
 ## Backfill definitions
 
