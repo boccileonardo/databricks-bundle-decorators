@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 import typer
 
@@ -420,11 +420,17 @@ def _cmd_backfill(
     max_concurrent: int | None = None,
     dry_run: bool = False,
     wait: bool = False,
+    target: str | None = None,
     profile: str | None = None,
-    host: str | None = None,
 ) -> None:
-    """Trigger one Databricks job run per partition key."""
+    """Trigger one Databricks job run per partition key.
+
+    Uses ``databricks bundle run`` under the hood, which automatically
+    resolves the deployed job name (including any dev-mode prefix).
+    """
     import asyncio
+    import shutil
+    import subprocess
 
     from databricks_bundle_decorators.discovery import discover_pipelines
     from databricks_bundle_decorators.partitions import (
@@ -476,49 +482,21 @@ def _cmd_backfill(
         print("\n[DRY RUN] No runs submitted.")
         return
 
-    # 3. Submit runs via Databricks SDK
-    try:
-        from databricks.sdk import WorkspaceClient  # type: ignore[import-untyped]
-    except ImportError:
+    # 3. Verify databricks CLI is available
+    if shutil.which("databricks") is None:
         print(
-            "Error: databricks-sdk is required for backfill. "
-            "Install it with: uv add databricks-sdk",
+            "Error: 'databricks' CLI not found on PATH. "
+            "Install it: https://docs.databricks.com/dev-tools/cli/install.html",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    sdk_kwargs: dict[str, str] = {}
+    # 4. Build base command
+    base_cmd: list[str] = ["databricks", "bundle", "run", job_name]
+    if target:
+        base_cmd += ["--target", target]
     if profile:
-        sdk_kwargs["profile"] = profile
-    if host:
-        sdk_kwargs["host"] = host
-
-    w = WorkspaceClient(**sdk_kwargs)
-
-    # Find the job by name (exact match)
-    matching_jobs = [
-        j
-        for j in w.jobs.list(name=job_name)
-        if j.settings and j.settings.name == job_name
-    ]
-    if not matching_jobs:
-        print(
-            f"Error: No deployed job named '{job_name}' found in the workspace.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    if len(matching_jobs) > 1:
-        job_ids = [str(j.job_id) for j in matching_jobs]
-        print(
-            f"Error: Multiple jobs named '{job_name}' found "
-            f"(job_ids: {', '.join(job_ids)}). "
-            f"Rename the jobs to be unique.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    db_job_id = matching_jobs[0].job_id
+        base_cmd += ["--profile", profile]
 
     concurrency: int = max_concurrent or len(key_list)
     submitted: list[str] = []
@@ -526,52 +504,43 @@ def _cmd_backfill(
 
     async def _submit_all() -> None:
         sem = asyncio.Semaphore(concurrency)
-        waiters: list[tuple[str, Any]] = []  # (key, Wait[Run])
 
-        async def _submit_one(key: str) -> None:
+        async def _run_one(key: str) -> None:
             async with sem:
+                cmd = [
+                    *base_cmd,
+                    "--params",
+                    f"{LOGICAL_DATE_PARAM}={key}",
+                ]
+                if not wait:
+                    cmd.append("--no-wait")
                 try:
-                    waiter = await asyncio.to_thread(
-                        w.jobs.run_now,
-                        job_id=db_job_id,
-                        job_parameters={LOGICAL_DATE_PARAM: key},
+                    result = await asyncio.to_thread(
+                        subprocess.run,
+                        cmd,
+                        capture_output=True,
+                        text=True,
                     )
-                    msg = f"  {key} -> run_id={waiter.run_id}"
-                    submitted.append(msg)
-                    waiters.append((key, waiter))
-                    print(msg)
+                    if result.returncode == 0:
+                        output = result.stdout.strip()
+                        label = "OK" if wait else "submitted"
+                        msg = f"  {key} -> {label}"
+                        if output:
+                            last_line = output.splitlines()[-1]
+                            msg = f"  {key} -> {last_line}"
+                        submitted.append(key)
+                        print(msg)
+                    else:
+                        failed.append(key)
+                        err = result.stderr.strip() or result.stdout.strip()
+                        print(f"  {key} -> FAILED: {err}", file=sys.stderr)
                 except Exception as exc:  # noqa: BLE001
                     failed.append(key)
                     print(f"  {key} -> FAILED: {exc}", file=sys.stderr)
 
         async with asyncio.TaskGroup() as tg:
             for key in key_list:
-                tg.create_task(_submit_one(key))
-
-        if wait and waiters:
-            print(f"\nWaiting for {len(waiters)} runs to complete...")
-
-            async def _wait_one(key: str, waiter: Any) -> None:
-                try:
-                    result = await asyncio.to_thread(waiter.result)
-                    state = result.state
-                    result_state = (
-                        state.result_state.value
-                        if state and state.result_state
-                        else "UNKNOWN"
-                    )
-                    if result_state == "SUCCESS":
-                        print(f"  {key} -> SUCCESS")
-                    else:
-                        failed.append(key)
-                        print(f"  {key} -> {result_state}", file=sys.stderr)
-                except Exception as exc:  # noqa: BLE001
-                    failed.append(key)
-                    print(f"  {key} -> ERROR: {exc}", file=sys.stderr)
-
-            async with asyncio.TaskGroup() as tg:
-                for key, waiter in waiters:
-                    tg.create_task(_wait_one(key, waiter))
+                tg.create_task(_run_one(key))
 
     try:
         asyncio.run(_submit_all())
@@ -579,7 +548,8 @@ def _cmd_backfill(
         print("\nBackfill interrupted.", file=sys.stderr)
         sys.exit(130)
 
-    print(f"\nSubmitted {len(submitted)}/{len(key_list)} runs.")
+    action = "Completed" if wait else "Submitted"
+    print(f"\n{action} {len(submitted)}/{len(key_list)} runs.")
     if failed:
         print(
             f"Failed keys ({len(failed)}): {', '.join(failed)}",
@@ -636,16 +606,20 @@ def backfill(
         bool,
         typer.Option(help="Wait for all runs to complete and report success/failure"),
     ] = False,
+    target: Annotated[
+        str | None,
+        typer.Option(
+            "--target",
+            "-t",
+            help="Databricks bundle target (e.g. dev, staging, prod)",
+        ),
+    ] = None,
     profile: Annotated[
         str | None,
         typer.Option(help="Databricks CLI profile name"),
     ] = None,
-    host: Annotated[
-        str | None,
-        typer.Option(help="Databricks workspace URL"),
-    ] = None,
 ) -> None:
-    """Submit one Databricks job run per partition key."""
+    """Submit one Databricks job run per partition key via ``databricks bundle run``."""
     _cmd_backfill(
         job_name=job_name,
         start=start,
@@ -654,8 +628,8 @@ def backfill(
         max_concurrent=max_concurrent,
         dry_run=dry_run,
         wait=wait,
+        target=target,
         profile=profile,
-        host=host,
     )
 
 

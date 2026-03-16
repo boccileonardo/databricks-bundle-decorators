@@ -412,3 +412,120 @@ class TestBackfillCmd:
                 job_name="test_pipeline",
                 keys=",,,",
             )
+
+    def test_submit_runs_via_bundle_run(self, monkeypatch, capsys):
+        """Non-dry-run submits via ``databricks bundle run``."""
+        import subprocess
+
+        self._make_job_with_partition()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+
+        calls: list[list[str]] = []
+
+        def _fake_run(cmd, *, capture_output=False, text=False):
+            calls.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, stdout="Run submitted\n")
+
+        monkeypatch.setattr("subprocess.run", _fake_run)
+
+        _cmd_backfill(
+            job_name="test_pipeline",
+            keys="2024-01-01,2024-01-02",
+        )
+
+        assert len(calls) == 2
+        # Each call should use 'databricks bundle run'
+        for call in calls:
+            assert call[:4] == ["databricks", "bundle", "run", "test_pipeline"]
+            assert "--no-wait" in call
+            assert any("logical_date=" in arg for arg in call)
+
+        out = capsys.readouterr().out
+        assert "Submitted 2/2" in out
+
+    def test_submit_with_target_and_profile(self, monkeypatch, capsys):
+        """--target and --profile are forwarded to ``databricks bundle run``."""
+        import subprocess
+
+        self._make_job_with_partition()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+
+        calls: list[list[str]] = []
+
+        def _fake_run(cmd, *, capture_output=False, text=False):
+            calls.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, stdout="OK\n")
+
+        monkeypatch.setattr("subprocess.run", _fake_run)
+
+        _cmd_backfill(
+            job_name="test_pipeline",
+            keys="2024-01-01",
+            target="dev",
+            profile="myprofile",
+        )
+
+        assert len(calls) == 1
+        cmd = calls[0]
+        assert "--target" in cmd
+        assert cmd[cmd.index("--target") + 1] == "dev"
+        assert "--profile" in cmd
+        assert cmd[cmd.index("--profile") + 1] == "myprofile"
+
+    def test_wait_omits_no_wait_flag(self, monkeypatch, capsys):
+        """--wait causes ``databricks bundle run`` to block (no --no-wait)."""
+        import subprocess
+
+        self._make_job_with_partition()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+
+        calls: list[list[str]] = []
+
+        def _fake_run(cmd, *, capture_output=False, text=False):
+            calls.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, stdout="SUCCESS\n")
+
+        monkeypatch.setattr("subprocess.run", _fake_run)
+
+        _cmd_backfill(
+            job_name="test_pipeline",
+            keys="2024-01-01",
+            wait=True,
+        )
+
+        assert len(calls) == 1
+        assert "--no-wait" not in calls[0]
+
+        out = capsys.readouterr().out
+        assert "Completed 1/1" in out
+
+    def test_missing_databricks_cli_exits(self, monkeypatch):
+        """Exit with error when databricks CLI is not on PATH."""
+        self._make_job_with_partition()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr("shutil.which", lambda _name: None)
+
+        with pytest.raises(SystemExit):
+            _cmd_backfill(
+                job_name="test_pipeline",
+                keys="2024-01-01",
+            )
