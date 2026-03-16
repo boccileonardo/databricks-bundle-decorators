@@ -19,7 +19,7 @@ import warnings
 from typing import Any, Callable, Unpack, overload
 
 from databricks_bundle_decorators.io_manager import IoManager
-from databricks_bundle_decorators.partitions import LOGICAL_DATE_PARAM, PartitionDef
+from databricks_bundle_decorators.backfill import LOGICAL_DATE_PARAM, BackfillDef
 from databricks_bundle_decorators.registry import (
     ClusterMeta,
     DuplicateResourceError,
@@ -139,7 +139,7 @@ def all_partitions(proxy: TaskProxy) -> _AllPartitionsProxy:
     -------
     ::
 
-        @job(partition=DailyPartition(start_date="2024-01-01"))
+        @job(backfill=DailyBackfill(start_date="2024-01-01"))
         def my_pipeline():
             @task(io_manager=io)
             def extract():
@@ -421,7 +421,7 @@ def job(
     params: dict[str, str] | None = ...,
     cluster: ClusterMeta | None = ...,
     libraries: list | None = ...,
-    partition: PartitionDef | None = ...,
+    backfill: BackfillDef | None = ...,
     **kwargs: Unpack[JobConfig],
 ) -> _JobDecorator: ...
 
@@ -436,7 +436,7 @@ def job(
     params: dict[str, str] | None = None,
     cluster: ClusterMeta | None = None,
     libraries: list | None = None,
-    partition: PartitionDef | None = None,
+    backfill: BackfillDef | None = None,
     **kwargs: Unpack[JobConfig],
 ):
     """Register a function as a Databricks job.
@@ -455,8 +455,8 @@ def job(
     cluster:
         A `ClusterMeta` returned by `job_cluster()` to use
         as the shared job cluster for all tasks.
-    partition:
-        A `PartitionDef` that declares the universe of valid
+    backfill:
+        A `BackfillDef` that declares the universe of valid
         ``logical_date`` values for this job.  The ``dbxdec backfill``
         CLI command uses this to enumerate dates when submitting bulk
         runs.  Has no effect on runtime behaviour.
@@ -499,17 +499,18 @@ def job(
                 f"of a string."
             )
 
-        # --- validate and wire partition -----------------------------------
-        if partition is not None and not isinstance(partition, PartitionDef):
+        # --- validate and wire backfill -----------------------------------
+        if backfill is not None and not isinstance(backfill, BackfillDef):
             raise TypeError(
-                f"@job(partition=...) expects a PartitionDef instance "
-                f"(e.g. DailyPartition, StaticPartition), "
-                f"got {type(partition).__name__!r}."
+                f"@job(backfill=...) expects a BackfillDef instance "
+                f"(e.g. DailyBackfill, StaticBackfill), "
+                f"got {type(backfill).__name__!r}."
             )
 
-        # Auto-inject the logical_date parameter into job params
+        # Auto-inject the logical_date parameter when backfill is set
         effective_params: dict[str, str] = dict(params) if params else {}
-        effective_params.setdefault(LOGICAL_DATE_PARAM, "")
+        if backfill is not None:
+            effective_params.setdefault(LOGICAL_DATE_PARAM, "")
 
         # --- execute the body to collect tasks and build the DAG ----------
         _current_job_tasks.clear()
@@ -546,7 +547,7 @@ def job(
             all_partitions_edges=all_partitions_edges,
             sdk_config=dict(kwargs),
             for_each_tasks=for_each_tasks,
-            partition=partition,
+            backfill=backfill,
         )
         _JOB_REGISTRY[job_name] = meta
 

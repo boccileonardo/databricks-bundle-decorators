@@ -23,7 +23,7 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     OutputContext,
 )
-from databricks_bundle_decorators.partitions import _parse_logical_date_str
+from databricks_bundle_decorators.backfill import _parse_logical_date_str
 from databricks_bundle_decorators.registry import _TASK_REGISTRY
 
 _logger = logging.getLogger(__name__)
@@ -84,13 +84,16 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
         )
 
     # ---- resolve logical_date ------------------------------------------
-    # logical_date is always available on every job run.  When the param
-    # is empty (the default), it falls back to the current UTC time.
+    # logical_date is available when the job has a backfill definition or
+    # the user added the param explicitly.  When the param is present but
+    # empty, fall back to the current UTC time.
     _raw_ld = cli_params.get("logical_date", "")
     if _raw_ld:
         logical_date: datetime | None = _parse_logical_date_str(_raw_ld)
-    else:
+    elif "logical_date" in cli_params:
         logical_date = datetime.now(tz=timezone.utc)
+    else:
+        logical_date = None
 
     # ---- resolve type hints for expected_type ----------------------------
     try:

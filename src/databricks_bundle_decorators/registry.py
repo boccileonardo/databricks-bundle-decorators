@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from databricks_bundle_decorators.io_manager import IoManager
-    from databricks_bundle_decorators.partitions import PartitionDef
+    from databricks_bundle_decorators.backfill import BackfillDef
 
 
 @dataclass
@@ -95,8 +95,8 @@ class JobMeta:
     sdk_config: dict[str, Any] = field(default_factory=dict)
     # task_key -> ForEachMeta (for tasks that are for_each wrappers)
     for_each_tasks: dict[str, ForEachMeta] = field(default_factory=dict)
-    partition: PartitionDef | None = None
-    """Partition definition for backfill enumeration.  Does not affect
+    backfill: BackfillDef | None = None
+    """Backfill definition for key enumeration.  Does not affect
     runtime behaviour — ``logical_date`` is always available."""
 
 
