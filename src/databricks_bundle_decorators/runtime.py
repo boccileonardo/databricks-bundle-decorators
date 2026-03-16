@@ -23,6 +23,7 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     OutputContext,
 )
+from databricks_bundle_decorators.partitions import _parse_logical_date_str
 from databricks_bundle_decorators.registry import _TASK_REGISTRY
 
 _logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
     # is empty (the default), it falls back to the current UTC time.
     _raw_ld = cli_params.get("logical_date", "")
     if _raw_ld:
-        logical_date: datetime | None = datetime.fromisoformat(_raw_ld)
+        logical_date: datetime | None = _parse_logical_date_str(_raw_ld)
     else:
         logical_date = datetime.now(tz=timezone.utc)
 

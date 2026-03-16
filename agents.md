@@ -90,6 +90,7 @@ When adding new public symbols, add them to both the imports and `__all__` in `_
 
 ## Coding Guidelines
 
+- Do not worry about backwards compatibility — we are pre-1.0 and can make breaking changes by bumping major and updating changelog.
 - Use `` in every source file.
 - Type hints on all function signatures. Use `Any` only when truly unavoidable.
 - Docstrings in Google/NumPy style with backtick cross-references for mkdocstrings autorefs (e.g. `` `IoManager` ``, `` `set_task_value` ``). Do **not** use RST roles like `:class:`, `:func:`, `:meth:`, or `:mod:`.

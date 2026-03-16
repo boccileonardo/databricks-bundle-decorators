@@ -15,6 +15,7 @@ from databricks_bundle_decorators.partitions import (
     PartitionDef,
     StaticPartition,
     WeeklyPartition,
+    _parse_logical_date_str,
     current_logical_date,
 )
 
@@ -51,15 +52,6 @@ class TestDailyPartition:
         keys = p.partition_keys()
         assert keys == [key]
 
-    def test_custom_format(self):
-        p = DailyPartition(
-            start_date="01/01/2024",
-            end_date="01/03/2024",
-            fmt="%m/%d/%Y",
-        )
-        keys = p.partition_keys()
-        assert keys == ["01/01/2024", "01/02/2024", "01/03/2024"]
-
     def test_is_frozen(self):
         p = DailyPartition(start_date="2024-01-01")
         with pytest.raises(AttributeError):
@@ -90,31 +82,31 @@ class TestWeeklyPartition:
 
 class TestMonthlyPartition:
     def test_basic_range(self):
-        p = MonthlyPartition(start_date="2024-01", end_date="2024-06")
+        p = MonthlyPartition(start_date="2024-01-01", end_date="2024-06-01")
         keys = p.partition_keys()
         assert keys == [
-            "2024-01",
-            "2024-02",
-            "2024-03",
-            "2024-04",
-            "2024-05",
-            "2024-06",
+            "2024-01-01",
+            "2024-02-01",
+            "2024-03-01",
+            "2024-04-01",
+            "2024-05-01",
+            "2024-06-01",
         ]
 
     def test_cross_year_boundary(self):
-        p = MonthlyPartition(start_date="2023-11", end_date="2024-02")
+        p = MonthlyPartition(start_date="2023-11-01", end_date="2024-02-01")
         keys = p.partition_keys()
-        assert keys == ["2023-11", "2023-12", "2024-01", "2024-02"]
+        assert keys == ["2023-11-01", "2023-12-01", "2024-01-01", "2024-02-01"]
 
     def test_override_range(self):
-        p = MonthlyPartition(start_date="2024-01", end_date="2024-12")
-        keys = p.partition_keys(start="2024-03", end="2024-05")
-        assert keys == ["2024-03", "2024-04", "2024-05"]
+        p = MonthlyPartition(start_date="2024-01-01", end_date="2024-12-01")
+        keys = p.partition_keys(start="2024-03-01", end="2024-05-01")
+        assert keys == ["2024-03-01", "2024-04-01", "2024-05-01"]
 
     def test_single_month(self):
-        p = MonthlyPartition(start_date="2024-07", end_date="2024-07")
+        p = MonthlyPartition(start_date="2024-07-01", end_date="2024-07-01")
         keys = p.partition_keys()
-        assert keys == ["2024-07"]
+        assert keys == ["2024-07-01"]
 
 
 class TestHourlyPartition:
@@ -194,6 +186,36 @@ class TestCurrentLogicalDate:
 
         assert result == datetime(2024, 1, 15, tzinfo=timezone.utc)
 
+    def test_monthly_format_parsed(self):
+        """MonthlyPartition keys ('YYYY-MM-01') should be parseable."""
+        _populate_params({"logical_date": "2024-01-01"})
+        result = current_logical_date()
+        from datetime import datetime, timezone
+
+        assert result == datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    def test_weekly_format_parsed(self):
+        """WeeklyPartition keys ('YYYY-WNN') should be parseable."""
+        _populate_params({"logical_date": "2024-W03"})
+        result = current_logical_date()
+        from datetime import datetime, timezone
+
+        # 2024-W03 Monday = 2024-01-15
+        assert result == datetime(2024, 1, 15, tzinfo=timezone.utc)
+
+    def test_daily_format_parsed(self):
+        """DailyPartition keys ('YYYY-MM-DD') should work."""
+        _populate_params({"logical_date": "2024-06-15"})
+        result = current_logical_date()
+        from datetime import datetime, timezone
+
+        assert result == datetime(2024, 6, 15, tzinfo=timezone.utc)
+
+    def test_unparseable_raises(self):
+        _populate_params({"logical_date": "not-a-date"})
+        with pytest.raises(ValueError, match="Cannot parse"):
+            current_logical_date()
+
     def test_empty_raises(self):
         _populate_params({"logical_date": ""})
         with pytest.raises(RuntimeError, match="logical_date is not set"):
@@ -229,7 +251,7 @@ class TestTimezoneAwareDefaults:
     def test_monthly_tz_default_utc(self):
         from databricks_bundle_decorators.partitions import MonthlyPartition
 
-        p = MonthlyPartition(start_date="2024-01", end_date="2024-06")
+        p = MonthlyPartition(start_date="2024-01-01", end_date="2024-06-01")
         assert p.tz == "UTC"
         keys = p.partition_keys()
         assert len(keys) == 6
@@ -243,3 +265,30 @@ class TestTimezoneAwareDefaults:
         )
         keys = p.partition_keys()
         assert len(keys) >= 4  # fall-back produces extra hour
+
+
+class TestParseLogicalDateStr:
+    """Tests for the _parse_logical_date_str helper."""
+
+    def test_iso_full_tz(self):
+        from datetime import datetime, timezone
+
+        dt = _parse_logical_date_str("2024-01-15T00:00:00+00:00")
+        assert dt == datetime(2024, 1, 15, tzinfo=timezone.utc)
+
+    def test_iso_date_only(self):
+        from datetime import datetime, timezone
+
+        dt = _parse_logical_date_str("2024-06-15")
+        assert dt == datetime(2024, 6, 15, tzinfo=timezone.utc)
+
+    def test_monthly_format(self):
+        """MonthlyPartition default '%Y-%m-01' keys are valid ISO dates."""
+        from datetime import datetime, timezone
+
+        dt = _parse_logical_date_str("2024-01-01")
+        assert dt == datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    def test_invalid_raises_value_error(self):
+        with pytest.raises(ValueError, match="Cannot parse"):
+            _parse_logical_date_str("not-a-date")

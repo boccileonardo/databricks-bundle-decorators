@@ -153,8 +153,9 @@ class SparkUCTableIoManager(IoManager):
         if _needs_logical_date_col(context.partition_by) and not context.all_partitions:
             from pyspark.sql import functions as F  # type: ignore[import-untyped]
 
-            ld_str = _format_logical_date(context.logical_date)
-            result = result.filter(F.col("logical_date") == ld_str)
+            result = result.filter(
+                F.col("logical_date") == _format_logical_date(context.logical_date)
+            )
 
         return result
 
@@ -287,8 +288,9 @@ class SparkUCVolumeDeltaIoManager(IoManager):
         if _needs_logical_date_col(context.partition_by) and not context.all_partitions:
             from pyspark.sql import functions as F  # type: ignore[import-untyped]
 
-            ld_str = _format_logical_date(context.logical_date)
-            result = result.filter(F.col("logical_date") == ld_str)
+            result = result.filter(
+                F.col("logical_date") == _format_logical_date(context.logical_date)
+            )
 
         return result
 
@@ -398,7 +400,8 @@ class SparkUCVolumeParquetIoManager(IoManager):
         if _needs_logical_date_col(context.partition_by) and not context.all_partitions:
             from pyspark.sql import functions as F  # type: ignore[import-untyped]
 
-            ld_str = _format_logical_date(context.logical_date)
-            result = result.filter(F.col("logical_date") == ld_str)
+            result = result.filter(
+                F.col("logical_date") == _format_logical_date(context.logical_date)
+            )
 
         return result
