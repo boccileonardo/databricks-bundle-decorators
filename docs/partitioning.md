@@ -37,24 +37,27 @@ def daily_pipeline():
 ```
 
 All `partition_by` columns produce Hive-style partitioned output
-(`column=value/` directory layout).  On read, every column listed in
-`partition_by` is used to filter the data to the current partition
-automatically.
+(`column=value/` directory layout).
 
-The `partition_by` parameter lives on the **producing** `@task`
-decorator, not on the IoManager.  This means you can reuse the same
-IoManager instance across datasets partitioned by different columns.
+The special column name `"logical_date"` has two extra conveniences:
 
-The special column name `"logical_date"` adds one extra convenience:
-the IoManager **auto-injects** a `logical_date` column on write (so
-your DataFrame doesn't need to contain it).  Any other column name
-must already exist in the DataFrame.
+1. **Auto-inject on write:** the IoManager adds a `logical_date` column
+   automatically (your DataFrame doesn't need to contain it).
+2. **Auto-filter on read:** downstream reads are scoped to the current
+   `logical_date` partition automatically.
+
+Any other column name in `partition_by` must already exist in the
+DataFrame.  No auto-filtering is applied — the IoManager writes
+Hive-style directories, but reads return all partitions.  Your task
+code is responsible for filtering if needed.
 
 ### Using an existing date column
 
 If your dataset already has a date column that maps to the logical
 date, use `partition_by` with that column name directly — no column
-injection occurs, but filtering on read still applies:
+injection occurs, and no auto-filtering is applied on read.  Your
+task code can read the current partition key via
+`current_logical_date()` and filter manually:
 
 ```python
 io = PolarsParquetIoManager(
@@ -71,7 +74,9 @@ def daily_pipeline():
 
     @task
     def transform(df: pl.LazyFrame):
-        # df is already filtered to the current event_date partition
+        # df contains all event_date partitions — filter if needed
+        date = current_logical_date()
+        df = df.filter(pl.col("event_date") == date.strftime("%Y-%m-%d"))
         ...
 
     data = extract()
@@ -90,7 +95,8 @@ is stored for the backfill CLI.
 ### Runtime
 
 The `logical_date` parameter is parsed as a `datetime` via
-`datetime.fromisoformat()`.  If it's empty or missing, it defaults to
+`datetime.fromisoformat()`.  
+If `logical_date` is empty or missing, it defaults to
 `datetime.now(tz=timezone.utc)`.  This value is passed to all IoManager
 contexts and is available via `current_logical_date()`.
 
@@ -133,12 +139,13 @@ on every job, partitioned or not.
 |-------|------|---------|
 | `DailyPartition` | One per day (`YYYY-MM-DD`) | `2024-01-01` … `2024-12-31` |
 | `WeeklyPartition` | One per ISO week (`YYYY-WNN`) | `2024-W01` … `2024-W52` |
-| `MonthlyPartition` | One per month (`YYYY-MM`) | `2024-01` … `2024-12` |
+| `MonthlyPartition` | One per month (`YYYY-MM-01`) | `2024-01-01` … `2024-12-01` |
 | `HourlyPartition` | One per hour (`YYYY-MM-DDTHH`) | `2024-01-01T00` … `2024-01-01T23` |
 | `StaticPartition` | Fixed list of strings | `["us", "eu", "jp"]` |
 
 All time-based partitions accept `start_date`, `end_date` (optional,
-defaults to "most recent complete period"), and `fmt` (strftime format).
+defaults to "most recent complete period"), and `tz` (IANA timezone).
+Key formats are fixed to ISO-8601-compatible strings.
 
 ### Timezone-aware defaults
 

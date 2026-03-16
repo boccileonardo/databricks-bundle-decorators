@@ -225,7 +225,8 @@ class PolarsDeltaIoManager(IoManager):
             )
 
         if _needs_logical_date_col(context.partition_by) and not context.all_partitions:
-            ld_str = _format_logical_date(context.logical_date)
-            result = result.filter(pl.col("logical_date") == ld_str)
+            result = result.filter(
+                pl.col("logical_date") == _format_logical_date(context.logical_date)
+            )
 
         return result

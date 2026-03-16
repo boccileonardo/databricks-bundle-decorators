@@ -42,6 +42,8 @@ def _make_mock_polars() -> types.ModuleType:
     mod.LazyFrame = _LazyFrame  # type: ignore[attr-defined]
     mod.read_parquet = MagicMock(return_value=_DataFrame({"col": [1, 2]}))  # type: ignore[attr-defined]
     mod.scan_parquet = MagicMock(return_value=_LazyFrame({"col": [1, 2]}))  # type: ignore[attr-defined]
+    mod.col = MagicMock()  # type: ignore[attr-defined]
+    mod.lit = MagicMock()  # type: ignore[attr-defined]
 
     return mod
 
@@ -56,6 +58,8 @@ def _mock_polars(monkeypatch: pytest.MonkeyPatch):
     mock_pl.LazyFrame.sink_parquet.reset_mock()
     mock_pl.read_parquet.reset_mock()
     mock_pl.scan_parquet.reset_mock()
+    mock_pl.col.reset_mock()
+    mock_pl.lit.reset_mock()
     yield mock_pl
 
 

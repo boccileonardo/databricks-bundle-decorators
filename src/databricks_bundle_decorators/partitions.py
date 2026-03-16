@@ -21,7 +21,8 @@ import logging
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import ClassVar
 
 import whenever
 
@@ -48,11 +49,11 @@ class PartitionDef(ABC):
         Parameters
         ----------
         start:
-            Override the start bound (inclusive).  Format must match the
-            partition's ``fmt``.
+            Override the start bound (inclusive).  Must use the same
+            format as the partition's keys.
         end:
-            Override the end bound (inclusive).  Format must match the
-            partition's ``fmt``.
+            Override the end bound (inclusive).  Must use the same
+            format as the partition's keys.
         """
         ...
 
@@ -61,7 +62,7 @@ class PartitionDef(ABC):
 class DailyPartition(PartitionDef):
     """One partition per calendar day.
 
-    Keys are formatted as ``YYYY-MM-DD`` by default.
+    Keys are ISO-8601 dates: ``YYYY-MM-DD``.
 
     Parameters
     ----------
@@ -69,20 +70,19 @@ class DailyPartition(PartitionDef):
         First partition key (inclusive), e.g. ``"2024-01-01"``.
     end_date:
         Last partition key (inclusive).  Defaults to yesterday in *tz*.
-    fmt:
-        ``strftime`` / ``strptime`` format string for keys.
     tz:
         IANA timezone name (e.g. ``"UTC"``, ``"Europe/Berlin"``).
         Used to determine "yesterday" when *end_date* is omitted.
     """
 
+    _FMT: ClassVar[str] = "%Y-%m-%d"
+
     start_date: str
     end_date: str | None = None
-    fmt: str = "%Y-%m-%d"
     tz: str = "UTC"
 
     def _parse(self, key: str) -> whenever.Date:
-        return whenever.Date.from_py_date(datetime.strptime(key, self.fmt).date())
+        return whenever.Date.from_py_date(datetime.strptime(key, self._FMT).date())
 
     def partition_keys(
         self, start: str | None = None, end: str | None = None
@@ -97,7 +97,7 @@ class DailyPartition(PartitionDef):
 
         keys: list[str] = []
         while s <= e:
-            keys.append(s.py_date().strftime(self.fmt))
+            keys.append(s.py_date().strftime(self._FMT))
             s = s.add(days=1)
         return keys
 
@@ -106,7 +106,7 @@ class DailyPartition(PartitionDef):
 class WeeklyPartition(PartitionDef):
     """One partition per ISO week.
 
-    Keys are formatted as ``YYYY-WNN`` by default (e.g. ``"2024-W03"``).
+    Keys are ISO week dates: ``YYYY-WNN`` (e.g. ``"2024-W03"``).
 
     The default ``end_date`` is the Monday of the most recent **completed**
     ISO week (i.e. the week whose Sunday has already passed).
@@ -114,27 +114,25 @@ class WeeklyPartition(PartitionDef):
     Parameters
     ----------
     start_date:
-        First partition key (inclusive), using *fmt*.
+        First partition key (inclusive), e.g. ``"2024-W01"``.
     end_date:
         Last partition key (inclusive).  Defaults to the most recent
         completed ISO week.
-    fmt:
-        ``strftime`` format for keys.  Defaults to ``"%G-W%V"``
-        (ISO year + ISO week).
     tz:
         IANA timezone name.  Used to determine "today" when
         *end_date* is omitted.
     """
 
+    _FMT: ClassVar[str] = "%G-W%V"
+
     start_date: str
     end_date: str | None = None
-    fmt: str = "%G-W%V"
     tz: str = "UTC"
 
     def _parse_iso_week(self, key: str) -> whenever.Date:
         """Parse an ISO-week key into a Monday ``Date``."""
         return whenever.Date.from_py_date(
-            datetime.strptime(key + "-1", self.fmt + "-%u").date()
+            datetime.strptime(key + "-1", self._FMT + "-%u").date()
         )
 
     def partition_keys(
@@ -154,7 +152,7 @@ class WeeklyPartition(PartitionDef):
 
         keys: list[str] = []
         while s <= e:
-            keys.append(s.py_date().strftime(self.fmt))
+            keys.append(s.py_date().strftime(self._FMT))
             s = s.add(weeks=1)
         return keys
 
@@ -163,30 +161,30 @@ class WeeklyPartition(PartitionDef):
 class MonthlyPartition(PartitionDef):
     """One partition per calendar month.
 
-    Keys are formatted as ``YYYY-MM`` by default.
+    Keys are ISO-8601 dates pinned to the first of the month:
+    ``YYYY-MM-01`` (e.g. ``"2024-01-01"``).
 
     Parameters
     ----------
     start_date:
-        First partition key (inclusive), e.g. ``"2024-01"``.
+        First partition key (inclusive), e.g. ``"2024-01-01"``.
     end_date:
         Last partition key (inclusive).  Defaults to the previous
         completed month.
-    fmt:
-        ``strftime`` format for keys.
     tz:
         IANA timezone name.  Used to determine "today" when
         *end_date* is omitted.
     """
 
+    _FMT: ClassVar[str] = "%Y-%m-01"
+
     start_date: str
     end_date: str | None = None
-    fmt: str = "%Y-%m"
     tz: str = "UTC"
 
     def _parse_month(self, key: str) -> whenever.Date:
         """Parse a month key into the first day of that month."""
-        d = datetime.strptime(key, self.fmt).date()
+        d = datetime.strptime(key, self._FMT).date()
         return whenever.Date(d.year, d.month, 1)
 
     def partition_keys(
@@ -204,7 +202,7 @@ class MonthlyPartition(PartitionDef):
 
         keys: list[str] = []
         while s <= e:
-            keys.append(s.py_date().strftime(self.fmt))
+            keys.append(s.py_date().strftime(self._FMT))
             s = s.add(months=1)
         return keys
 
@@ -213,7 +211,8 @@ class MonthlyPartition(PartitionDef):
 class HourlyPartition(PartitionDef):
     """One partition per hour.
 
-    Keys are formatted as ``YYYY-MM-DDTHH`` by default.
+    Keys are truncated ISO-8601 timestamps: ``YYYY-MM-DDTHH``
+    (e.g. ``"2024-01-01T00"``).
 
     All enumeration is performed in the specified timezone (default UTC)
     so that daylight-saving transitions are handled correctly — hours
@@ -226,16 +225,15 @@ class HourlyPartition(PartitionDef):
     end_date:
         Last partition key (inclusive).  Defaults to the previous
         completed hour in *tz*.
-    fmt:
-        ``strftime`` format for keys.
     tz:
         IANA timezone name (e.g. ``"UTC"``, ``"America/New_York"``).
         Defaults to ``"UTC"`` to sidestep daylight-saving issues.
     """
 
+    _FMT: ClassVar[str] = "%Y-%m-%dT%H"
+
     start_date: str
     end_date: str | None = None
-    fmt: str = "%Y-%m-%dT%H"
     tz: str = "UTC"
 
     def _parse_hour(self, key: str) -> whenever.ZonedDateTime:
@@ -244,7 +242,7 @@ class HourlyPartition(PartitionDef):
         Ambiguous wall-clock times (e.g. the repeated hour during a
         fall-back DST transition) resolve to the *first* occurrence.
         """
-        naive = datetime.strptime(key, self.fmt)
+        naive = datetime.strptime(key, self._FMT)
         return whenever.ZonedDateTime(
             naive.year, naive.month, naive.day, naive.hour, tz=self.tz
         )
@@ -266,7 +264,7 @@ class HourlyPartition(PartitionDef):
         seen: set[str] = set()
         cur = s
         while cur <= e:
-            key = cur.py_datetime().strftime(self.fmt)
+            key = cur.py_datetime().strftime(self._FMT)
             if key not in seen:
                 keys.append(key)
                 seen.add(key)
@@ -336,4 +334,33 @@ def current_logical_date() -> datetime:
             "logical_date parameter. Use @job(partition=...) and "
             "the backfill CLI, or pass logical_date explicitly."
         )
-    return datetime.fromisoformat(raw)
+    return _parse_logical_date_str(raw)
+
+
+def _parse_logical_date_str(raw: str) -> datetime:
+    """Parse a logical-date string into a timezone-aware ``datetime``.
+
+    Uses ``datetime.fromisoformat`` which, on Python 3.12+, handles
+    all built-in partition-key formats:
+
+    - ``DailyPartition``: ``2024-01-15``
+    - ``WeeklyPartition``: ``2024-W03``  (ISO week date)
+    - ``MonthlyPartition``: ``2024-01-01`` (first-of-month)
+    - ``HourlyPartition``: ``2024-01-15T00``
+    - Full timestamps: ``2024-01-15T00:00:00+00:00``
+
+    The returned datetime is always timezone-aware (defaults to UTC
+    when the parsed value is naïve).
+    """
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        raise ValueError(
+            f"Cannot parse logical_date {raw!r}. "
+            f"Expected an ISO-8601 string parseable by "
+            f"datetime.fromisoformat() (e.g. YYYY-MM-DD, YYYY-Www, "
+            f"YYYY-MM-DDThh)."
+        ) from None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
