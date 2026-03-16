@@ -399,8 +399,8 @@ class TestLogicalDateRuntime:
         assert captured_ctx[0].logical_date is not None
         assert captured_ctx[0].logical_date.tzinfo is not None
 
-    def test_missing_logical_date_defaults_to_now_utc(self):
-        """When logical_date is not in params, defaults to now(UTC)."""
+    def test_missing_logical_date_defaults_to_none(self):
+        """When logical_date is not in params, logical_date is None."""
         captured_ctx: list[OutputContext] = []
 
         class _CapturingIo(IoManager):
@@ -421,10 +421,7 @@ class TestLogicalDateRuntime:
             },
         )
 
-        from datetime import datetime
-
-        assert isinstance(captured_ctx[0].logical_date, datetime)
-        assert captured_ctx[0].logical_date is not None
+        assert captured_ctx[0].logical_date is None
 
     def test_logical_date_passed_to_input_context(self):
         """InputContext receives logical_date as a datetime."""

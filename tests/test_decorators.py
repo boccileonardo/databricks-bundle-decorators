@@ -19,7 +19,7 @@ from databricks_bundle_decorators.decorators import (
     for_each_task,
     task_value,
 )
-from databricks_bundle_decorators.partitions import DailyPartition
+from databricks_bundle_decorators.backfill import DailyBackfill
 
 
 class TestTaskDecorator:
@@ -348,7 +348,7 @@ class TestSdkConfigForwarding:
             step()
 
         job_meta = _JOB_REGISTRY["combo_job"]
-        assert job_meta.params == {"url": "http://example.com", "logical_date": ""}
+        assert job_meta.params == {"url": "http://example.com"}
         assert job_meta.sdk_config == {
             "tags": {"team": "data"},
             "max_concurrent_runs": 1,
@@ -568,7 +568,6 @@ class TestReservedParamValidation:
         assert _JOB_REGISTRY["good_job"].params == {
             "url": "http://x",
             "env": "prod",
-            "logical_date": "",
         }
 
 
@@ -1050,26 +1049,27 @@ class TestForEachTask:
 
 
 class TestJobPartition:
-    """Tests for @job(partition=...) support."""
+    """Tests for @job(backfill=...) support."""
 
     def setup_method(self):
         reset_registries()
 
     def test_partition_stored_on_job_meta(self):
-        part = DailyPartition(start_date="2024-01-01")
+        part = DailyBackfill(start_date="2024-01-01")
 
-        @job(partition=part)
+        @job(backfill=part)
         def my_job():
             @task
             def step():
                 pass
 
-        assert _JOB_REGISTRY["my_job"].partition is part
+        assert _JOB_REGISTRY["my_job"].backfill is part
 
-    def test_logical_date_auto_injected_on_all_jobs(self):
-        """logical_date param is always injected on every job."""
+    def test_logical_date_auto_injected_on_backfill_jobs(self):
+        """logical_date param is injected when backfill is set."""
+        part = DailyBackfill(start_date="2024-01-01")
 
-        @job
+        @job(backfill=part)
         def my_job():
             @task
             def step():
@@ -1078,10 +1078,21 @@ class TestJobPartition:
         assert "logical_date" in _JOB_REGISTRY["my_job"].params
         assert _JOB_REGISTRY["my_job"].params["logical_date"] == ""
 
-    def test_partition_preserves_existing_params(self):
-        part = DailyPartition(start_date="2024-01-01")
+    def test_logical_date_not_injected_without_backfill(self):
+        """Jobs without backfill= don't get logical_date."""
 
-        @job(partition=part, params={"source": "api"})
+        @job
+        def my_job():
+            @task
+            def step():
+                pass
+
+        assert "logical_date" not in _JOB_REGISTRY["my_job"].params
+
+    def test_partition_preserves_existing_params(self):
+        part = DailyBackfill(start_date="2024-01-01")
+
+        @job(backfill=part, params={"source": "api"})
         def my_job():
             @task
             def step():
@@ -1093,9 +1104,9 @@ class TestJobPartition:
 
     def test_logical_date_does_not_overwrite_user_param(self):
         """If user explicitly sets logical_date param, don't overwrite."""
-        part = DailyPartition(start_date="2024-01-01")
+        part = DailyBackfill(start_date="2024-01-01")
 
-        @job(partition=part, params={"logical_date": "2024-06-01T00:00:00+00:00"})
+        @job(backfill=part, params={"logical_date": "2024-06-01T00:00:00+00:00"})
         def my_job():
             @task
             def step():
@@ -1113,12 +1124,12 @@ class TestJobPartition:
             def step():
                 pass
 
-        assert _JOB_REGISTRY["my_job"].partition is None
+        assert _JOB_REGISTRY["my_job"].backfill is None
 
     def test_partition_invalid_type_raises(self):
-        with pytest.raises(TypeError, match="PartitionDef"):
+        with pytest.raises(TypeError, match="BackfillDef"):
 
-            @job(partition="daily")  # type: ignore[arg-type]
+            @job(backfill="daily")  # type: ignore[arg-type]
             def my_job():
                 @task
                 def step():

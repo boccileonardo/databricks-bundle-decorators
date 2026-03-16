@@ -14,18 +14,18 @@ details.
 
 ```python
 from databricks_bundle_decorators import job, task
-from databricks_bundle_decorators.partitions import DailyPartition, current_logical_date
+from databricks_bundle_decorators.backfill import DailyBackfill, get_run_logical_date
 from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
 io = PolarsParquetIoManager(
     base_path="abfss://lake@acct.dfs.core.windows.net/data",
 )
 
-@job(partition=DailyPartition(start_date="2024-01-01"))
+@job(backfill=DailyBackfill(start_date="2024-01-01"))
 def daily_pipeline():
     @task(io_manager=io, partition_by="logical_date")
     def extract():
-        date = current_logical_date()
+        date = get_run_logical_date()
         return fetch_data(date.strftime("%Y-%m-%d"))
 
     @task
@@ -80,11 +80,11 @@ io = PolarsParquetIoManager(
     base_path="abfss://lake@acct.dfs.core.windows.net/data",
 )
 
-@job(partition=DailyPartition(start_date="2024-01-01"))
+@job(backfill=DailyBackfill(start_date="2024-01-01"))
 def daily_pipeline():
     @task(io_manager=io, partition_by="event_date")
     def extract() -> pl.LazyFrame:
-        date = current_logical_date()
+        date = get_run_logical_date()
         # The data already contains 'event_date' — no injection needed
         return pl.scan_ndjson(f"s3://raw/{date:%Y-%m-%d}/*.jsonl")
 
@@ -101,99 +101,110 @@ def daily_pipeline():
 
 ### Deploy time
 
-The `@job` decorator auto-injects a `logical_date` job parameter with
-an empty default value on **every** job (not just partitioned ones).
-When `@job(partition=...)` is also specified, the partition definition
-is stored for the backfill CLI.
+When `@job(backfill=...)` is specified, the decorator auto-injects a
+`logical_date` job parameter with an empty default value and stores
+the backfill definition for the CLI.  Jobs without `backfill=` do not
+get a `logical_date` parameter unless you add one explicitly via
+`params={"logical_date": ""}`.
 
 ### Runtime
 
-The `logical_date` parameter is parsed as a `datetime` via
-`datetime.fromisoformat()`.  
-If `logical_date` is empty or missing, it defaults to
-`datetime.now(tz=timezone.utc)`.  This value is passed to all IoManager
-contexts and is available via `current_logical_date()`.
+When `logical_date` is present as a job parameter:
+
+- If non-empty, it is parsed as a `datetime` via
+  `datetime.fromisoformat()`.
+- If empty (e.g. a manual run without specifying a date), it defaults
+  to `datetime.now(tz=timezone.utc)`.
+
+This value is passed to all IoManager contexts and is available via
+`get_run_logical_date()`.
+
+When `logical_date` is **not** a job parameter (no `backfill=` and
+not added manually), the IoManager contexts receive `logical_date=None`.
 
 ## Reading the logical date
 
 Inside a task, use the convenience helper:
 
 ```python
-from databricks_bundle_decorators.partitions import current_logical_date
+from databricks_bundle_decorators.backfill import get_run_logical_date
 
-date = current_logical_date()  # returns datetime
+date = get_run_logical_date()  # returns datetime
 ```
 
-`current_logical_date()` raises `RuntimeError` if `logical_date` is
-empty or missing — i.e. when the job is not partitioned or was not
-invoked with a `logical_date` parameter.  This strict behaviour
-prevents silent bugs where tasks assume partitioned data on a
-non-partitioned job.
+`get_run_logical_date()` raises `RuntimeError` if `logical_date` is
+empty or missing — i.e. when the job has no backfill definition and
+was not invoked with a `logical_date` parameter.  This strict behaviour
+prevents silent bugs where tasks assume a logical date that was never
+set.
 
-## Job-level partitioning
+When `validate=True` (the default), the function also checks that the
+logical date falls within the `start_date` / `end_date` boundaries
+declared by the job's `BackfillDef`.  Pass `validate=False` to skip
+this check.
 
-Attach a `PartitionDef` to `@job(partition=...)` to enable the
+## Backfill definitions
+
+Attach a `BackfillDef` to `@job(backfill=...)` to enable the
 backfill CLI:
 
 ```python
-from databricks_bundle_decorators.partitions import DailyPartition
+from databricks_bundle_decorators.backfill import DailyBackfill
 
-@job(partition=DailyPartition(start_date="2024-01-01"))
+@job(backfill=DailyBackfill(start_date="2024-01-01"))
 def my_pipeline():
     ...
 ```
 
-The partition definition only affects **backfill enumeration** — it
-does not change runtime behavior.  `logical_date` is always available
-on every job, partitioned or not.
-
-## Partition definitions
+The backfill definition only affects **key enumeration** — it
+does not change runtime behavior beyond injecting the `logical_date`
+parameter.
 
 | Class | Keys | Example |
 |-------|------|---------|
-| `DailyPartition` | One per day (`YYYY-MM-DD`) | `2024-01-01` … `2024-12-31` |
-| `WeeklyPartition` | One per ISO week (`YYYY-WNN`) | `2024-W01` … `2024-W52` |
-| `MonthlyPartition` | One per month (`YYYY-MM-01`) | `2024-01-01` … `2024-12-01` |
-| `HourlyPartition` | One per hour (`YYYY-MM-DDTHH`) | `2024-01-01T00` … `2024-01-01T23` |
-| `StaticPartition` | Fixed list of strings | `["us", "eu", "jp"]` |
+| `DailyBackfill` | One per day (`YYYY-MM-DD`) | `2024-01-01` … `2024-12-31` |
+| `WeeklyBackfill` | One per ISO week (`YYYY-WNN`) | `2024-W01` … `2024-W52` |
+| `MonthlyBackfill` | One per month (`YYYY-MM-01`) | `2024-01-01` … `2024-12-01` |
+| `HourlyBackfill` | One per hour (`YYYY-MM-DDTHH`) | `2024-01-01T00` … `2024-01-01T23` |
+| `StaticBackfill` | Fixed list of strings | `["us", "eu", "jp"]` |
 
-All time-based partitions accept `start_date`, `end_date` (optional,
+All time-based definitions accept `start_date`, `end_date` (optional,
 defaults to "most recent complete period"), and `tz` (IANA timezone).
 Key formats are fixed to ISO-8601-compatible strings.
 
 ### Timezone-aware defaults
 
-All time-based partitions default to `tz="UTC"`.  The `tz` parameter
+All time-based definitions default to `tz="UTC"`.  The `tz` parameter
 determines which timezone is used to compute the default `end_date`
 ("yesterday", "last complete week/month").  Override it when your
 pipeline is tied to a specific region:
 
 ```python
 # "yesterday" in Berlin time
-DailyPartition(start_date="2024-01-01", tz="Europe/Berlin")
+DailyBackfill(start_date="2024-01-01", tz="Europe/Berlin")
 ```
 
-`HourlyPartition` additionally uses `tz` to handle daylight-saving
+`HourlyBackfill` additionally uses `tz` to handle daylight-saving
 transitions safely.
 
-!!! note "`StaticPartition` and `--start`/`--end`"
-    `StaticPartition.partition_keys()` returns all keys regardless of
+!!! note "`StaticBackfill` and `--start`/`--end`"
+    `StaticBackfill.keys()` returns all keys regardless of
     `start`/`end` arguments.  Using `--start`/`--end` with a static
-    partition in the backfill CLI has no effect.
+    backfill definition in the backfill CLI has no effect.
 
 ## Backfill CLI
 
 The `dbxdec backfill` command submits one Databricks run per
-partition key:
+backfill key:
 
 ```bash
-# Backfill all daily partitions from start to yesterday
+# Backfill all daily keys from start to yesterday
 uv run dbxdec backfill my_pipeline --start 2024-01-01 --end 2024-03-31
 
 # Dry run — show keys without submitting
 uv run dbxdec backfill my_pipeline --dry-run
 
-# Explicit keys (works even without a job-level partition definition)
+# Explicit keys (works even without a job-level backfill definition)
 uv run dbxdec backfill my_pipeline --keys "2024-01-01,2024-01-02,2024-01-03"
 
 # Limit concurrency
@@ -243,7 +254,7 @@ io = PolarsParquetIoManager(
     base_path="abfss://lake@acct.dfs.core.windows.net/data",
 )
 
-@job(partition=DailyPartition(start_date="2024-01-01"))
+@job(backfill=DailyBackfill(start_date="2024-01-01"))
 def daily_pipeline():
     @task(io_manager=io, partition_by="logical_date")
     def extract():
@@ -277,7 +288,7 @@ in your own implementations.
 
 ## Limitations
 
-- **No automatic scheduling.** Partition definitions describe the
+- **No automatic scheduling.** Backfill definitions describe the
   *universe* of valid keys but do not generate Databricks triggers or
   schedules.  Use a Databricks cron trigger on the job and compute the
   current date in your task code, or use `dbxdec backfill` for

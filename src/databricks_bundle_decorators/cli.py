@@ -423,7 +423,7 @@ def _cmd_backfill(
     target: str | None = None,
     profile: str | None = None,
 ) -> None:
-    """Trigger one Databricks job run per partition key.
+    """Trigger one Databricks job run per backfill key.
 
     Uses ``databricks bundle run`` under the hood, which automatically
     resolves the deployed job name (including any dev-mode prefix).
@@ -433,9 +433,9 @@ def _cmd_backfill(
     import subprocess
 
     from databricks_bundle_decorators.discovery import discover_pipelines
-    from databricks_bundle_decorators.partitions import (
+    from databricks_bundle_decorators.backfill import (
         LOGICAL_DATE_PARAM,
-        PartitionDef,
+        BackfillDef,
     )
     from databricks_bundle_decorators.registry import _JOB_REGISTRY
 
@@ -450,11 +450,11 @@ def _cmd_backfill(
             print(f"Available jobs: {', '.join(available)}", file=sys.stderr)
         sys.exit(1)
 
-    partition: PartitionDef | None = job_meta.partition
-    if partition is None and keys is None:
+    backfill_def: BackfillDef | None = job_meta.backfill
+    if backfill_def is None and keys is None:
         print(
-            f"Error: Job '{job_name}' has no partition definition. "
-            f"Use --keys to specify partition keys explicitly.",
+            f"Error: Job '{job_name}' has no backfill definition. "
+            f"Use --keys to specify keys explicitly.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -462,17 +462,17 @@ def _cmd_backfill(
     # 2. Enumerate keys
     if keys is not None:
         key_list = [k.strip() for k in keys.split(",") if k.strip()]
-    elif partition is not None:
-        key_list = partition.partition_keys(start=start, end=end)
+    elif backfill_def is not None:
+        key_list = backfill_def.keys(start=start, end=end)
     else:
         key_list = []
 
     if not key_list:
-        print("No partition keys to process.", file=sys.stderr)
+        print("No backfill keys to process.", file=sys.stderr)
         sys.exit(1)
 
     print(f"Job: {job_name}")
-    print(f"Partition keys ({len(key_list)}): {', '.join(key_list[:10])}", end="")
+    print(f"Backfill keys ({len(key_list)}): {', '.join(key_list[:10])}", end="")
     if len(key_list) > 10:
         print(f" ... and {len(key_list) - 10} more")
     else:
@@ -584,15 +584,15 @@ def backfill(
     ],
     start: Annotated[
         str | None,
-        typer.Option(help="Start of partition range (inclusive), e.g. 2024-01-01"),
+        typer.Option(help="Start of backfill range (inclusive), e.g. 2024-01-01"),
     ] = None,
     end: Annotated[
         str | None,
-        typer.Option(help="End of partition range (inclusive), e.g. 2024-01-31"),
+        typer.Option(help="End of backfill range (inclusive), e.g. 2024-01-31"),
     ] = None,
     keys: Annotated[
         str | None,
-        typer.Option(help="Comma-separated list of explicit partition keys"),
+        typer.Option(help="Comma-separated list of explicit backfill keys"),
     ] = None,
     max_concurrent: Annotated[
         int | None,
@@ -600,7 +600,7 @@ def backfill(
     ] = None,
     dry_run: Annotated[
         bool,
-        typer.Option("--dry-run", help="Print partition keys without submitting runs"),
+        typer.Option("--dry-run", help="Print backfill keys without submitting runs"),
     ] = False,
     wait: Annotated[
         bool,
@@ -619,7 +619,7 @@ def backfill(
         typer.Option(help="Databricks CLI profile name"),
     ] = None,
 ) -> None:
-    """Submit one Databricks job run per partition key via ``databricks bundle run``."""
+    """Submit one Databricks job run per backfill key via ``databricks bundle run``."""
     _cmd_backfill(
         job_name=job_name,
         start=start,

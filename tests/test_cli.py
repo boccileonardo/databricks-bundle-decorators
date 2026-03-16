@@ -267,11 +267,11 @@ class TestBackfillCmd:
         reset_registries()
 
     def _make_job_with_partition(self):
-        """Register a job with a daily partition in the registry."""
+        """Register a job with a daily backfill in the registry."""
         from databricks_bundle_decorators.decorators import job, task
-        from databricks_bundle_decorators.partitions import DailyPartition
+        from databricks_bundle_decorators.backfill import DailyBackfill
 
-        @job(partition=DailyPartition(start_date="2024-01-01", end_date="2024-01-05"))
+        @job(backfill=DailyBackfill(start_date="2024-01-01", end_date="2024-01-05"))
         def test_pipeline():
             @task
             def step():
@@ -347,7 +347,7 @@ class TestBackfillCmd:
         out = capsys.readouterr().out
         assert "2024-01-02" in out
         assert "2024-01-03" in out
-        assert "Partition keys (2)" in out
+        assert "Backfill keys (2)" in out
 
     def test_job_not_found_exits(self, monkeypatch):
         """Exit with error when job name is not in the registry."""
@@ -362,7 +362,7 @@ class TestBackfillCmd:
             _cmd_backfill(job_name="nonexistent")
 
     def test_no_partition_no_keys_exits(self, monkeypatch):
-        """Exit when job has no partition and --keys is not provided."""
+        """Exit when job has no backfill definition and --keys is not provided."""
         self._make_job_without_partition()
 
         monkeypatch.setattr(
@@ -376,7 +376,7 @@ class TestBackfillCmd:
             _cmd_backfill(job_name="no_part_job")
 
     def test_explicit_keys_on_unpartitioned_job(self, monkeypatch, capsys):
-        """--keys works even when job has no partition definition."""
+        """--keys works even when job has no backfill definition."""
         self._make_job_without_partition()
 
         monkeypatch.setattr(

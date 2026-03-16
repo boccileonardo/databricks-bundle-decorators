@@ -1,16 +1,18 @@
-# Partitions
+# Backfill Definitions
 
-::: databricks_bundle_decorators.partitions.PartitionDef
+::: databricks_bundle_decorators.backfill.BackfillDef
 
-::: databricks_bundle_decorators.partitions.DailyPartition
+::: databricks_bundle_decorators.backfill.DailyBackfill
 
-::: databricks_bundle_decorators.partitions.WeeklyPartition
+::: databricks_bundle_decorators.backfill.WeeklyBackfill
 
-::: databricks_bundle_decorators.partitions.MonthlyPartition
+::: databricks_bundle_decorators.backfill.MonthlyBackfill
 
-::: databricks_bundle_decorators.partitions.HourlyPartition
+::: databricks_bundle_decorators.backfill.HourlyBackfill
 
-::: databricks_bundle_decorators.partitions.StaticPartition
+::: databricks_bundle_decorators.backfill.StaticBackfill
+
+::: databricks_bundle_decorators.backfill.get_run_logical_date
 
 ## Cross-partition reads
 

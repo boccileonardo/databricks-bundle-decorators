@@ -23,7 +23,7 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     OutputContext,
 )
-from databricks_bundle_decorators.partitions import _parse_logical_date_str
+from databricks_bundle_decorators.backfill import _parse_logical_date_str
 from databricks_bundle_decorators.registry import _TASK_REGISTRY
 
 _logger = logging.getLogger(__name__)
@@ -51,9 +51,9 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
         ``python_wheel_task`` invocation.
     """
     # ---- extract internal parameters -------------------------------------
-    job_name = cli_params.pop("__job_name__", "unknown")
-    cli_params.pop("__task_key__", None)
-    run_id = cli_params.pop("__run_id__", os.environ.get("DATABRICKS_RUN_ID", "local"))
+    job_name = cli_params.get("__job_name__", "unknown")
+    task_key_param = cli_params.get("__task_key__")  # noqa: F841
+    run_id = cli_params.get("__run_id__", os.environ.get("DATABRICKS_RUN_ID", "local"))
 
     # ---- extract upstream mappings (__upstream__<param>=<upstream_task>) ---
     upstream_map: dict[str, str] = {}
@@ -61,14 +61,13 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
     for key in list(cli_params):
         if key.startswith("__upstream__"):
             param_name = key[len("__upstream__") :]
-            upstream_map[param_name] = cli_params.pop(key)
+            upstream_map[param_name] = cli_params[key]
         elif key.startswith("__all_partitions__"):
             param_name = key[len("__all_partitions__") :]
             all_partitions_params.add(param_name)
-            cli_params.pop(key)
 
     # ---- extract for-each input (if present) -----------------------------
-    for_each_input_raw: str | None = cli_params.pop("__for_each_input__", None)
+    for_each_input_raw: str | None = cli_params.get("__for_each_input__")
 
     # ---- remaining keys are job-level parameters -------------------------
     _populate_params(cli_params)
@@ -84,13 +83,16 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
         )
 
     # ---- resolve logical_date ------------------------------------------
-    # logical_date is always available on every job run.  When the param
-    # is empty (the default), it falls back to the current UTC time.
+    # logical_date is available when the job has a backfill definition or
+    # the user added the param explicitly.  When the param is present but
+    # empty, fall back to the current UTC time.
     _raw_ld = cli_params.get("logical_date", "")
     if _raw_ld:
         logical_date: datetime | None = _parse_logical_date_str(_raw_ld)
-    else:
+    elif "logical_date" in cli_params:
         logical_date = datetime.now(tz=timezone.utc)
+    else:
+        logical_date = None
 
     # ---- resolve type hints for expected_type ----------------------------
     try:

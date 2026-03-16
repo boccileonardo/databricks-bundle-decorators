@@ -51,14 +51,14 @@ from databricks_bundle_decorators.discovery import (
 from databricks_bundle_decorators.io_manager import InputContext as InputContext
 from databricks_bundle_decorators.io_manager import IoManager as IoManager
 from databricks_bundle_decorators.io_manager import OutputContext as OutputContext
-from databricks_bundle_decorators.partitions import (
-    current_logical_date as current_logical_date,
-    DailyPartition as DailyPartition,
-    HourlyPartition as HourlyPartition,
-    MonthlyPartition as MonthlyPartition,
-    PartitionDef as PartitionDef,
-    StaticPartition as StaticPartition,
-    WeeklyPartition as WeeklyPartition,
+from databricks_bundle_decorators.backfill import (
+    get_run_logical_date as get_run_logical_date,
+    DailyBackfill as DailyBackfill,
+    HourlyBackfill as HourlyBackfill,
+    MonthlyBackfill as MonthlyBackfill,
+    BackfillDef as BackfillDef,
+    StaticBackfill as StaticBackfill,
+    WeeklyBackfill as WeeklyBackfill,
 )
 from databricks_bundle_decorators.registry import (
     ClusterMeta as ClusterMeta,
@@ -95,11 +95,11 @@ __all__ = [
     "TaskValue",
     "get_dbutils",
     "params",
-    "PartitionDef",
-    "DailyPartition",
-    "HourlyPartition",
-    "MonthlyPartition",
-    "WeeklyPartition",
-    "StaticPartition",
-    "current_logical_date",
+    "BackfillDef",
+    "DailyBackfill",
+    "HourlyBackfill",
+    "MonthlyBackfill",
+    "WeeklyBackfill",
+    "StaticBackfill",
+    "get_run_logical_date",
 ]

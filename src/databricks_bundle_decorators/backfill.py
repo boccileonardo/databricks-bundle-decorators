@@ -1,17 +1,17 @@
-"""Partition definitions for time-based and static partitioning.
+"""Backfill definitions for time-based and static key enumeration.
 
-Partition definitions declare the universe of valid ``logical_date``
+Backfill definitions declare the universe of valid ``logical_date``
 values for a job.  They are used by the ``dbxdec backfill`` CLI command
 to enumerate dates for bulk run submission.
 
 Every job automatically receives a ``logical_date`` parameter.  At
 runtime, task code reads it via the convenience helper::
 
-    from databricks_bundle_decorators.partitions import current_logical_date
+    from databricks_bundle_decorators.backfill import get_run_logical_date
 
     @task
     def extract() -> pl.DataFrame:
-        dt = current_logical_date()  # returns datetime, raises if unset
+        dt = get_run_logical_date()  # returns datetime, raises if unset
         ...
 """
 
@@ -32,44 +32,42 @@ _logger = logging.getLogger(__name__)
 LOGICAL_DATE_PARAM: str = "logical_date"
 
 
-class PartitionDef(ABC):
-    """Base class for partition definitions.
+class BackfillDef(ABC):
+    """Base class for backfill definitions.
 
-    Subclasses declare the universe of valid partition keys for
-    backfill enumeration.  The ``dbxdec backfill`` CLI uses these to
+    Subclasses declare the universe of valid backfill keys for
+    enumeration.  The ``dbxdec backfill`` CLI uses these to
     generate ``logical_date`` values.
     """
 
     @abstractmethod
-    def partition_keys(
-        self, start: str | None = None, end: str | None = None
-    ) -> list[str]:
-        """Enumerate concrete partition key strings.
+    def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
+        """Enumerate concrete backfill key strings.
 
         Parameters
         ----------
         start:
             Override the start bound (inclusive).  Must use the same
-            format as the partition's keys.
+            format as the definition's keys.
         end:
             Override the end bound (inclusive).  Must use the same
-            format as the partition's keys.
+            format as the definition's keys.
         """
         ...
 
 
 @dataclass(frozen=True)
-class DailyPartition(PartitionDef):
-    """One partition per calendar day.
+class DailyBackfill(BackfillDef):
+    """One key per calendar day.
 
     Keys are ISO-8601 dates: ``YYYY-MM-DD``.
 
     Parameters
     ----------
     start_date:
-        First partition key (inclusive), e.g. ``"2024-01-01"``.
+        First key (inclusive), e.g. ``"2024-01-01"``.
     end_date:
-        Last partition key (inclusive).  Defaults to yesterday in *tz*.
+        Last key (inclusive).  Defaults to yesterday in *tz*.
     tz:
         IANA timezone name (e.g. ``"UTC"``, ``"Europe/Berlin"``).
         Used to determine "yesterday" when *end_date* is omitted.
@@ -84,9 +82,7 @@ class DailyPartition(PartitionDef):
     def _parse(self, key: str) -> whenever.Date:
         return whenever.Date.from_py_date(datetime.strptime(key, self._FMT).date())
 
-    def partition_keys(
-        self, start: str | None = None, end: str | None = None
-    ) -> list[str]:
+    def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
         s = self._parse(start or self.start_date)
         if end is not None:
             e = self._parse(end)
@@ -103,8 +99,8 @@ class DailyPartition(PartitionDef):
 
 
 @dataclass(frozen=True)
-class WeeklyPartition(PartitionDef):
-    """One partition per ISO week.
+class WeeklyBackfill(BackfillDef):
+    """One key per ISO week.
 
     Keys are ISO week dates: ``YYYY-WNN`` (e.g. ``"2024-W03"``).
 
@@ -114,9 +110,9 @@ class WeeklyPartition(PartitionDef):
     Parameters
     ----------
     start_date:
-        First partition key (inclusive), e.g. ``"2024-W01"``.
+        First key (inclusive), e.g. ``"2024-W01"``.
     end_date:
-        Last partition key (inclusive).  Defaults to the most recent
+        Last key (inclusive).  Defaults to the most recent
         completed ISO week.
     tz:
         IANA timezone name.  Used to determine "today" when
@@ -135,9 +131,7 @@ class WeeklyPartition(PartitionDef):
             datetime.strptime(key + "-1", self._FMT + "-%u").date()
         )
 
-    def partition_keys(
-        self, start: str | None = None, end: str | None = None
-    ) -> list[str]:
+    def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
         s = self._parse_iso_week(start or self.start_date)
         if end is not None:
             e = self._parse_iso_week(end)
@@ -158,8 +152,8 @@ class WeeklyPartition(PartitionDef):
 
 
 @dataclass(frozen=True)
-class MonthlyPartition(PartitionDef):
-    """One partition per calendar month.
+class MonthlyBackfill(BackfillDef):
+    """One key per calendar month.
 
     Keys are ISO-8601 dates pinned to the first of the month:
     ``YYYY-MM-01`` (e.g. ``"2024-01-01"``).
@@ -167,9 +161,9 @@ class MonthlyPartition(PartitionDef):
     Parameters
     ----------
     start_date:
-        First partition key (inclusive), e.g. ``"2024-01-01"``.
+        First key (inclusive), e.g. ``"2024-01-01"``.
     end_date:
-        Last partition key (inclusive).  Defaults to the previous
+        Last key (inclusive).  Defaults to the previous
         completed month.
     tz:
         IANA timezone name.  Used to determine "today" when
@@ -187,9 +181,7 @@ class MonthlyPartition(PartitionDef):
         d = datetime.strptime(key, self._FMT).date()
         return whenever.Date(d.year, d.month, 1)
 
-    def partition_keys(
-        self, start: str | None = None, end: str | None = None
-    ) -> list[str]:
+    def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
         s = self._parse_month(start or self.start_date)
         if end is not None:
             e = self._parse_month(end)
@@ -208,8 +200,8 @@ class MonthlyPartition(PartitionDef):
 
 
 @dataclass(frozen=True)
-class HourlyPartition(PartitionDef):
-    """One partition per hour.
+class HourlyBackfill(BackfillDef):
+    """One key per hour.
 
     Keys are truncated ISO-8601 timestamps: ``YYYY-MM-DDTHH``
     (e.g. ``"2024-01-01T00"``).
@@ -221,9 +213,9 @@ class HourlyPartition(PartitionDef):
     Parameters
     ----------
     start_date:
-        First partition key (inclusive), e.g. ``"2024-01-01T00"``.
+        First key (inclusive), e.g. ``"2024-01-01T00"``.
     end_date:
-        Last partition key (inclusive).  Defaults to the previous
+        Last key (inclusive).  Defaults to the previous
         completed hour in *tz*.
     tz:
         IANA timezone name (e.g. ``"UTC"``, ``"America/New_York"``).
@@ -247,9 +239,7 @@ class HourlyPartition(PartitionDef):
             naive.year, naive.month, naive.day, naive.hour, tz=self.tz
         )
 
-    def partition_keys(
-        self, start: str | None = None, end: str | None = None
-    ) -> list[str]:
+    def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
         s = self._parse_hour(start or self.start_date)
         if end is not None:
             e = self._parse_hour(end)
@@ -273,51 +263,62 @@ class HourlyPartition(PartitionDef):
 
 
 @dataclass(frozen=True)
-class StaticPartition(PartitionDef):
-    """A fixed set of partition keys.
+class StaticBackfill(BackfillDef):
+    """A fixed set of backfill keys.
 
     Parameters
     ----------
     keys:
-        The complete list of valid partition keys.
+        The complete list of valid backfill keys.
 
     Example
     -------
     ::
 
-        StaticPartition(keys=["us", "eu", "jp"])
+        StaticBackfill(keys=["us", "eu", "jp"])
     """
 
-    keys: list[str] = field(default_factory=list)
+    _keys: list[str] = field(default_factory=list)
 
     def __init__(self, keys: list[str]) -> None:
         # Defensive copy so mutations to the caller's list don't leak.
-        object.__setattr__(self, "keys", list(keys))
+        object.__setattr__(self, "_keys", list(keys))
 
-    def partition_keys(
-        self, start: str | None = None, end: str | None = None
-    ) -> list[str]:
+    def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
         if start is not None or end is not None:
             warnings.warn(
-                "StaticPartition.partition_keys() ignores 'start' and 'end' "
+                "StaticBackfill.keys() ignores 'start' and 'end' "
                 "arguments. All keys are always returned.",
                 stacklevel=2,
             )
-        return list(self.keys)
+        return list(self._keys)
 
 
-def current_logical_date() -> datetime:
-    """Read the current logical date from ``params["logical_date"]``.
+def get_run_logical_date(*, validate: bool = True) -> datetime:
+    """Return the logical date for the current job run.
 
-    The value is always an ISO-8601 string in *params* and is parsed
-    into a timezone-aware ``datetime`` before returning.
+    Reads the ``logical_date`` job parameter, parses it into a
+    timezone-aware ``datetime``, and optionally validates it against
+    the job's `BackfillDef` boundaries.
+
+    Parameters
+    ----------
+    validate:
+        When ``True`` (the default), verify that the logical date
+        falls within the ``start_date`` / ``end_date`` range declared
+        by the job's `BackfillDef`.  A `ValueError` is raised if the
+        date is out of range.  Ignored when the job has no backfill
+        definition.
 
     Raises
     ------
     RuntimeError
         If ``logical_date`` is missing or empty.  This indicates the
-        job was not invoked with a ``logical_date`` parameter (e.g. it
-        is not partitioned and was not started via backfill).
+        job has no backfill definition and was not started via the
+        backfill CLI.
+    ValueError
+        If *validate* is ``True`` and the logical date is outside the
+        backfill definition's boundaries.
 
     Returns
     -------
@@ -331,22 +332,71 @@ def current_logical_date() -> datetime:
         raise RuntimeError(
             "logical_date is not set. "
             "This usually means the job was not invoked with a "
-            "logical_date parameter. Use @job(partition=...) and "
+            "logical_date parameter. Use @job(backfill=...) and "
             "the backfill CLI, or pass logical_date explicitly."
         )
+    if validate:
+        job_name: str | None = params.get("__job_name__")
+        _validate_logical_date(raw, job_name)
+
     return _parse_logical_date_str(raw)
+
+
+def _validate_logical_date(raw: str, job_name: str | None) -> None:
+    """Check *raw* is within the current job's backfill boundaries."""
+    from databricks_bundle_decorators.registry import _JOB_REGISTRY
+
+    if job_name is None:
+        return
+    job_meta = _JOB_REGISTRY.get(job_name)
+    if job_meta is None or job_meta.backfill is None:
+        return
+
+    backfill = job_meta.backfill
+
+    if isinstance(backfill, StaticBackfill):
+        if raw not in backfill._keys:
+            raise ValueError(
+                f"logical_date {raw!r} is not in the StaticBackfill "
+                f"keys for job {job_name!r}. "
+                f"Valid keys: {backfill._keys}"
+            )
+        return
+
+    # Time-based backfill defs all have start_date and end_date
+    start: str | None = getattr(backfill, "start_date", None)
+    if start is None:
+        return
+
+    dt = _parse_logical_date_str(raw)
+    start_dt = _parse_logical_date_str(start)
+
+    if dt < start_dt:
+        raise ValueError(
+            f"logical_date {raw!r} is before the backfill "
+            f"start_date {start!r} for job {job_name!r}."
+        )
+
+    end: str | None = getattr(backfill, "end_date", None)
+    if end is not None:
+        end_dt = _parse_logical_date_str(end)
+        if dt > end_dt:
+            raise ValueError(
+                f"logical_date {raw!r} is after the backfill "
+                f"end_date {end!r} for job {job_name!r}."
+            )
 
 
 def _parse_logical_date_str(raw: str) -> datetime:
     """Parse a logical-date string into a timezone-aware ``datetime``.
 
     Uses ``datetime.fromisoformat`` which, on Python 3.12+, handles
-    all built-in partition-key formats:
+    all built-in backfill-key formats:
 
-    - ``DailyPartition``: ``2024-01-15``
-    - ``WeeklyPartition``: ``2024-W03``  (ISO week date)
-    - ``MonthlyPartition``: ``2024-01-01`` (first-of-month)
-    - ``HourlyPartition``: ``2024-01-15T00``
+    - ``DailyBackfill``: ``2024-01-15``
+    - ``WeeklyBackfill``: ``2024-W03``  (ISO week date)
+    - ``MonthlyBackfill``: ``2024-01-01`` (first-of-month)
+    - ``HourlyBackfill``: ``2024-01-15T00``
     - Full timestamps: ``2024-01-15T00:00:00+00:00``
 
     The returned datetime is always timezone-aware (defaults to UTC
