@@ -192,12 +192,13 @@ uv run dbxdec backfill my_pipeline --start 2024-01-01 --end 2024-01-07 --wait
 | `--max-concurrent` | Limit parallel run submissions |
 | `--dry-run` | Print keys without submitting |
 | `--wait` | Wait for all runs to complete and exit non-zero on failure |
+| `--target`, `-t` | Databricks bundle target (e.g. `dev`, `staging`, `prod`) |
 | `--profile` | Databricks CLI profile name |
-| `--host` | Databricks workspace URL |
 
-The command matches the deployed job by **exact name**.  If multiple
-jobs share the same name, an error is raised — rename the jobs to
-be unique.
+Under the hood the command calls `databricks bundle run`, which
+automatically resolves the deployed job name — including any
+dev-mode prefix (e.g. `[dev user] my_pipeline`).  The Databricks CLI
+must be installed and on your `PATH`.
 
 When `--wait` is used, the CLI polls each run until completion,
 printing `SUCCESS` or the failure status for each key.  This is
