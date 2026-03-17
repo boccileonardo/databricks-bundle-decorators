@@ -142,6 +142,10 @@ class PolarsCsvIoManager(IoManager):
             obj = obj.with_columns(pl.lit(ld_str).alias("logical_date"))
 
         if partition_by:
+            # Extract partition values from data before writing
+            self._last_partition_values = _polars_extract_partition_values(
+                obj, partition_by
+            )
             if isinstance(obj, pl.LazyFrame):
                 obj.sink_csv(
                     pl.PartitionByKey(base_uri, by=partition_by),
@@ -178,18 +182,6 @@ class PolarsCsvIoManager(IoManager):
                     f"polars.LazyFrame, got {type(obj).__name__}"
                 )
                 raise TypeError(msg)
-
-    def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:
-        import polars as pl  # ty: ignore[unresolved-import]
-
-        assert context.partition_by is not None
-        base_uri = self._uri(context.task_key)
-        scan = pl.scan_csv(
-            f"{base_uri}/**/*.csv",
-            hive_partitioning=True,
-            storage_options=self.storage_options,
-        )
-        return _polars_extract_partition_values(scan, context.partition_by)
 
     def read(self, context: InputContext) -> Any:
         """Read CSV as a LazyFrame or DataFrame.
