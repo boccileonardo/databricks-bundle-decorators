@@ -64,7 +64,7 @@ class _SparkDeltaBase(IoManager):
         # Handle merge builders first.
         _merge_cls: type | None = None
         try:
-            from delta.tables import DeltaMergeBuilder  # type: ignore[import-untyped]
+            from delta.tables import DeltaMergeBuilder
 
             _merge_cls = DeltaMergeBuilder
         except ImportError:
@@ -78,7 +78,7 @@ class _SparkDeltaBase(IoManager):
 
         # Inject logical_date column if it's a partition column
         if _needs_logical_date_col(partition_by):
-            from pyspark.sql import functions as F  # type: ignore[import-untyped]
+            from pyspark.sql import functions as F
 
             ld_str = _format_logical_date(context.logical_date)
             obj = obj.withColumn("logical_date", F.lit(ld_str))
@@ -114,7 +114,7 @@ class _SparkDeltaBase(IoManager):
         elif (
             _needs_logical_date_col(context.partition_by) and not context.all_partitions
         ):
-            from pyspark.sql import functions as F  # type: ignore[import-untyped]
+            from pyspark.sql import functions as F
 
             result = result.filter(
                 F.col("logical_date") == _format_logical_date(context.logical_date)
@@ -232,7 +232,7 @@ class SparkDeltaIoManager(_SparkDeltaBase):
 
     def setup(self) -> None:
         """Obtain the active SparkSession and apply ``spark_configs``."""
-        from pyspark.sql import SparkSession  # type: ignore[import-untyped]
+        from pyspark.sql import SparkSession
 
         self._spark = SparkSession.getActiveSession()
         if self._spark is None:
@@ -291,7 +291,7 @@ class SparkServerlessDeltaIoManager(_SparkDeltaBase):
 
     def setup(self) -> None:
         """Obtain the active SparkSession (no config injection)."""
-        from pyspark.sql import SparkSession  # type: ignore[import-untyped]
+        from pyspark.sql import SparkSession
 
         self._spark = SparkSession.getActiveSession()
         if self._spark is None:

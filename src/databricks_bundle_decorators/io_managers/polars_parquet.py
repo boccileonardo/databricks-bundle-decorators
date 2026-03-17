@@ -131,12 +131,12 @@ class PolarsParquetIoManager(IoManager):
         """Write a Polars DataFrame or LazyFrame to Parquet.
 
         - `polars.DataFrame` → ``write_parquet`` (native ``partition_by``)
-        - `polars.LazyFrame` → ``sink_parquet`` (``pl.PartitionByKey``)
+        - `polars.LazyFrame` → ``sink_parquet`` (``pl.PartitionBy``)
 
         When ``partition_by`` is set on the ``@task`` decorator, writes
         to Hive-style partitioned directories.
         """
-        import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional
+        import polars as pl
 
         base_uri = self._uri(context.task_key)
         partition_by = context.partition_by
@@ -153,7 +153,7 @@ class PolarsParquetIoManager(IoManager):
             )
             if isinstance(obj, pl.LazyFrame):
                 obj.sink_parquet(
-                    pl.PartitionByKey(base_uri, by=partition_by),
+                    pl.PartitionBy(base_uri, key=partition_by),
                     mkdir=True,
                     storage_options=self.storage_options,
                     **self._write_options,
@@ -204,7 +204,7 @@ class PolarsParquetIoManager(IoManager):
         ``@task(all_partitions=True)`` on the consuming task to read
         all partitions.
         """
-        import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional
+        import polars as pl
 
         base_uri = self._uri(context.upstream_task_key)
         partition_by = context.partition_by

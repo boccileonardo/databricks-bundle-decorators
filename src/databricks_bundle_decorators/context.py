@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pyspark.sql import SparkSession  # type: ignore[import-untyped]  # optional dependency
+    from pyspark.sql import SparkSession
 
 
 class _Params(dict[str, Any]):
@@ -80,10 +80,10 @@ def get_dbutils(spark: SparkSession | None = None) -> Any:
     """
     # Strategy 1: pyspark.dbutils (Databricks Runtime & Databricks Connect)
     try:
-        from pyspark.dbutils import DBUtils  # type: ignore[import-untyped]
+        from pyspark.dbutils import DBUtils  # type: ignore[import-not-found]  # Databricks-only
 
         if spark is None:
-            from pyspark.sql import SparkSession as _SS  # type: ignore[import-untyped]
+            from pyspark.sql import SparkSession as _SS
 
             spark = _SS.getActiveSession()
         if spark is not None:
@@ -93,7 +93,7 @@ def get_dbutils(spark: SparkSession | None = None) -> Any:
 
     # Strategy 2: IPython notebook namespace (dbutils injected by Databricks)
     try:
-        import IPython  # type: ignore[import-untyped]
+        import IPython  # type: ignore[import-not-found]  # Databricks-only
 
         ip = IPython.get_ipython()
         if ip is not None and "dbutils" in ip.user_ns:

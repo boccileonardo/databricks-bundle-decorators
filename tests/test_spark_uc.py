@@ -2,461 +2,431 @@
 
 from __future__ import annotations
 
-import sys
-import types
-from unittest.mock import MagicMock
+import uuid
 
 import pytest
+from delta.tables import DeltaTable
+from pyspark.sql import SparkSession
 
 from databricks_bundle_decorators.io_manager import InputContext, OutputContext
+from databricks_bundle_decorators.io_managers import (
+    SparkUCTableIoManager,
+    SparkUCVolumeDeltaIoManager,
+    SparkUCVolumeParquetIoManager,
+)
 
 
-# ---------------------------------------------------------------------------
-# Helpers – mock pyspark so IoManagers can be tested without Spark.
-# ---------------------------------------------------------------------------
+def _output_ctx(task_key: str = "my_task", **kwargs) -> OutputContext:
+    return OutputContext(job_name="j", task_key=task_key, run_id="r1", **kwargs)
 
 
-@pytest.fixture(autouse=True)
-def _mock_pyspark(monkeypatch: pytest.MonkeyPatch):
-    """Inject a fake ``pyspark`` module for every test in this file."""
-    pyspark_mod = types.ModuleType("pyspark")
-    sql_mod = types.ModuleType("pyspark.sql")
-
-    mock_session = MagicMock()
-
-    class _MockSparkSession:
-        @staticmethod
-        def getActiveSession() -> MagicMock:
-            return mock_session
-
-    sql_mod.SparkSession = _MockSparkSession  # type: ignore[attr-defined]
-    pyspark_mod.sql = sql_mod  # type: ignore[attr-defined]
-
-    monkeypatch.setitem(sys.modules, "pyspark", pyspark_mod)
-    monkeypatch.setitem(sys.modules, "pyspark.sql", sql_mod)
-
-    yield mock_session
-
-
-def _output_ctx(task_key: str = "my_task") -> OutputContext:
-    return OutputContext(job_name="j", task_key=task_key, run_id="r1")
-
-
-def _input_ctx(
-    upstream: str = "producer",
-    expected_type: type | None = None,
-) -> InputContext:
+def _input_ctx(upstream: str = "producer", **kwargs) -> InputContext:
     return InputContext(
         job_name="j",
         task_key="consumer",
         upstream_task_key=upstream,
         run_id="r1",
-        expected_type=expected_type,
+        **kwargs,
     )
 
 
+@pytest.fixture()
+def uc_schema(spark: SparkSession):
+    """Create a unique schema in the default catalog for UC table tests."""
+    schema_name = f"test_{uuid.uuid4().hex[:8]}"
+    spark.sql(f"CREATE DATABASE IF NOT EXISTS `{schema_name}`")
+    yield schema_name
+    spark.sql(f"DROP DATABASE IF EXISTS `{schema_name}` CASCADE")
+
+
 # ===========================================================================
-# SparkUCTableIoManager
+# SparkUCTableIoManager – construction
 # ===========================================================================
 
 
-class TestSparkUCTableIoManagerConstruction:
+class TestSparkUCTableConstruction:
     def test_stores_catalog_and_schema(self):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
         io = SparkUCTableIoManager(catalog="main", schema="staging")
         assert io.catalog == "main"
         assert io.schema == "staging"
 
     def test_table_name_generation(self):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
         io = SparkUCTableIoManager(catalog="main", schema="staging")
         assert io._table_name("extract") == "main.staging.extract"
 
-
-class TestSparkUCTableIoManagerSetup:
-    def test_setup_obtains_session(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
+    def test_default_mode_is_error(self):
         io = SparkUCTableIoManager(catalog="main", schema="staging")
+        assert io._mode == "error"
+
+
+class TestSparkUCTableSetup:
+    def test_setup_obtains_session(self, spark: SparkSession):
+        io = SparkUCTableIoManager(catalog="spark_catalog", schema="default")
         io.setup()
-
-        # No spark.conf.set calls — UC handles auth
-        _mock_pyspark.conf.set.assert_not_called()
-
-    def test_setup_no_active_session_raises(self, monkeypatch):
-        pyspark_mod = types.ModuleType("pyspark")
-        sql_mod = types.ModuleType("pyspark.sql")
-
-        class _NoSession:
-            @staticmethod
-            def getActiveSession() -> None:
-                return None
-
-        sql_mod.SparkSession = _NoSession  # type: ignore[attr-defined]
-        pyspark_mod.sql = sql_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "pyspark", pyspark_mod)
-        monkeypatch.setitem(sys.modules, "pyspark.sql", sql_mod)
-
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
-        io = SparkUCTableIoManager(catalog="main", schema="staging")
-
-        with pytest.raises(RuntimeError, match="No active SparkSession"):
-            io.setup()
+        assert io._spark is spark
 
 
-class TestSparkUCTableIoManagerWrite:
-    def test_write_uses_save_as_table(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
+# ---------------------------------------------------------------------------
+# SparkUCTableIoManager – round-trip using local catalog
+#
+# OSS Delta V2 catalog does not support saveAsTable with mode("overwrite")
+# (raises "does not support truncate in batch mode").  We use mode="error"
+# for first writes and mode="append" for append tests.  Overwrite + save
+# is already validated in the non-UC SparkDeltaIoManager tests.
+# ---------------------------------------------------------------------------
 
-        io = SparkUCTableIoManager(catalog="main", schema="staging")
-        io.setup()
 
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
-
-        spark_df.write.format.assert_called_once_with("delta")
-        spark_df.write.format.return_value.mode.assert_called_once_with("error")
-        spark_df.write.format.return_value.mode.return_value.saveAsTable.assert_called_once_with(
-            "main.staging.my_task"
-        )
-
-    def test_write_with_partition_by(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
-        io = SparkUCTableIoManager(catalog="main", schema="staging")
-        io.setup()
-
-        spark_df = MagicMock()
-        ctx = OutputContext(
-            job_name="j", task_key="my_task", run_id="r1", partition_by=["region"]
-        )
-        io.write(ctx, spark_df)
-
-        writer = spark_df.write.format.return_value.mode.return_value
-        writer.partitionBy.assert_called_once_with("region")
-        writer.partitionBy.return_value.saveAsTable.assert_called_once_with(
-            "main.staging.my_task"
-        )
-
-    def test_write_with_write_options(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
+class TestSparkUCTableRoundTrip:
+    def test_basic_round_trip(self, spark: SparkSession, uc_schema: str):
         io = SparkUCTableIoManager(
-            catalog="main",
-            schema="staging",
+            catalog="spark_catalog", schema=uc_schema, mode="error"
+        )
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
+        io.write(_output_ctx("my_task"), df)
+
+        result = io.read(_input_ctx("my_task"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 2
+        assert rows[0]["val"] == "a"
+
+    def test_mode_append(self, spark: SparkSession, uc_schema: str):
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="append"
+        )
+        io.setup()
+
+        df1 = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("task"), df1)
+
+        df2 = spark.createDataFrame([(2, "b")], ["id", "val"])
+        io.write(_output_ctx("task"), df2)
+
+        result = io.read(_input_ctx("task"))
+        assert result.count() == 2
+
+    def test_mode_error_on_existing(self, spark: SparkSession, uc_schema: str):
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="error"
+        )
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("err_task"), df)
+
+        with pytest.raises(Exception):
+            io.write(_output_ctx("err_task"), df)
+
+    def test_partition_by(self, spark: SparkSession, uc_schema: str):
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="error"
+        )
+        io.setup()
+
+        df = spark.createDataFrame(
+            [(1, "us", "a"), (2, "eu", "b")],
+            ["id", "region", "val"],
+        )
+        ctx = _output_ctx("partitioned", partition_by=["region"])
+        io.write(ctx, df)
+
+        pv = io._extract_partition_values(ctx)
+        assert pv == {"region": ["eu", "us"]}
+
+        result = io.read(_input_ctx("partitioned"))
+        assert result.count() == 2
+
+    def test_write_options_applied(self, spark: SparkSession, uc_schema: str):
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog",
+            schema=uc_schema,
+            mode="error",
             write_options={"mergeSchema": "true"},
         )
         io.setup()
 
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
-
-        writer = spark_df.write.format.return_value.mode.return_value
-        writer.option.assert_called_once_with("mergeSchema", "true")
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("opts"), df)
+        assert io.read(_input_ctx("opts")).count() == 1
 
 
-class TestSparkUCTableIoManagerRead:
-    def test_read_uses_spark_table(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
-        io = SparkUCTableIoManager(catalog="main", schema="staging")
+class TestSparkUCTableMergeBuilder:
+    def test_merge_upsert(self, spark: SparkSession, uc_schema: str):
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="error"
+        )
         io.setup()
 
-        io.read(_input_ctx("upstream_task"))
+        initial = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
+        io.write(_output_ctx("merge_tbl"), initial)
 
-        _mock_pyspark.table.assert_called_once_with("main.staging.upstream_task")
+        # DeltaTable.forName with 3-level names fails in OSS Spark;
+        # use the schema-qualified name directly.
+        dt = DeltaTable.forName(spark, f"`{uc_schema}`.merge_tbl")
+        updates = spark.createDataFrame([(2, "B"), (3, "c")], ["id", "val"])
+        builder = (
+            dt.alias("t")
+            .merge(updates.alias("s"), "t.id = s.id")
+            .whenMatchedUpdateAll()
+            .whenNotMatchedInsertAll()
+        )
+
+        io.write(_output_ctx("merge_tbl"), builder)
+
+        result = io.read(_input_ctx("merge_tbl"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 3
+        assert rows[0]["val"] == "a"
+        assert rows[1]["val"] == "B"
+        assert rows[2]["val"] == "c"
 
 
 # ===========================================================================
-# SparkUCVolumeDeltaIoManager
+# SparkUCVolumeDeltaIoManager – construction & round-trip
 # ===========================================================================
 
 
-class TestSparkUCVolumeDeltaIoManagerConstruction:
+class TestSparkUCVolumeDeltaConstruction:
     def test_stores_catalog_schema_volume(self):
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
-
         io = SparkUCVolumeDeltaIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
+            catalog="main", schema="staging", volume="raw_data"
         )
         assert io.catalog == "main"
         assert io.schema == "staging"
         assert io.volume == "raw_data"
 
     def test_uri_generation(self):
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
-
         io = SparkUCVolumeDeltaIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
+            catalog="main", schema="staging", volume="raw_data"
         )
         assert io._uri("extract") == "/Volumes/main/staging/raw_data/extract"
 
-
-class TestSparkUCVolumeDeltaIoManagerSetup:
-    def test_setup_obtains_session(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
-
+    def test_default_mode_is_error(self):
         io = SparkUCVolumeDeltaIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
+            catalog="main", schema="staging", volume="raw_data"
+        )
+        assert io._mode == "error"
+
+
+class TestSparkUCVolumeDeltaSetup:
+    def test_setup_obtains_session(self, spark: SparkSession):
+        io = SparkUCVolumeDeltaIoManager(
+            catalog="main", schema="staging", volume="raw_data"
         )
         io.setup()
+        assert io._spark is spark
 
-        _mock_pyspark.conf.set.assert_not_called()
 
-    def test_setup_no_active_session_raises(self, monkeypatch):
-        pyspark_mod = types.ModuleType("pyspark")
-        sql_mod = types.ModuleType("pyspark.sql")
+class TestSparkUCVolumeDeltaRoundTrip:
+    """Test real I/O by redirecting _uri to tmp_path (volumes are just paths)."""
 
-        class _NoSession:
-            @staticmethod
-            def getActiveSession() -> None:
-                return None
-
-        sql_mod.SparkSession = _NoSession  # type: ignore[attr-defined]
-        pyspark_mod.sql = sql_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "pyspark", pyspark_mod)
-        monkeypatch.setitem(sys.modules, "pyspark.sql", sql_mod)
-
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
-
+    def test_basic_round_trip(self, spark: SparkSession, tmp_path, monkeypatch):
         io = SparkUCVolumeDeltaIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
-        )
-
-        with pytest.raises(RuntimeError, match="No active SparkSession"):
-            io.setup()
-
-
-class TestSparkUCVolumeDeltaIoManagerWrite:
-    def test_write_delta_to_volume(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
-
-        io = SparkUCVolumeDeltaIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
+            catalog="main", schema="staging", volume="raw_data", mode="overwrite"
         )
         io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
 
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
+        io.write(_output_ctx("my_task"), df)
 
-        spark_df.write.format.assert_called_once_with("delta")
-        spark_df.write.format.return_value.mode.assert_called_once_with("error")
-        spark_df.write.format.return_value.mode.return_value.save.assert_called_once_with(
-            "/Volumes/main/staging/raw_data/my_task"
-        )
+        result = io.read(_input_ctx("my_task"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 2
+        assert rows[0]["val"] == "a"
 
-    def test_write_with_partition_by(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
-
+    def test_mode_append(self, spark: SparkSession, tmp_path, monkeypatch):
         io = SparkUCVolumeDeltaIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
+            catalog="main", schema="staging", volume="raw_data", mode="append"
         )
         io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
 
-        spark_df = MagicMock()
-        ctx = OutputContext(
-            job_name="j", task_key="my_task", run_id="r1", partition_by=["region"]
+        df1 = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("task"), df1)
+
+        df2 = spark.createDataFrame([(2, "b")], ["id", "val"])
+        io.write(_output_ctx("task"), df2)
+
+        result = io.read(_input_ctx("task"))
+        assert result.count() == 2
+
+    def test_partition_by(self, spark: SparkSession, tmp_path, monkeypatch):
+        io = SparkUCVolumeDeltaIoManager(
+            catalog="main", schema="staging", volume="raw_data", mode="overwrite"
         )
-        io.write(ctx, spark_df)
+        io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
 
-        writer = spark_df.write.format.return_value.mode.return_value
-        writer.partitionBy.assert_called_once_with("region")
+        df = spark.createDataFrame([(1, "us"), (2, "eu")], ["id", "region"])
+        ctx = _output_ctx("partitioned", partition_by=["region"])
+        io.write(ctx, df)
 
-    def test_write_with_write_options(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
+        pv = io._extract_partition_values(ctx)
+        assert pv == {"region": ["eu", "us"]}
 
+    def test_write_options(self, spark: SparkSession, tmp_path, monkeypatch):
         io = SparkUCVolumeDeltaIoManager(
             catalog="main",
             schema="staging",
             volume="raw_data",
+            mode="overwrite",
             write_options={"mergeSchema": "true"},
         )
         io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
 
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("opts"), df)
+        assert io.read(_input_ctx("opts")).count() == 1
 
-        writer = spark_df.write.format.return_value.mode.return_value
-        writer.option.assert_called_once_with("mergeSchema", "true")
+    def test_read_options(self, spark: SparkSession, tmp_path, monkeypatch):
+        io_write = SparkUCVolumeDeltaIoManager(
+            catalog="main", schema="staging", volume="raw_data", mode="overwrite"
+        )
+        io_write.setup()
 
+        def uri_fn(key: str) -> str:
+            return str(tmp_path / key)
 
-class TestSparkUCVolumeDeltaIoManagerRead:
-    def test_read_delta_from_volume(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
+        monkeypatch.setattr(io_write, "_uri", uri_fn)
 
-        io = SparkUCVolumeDeltaIoManager(
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io_write.write(_output_ctx("read_opts"), df)
+
+        io_read = SparkUCVolumeDeltaIoManager(
             catalog="main",
             schema="staging",
             volume="raw_data",
+            read_options={"versionAsOf": "0"},
         )
-        io.setup()
+        io_read.setup()
+        monkeypatch.setattr(io_read, "_uri", uri_fn)
 
-        io.read(_input_ctx("upstream_task"))
+        result = io_read.read(_input_ctx("read_opts"))
+        assert result.count() == 1
 
-        _mock_pyspark.read.format.assert_called_once_with("delta")
-        _mock_pyspark.read.format.return_value.load.assert_called_once_with(
-            "/Volumes/main/staging/raw_data/upstream_task"
-        )
 
-    def test_read_with_read_options(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
-
+class TestSparkUCVolumeDeltaMergeBuilder:
+    def test_merge_upsert(self, spark: SparkSession, tmp_path, monkeypatch):
         io = SparkUCVolumeDeltaIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
-            read_options={"versionAsOf": "3"},
+            catalog="main", schema="staging", volume="raw_data", mode="overwrite"
         )
         io.setup()
 
-        io.read(_input_ctx("upstream_task"))
+        def uri_fn(key: str) -> str:
+            return str(tmp_path / key)
 
-        reader = _mock_pyspark.read.format.return_value
-        reader.option.assert_called_once_with("versionAsOf", "3")
+        monkeypatch.setattr(io, "_uri", uri_fn)
+
+        initial = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
+        io.write(_output_ctx("merge_vol"), initial)
+
+        dt = DeltaTable.forPath(spark, str(tmp_path / "merge_vol"))
+        updates = spark.createDataFrame([(2, "B"), (3, "c")], ["id", "val"])
+        builder = (
+            dt.alias("t")
+            .merge(updates.alias("s"), "t.id = s.id")
+            .whenMatchedUpdateAll()
+            .whenNotMatchedInsertAll()
+        )
+
+        io.write(_output_ctx("merge_vol"), builder)
+
+        result = io.read(_input_ctx("merge_vol"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 3
+        assert rows[1]["val"] == "B"
 
 
 # ===========================================================================
-# SparkUCVolumeParquetIoManager
+# SparkUCVolumeParquetIoManager – construction & round-trip
 # ===========================================================================
 
 
-class TestSparkUCVolumeParquetIoManagerConstruction:
+class TestSparkUCVolumeParquetConstruction:
     def test_stores_catalog_schema_volume(self):
-        from databricks_bundle_decorators.io_managers import (
-            SparkUCVolumeParquetIoManager,
-        )
-
         io = SparkUCVolumeParquetIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
+            catalog="main", schema="staging", volume="raw_data"
         )
         assert io.catalog == "main"
         assert io.schema == "staging"
         assert io.volume == "raw_data"
 
     def test_uri_generation(self):
-        from databricks_bundle_decorators.io_managers import (
-            SparkUCVolumeParquetIoManager,
-        )
-
         io = SparkUCVolumeParquetIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
+            catalog="main", schema="staging", volume="raw_data"
         )
         assert io._uri("extract") == "/Volumes/main/staging/raw_data/extract"
 
 
-class TestSparkUCVolumeParquetIoManagerSetup:
-    def test_setup_obtains_session(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkUCVolumeParquetIoManager,
-        )
-
+class TestSparkUCVolumeParquetSetup:
+    def test_setup_obtains_session(self, spark: SparkSession):
         io = SparkUCVolumeParquetIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
+            catalog="main", schema="staging", volume="raw_data"
         )
         io.setup()
+        assert io._spark is spark
 
-        _mock_pyspark.conf.set.assert_not_called()
 
-    def test_setup_no_active_session_raises(self, monkeypatch):
-        pyspark_mod = types.ModuleType("pyspark")
-        sql_mod = types.ModuleType("pyspark.sql")
+class TestSparkUCVolumeParquetRoundTrip:
+    """Test real I/O by redirecting _uri to tmp_path."""
 
-        class _NoSession:
-            @staticmethod
-            def getActiveSession() -> None:
-                return None
-
-        sql_mod.SparkSession = _NoSession  # type: ignore[attr-defined]
-        pyspark_mod.sql = sql_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "pyspark", pyspark_mod)
-        monkeypatch.setitem(sys.modules, "pyspark.sql", sql_mod)
-
-        from databricks_bundle_decorators.io_managers import (
-            SparkUCVolumeParquetIoManager,
-        )
-
+    def test_basic_round_trip(self, spark: SparkSession, tmp_path, monkeypatch):
         io = SparkUCVolumeParquetIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
-        )
-
-        with pytest.raises(RuntimeError, match="No active SparkSession"):
-            io.setup()
-
-
-class TestSparkUCVolumeParquetIoManagerWrite:
-    def test_write_parquet_to_volume(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkUCVolumeParquetIoManager,
-        )
-
-        io = SparkUCVolumeParquetIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
+            catalog="main", schema="staging", volume="raw_data"
         )
         io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
 
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
+        io.write(_output_ctx("my_task"), df)
 
-        spark_df.write.format.assert_called_once_with("parquet")
-        spark_df.write.format.return_value.mode.assert_called_once_with("overwrite")
-        spark_df.write.format.return_value.mode.return_value.save.assert_called_once_with(
-            "/Volumes/main/staging/raw_data/my_task"
-        )
+        result = io.read(_input_ctx("my_task"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 2
+        assert rows[0]["val"] == "a"
 
-    def test_write_with_partition_by(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkUCVolumeParquetIoManager,
-        )
-
+    def test_overwrite_mode(self, spark: SparkSession, tmp_path, monkeypatch):
         io = SparkUCVolumeParquetIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
+            catalog="main", schema="staging", volume="raw_data"
         )
         io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
 
-        spark_df = MagicMock()
-        ctx = OutputContext(
-            job_name="j",
-            task_key="my_task",
-            run_id="r1",
-            partition_by=["region", "date"],
+        df1 = spark.createDataFrame([(1, "old")], ["id", "val"])
+        io.write(_output_ctx("task"), df1)
+
+        df2 = spark.createDataFrame([(2, "new")], ["id", "val"])
+        io.write(_output_ctx("task"), df2)
+
+        result = io.read(_input_ctx("task"))
+        rows = result.collect()
+        assert len(rows) == 1
+        assert rows[0]["val"] == "new"
+
+    def test_partition_by(self, spark: SparkSession, tmp_path, monkeypatch):
+        io = SparkUCVolumeParquetIoManager(
+            catalog="main", schema="staging", volume="raw_data"
         )
-        io.write(ctx, spark_df)
+        io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
 
-        writer = spark_df.write.format.return_value.mode.return_value
-        writer.partitionBy.assert_called_once_with("region", "date")
-
-    def test_write_with_write_options(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkUCVolumeParquetIoManager,
+        df = spark.createDataFrame(
+            [(1, "us", "a"), (2, "eu", "b")],
+            ["id", "region", "val"],
         )
+        ctx = _output_ctx("partitioned", partition_by=["region"])
+        io.write(ctx, df)
 
+        pv = io._extract_partition_values(ctx)
+        assert pv == {"region": ["eu", "us"]}
+
+        result = io.read(_input_ctx("partitioned"))
+        assert result.count() == 2
+
+    def test_write_options(self, spark: SparkSession, tmp_path, monkeypatch):
         io = SparkUCVolumeParquetIoManager(
             catalog="main",
             schema="staging",
@@ -464,39 +434,13 @@ class TestSparkUCVolumeParquetIoManagerWrite:
             write_options={"compression": "snappy"},
         )
         io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
 
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("opts"), df)
+        assert io.read(_input_ctx("opts")).count() == 1
 
-        writer = spark_df.write.format.return_value.mode.return_value
-        writer.option.assert_called_once_with("compression", "snappy")
-
-
-class TestSparkUCVolumeParquetIoManagerRead:
-    def test_read_parquet_from_volume(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkUCVolumeParquetIoManager,
-        )
-
-        io = SparkUCVolumeParquetIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
-        )
-        io.setup()
-
-        io.read(_input_ctx("upstream_task"))
-
-        _mock_pyspark.read.format.assert_called_once_with("parquet")
-        _mock_pyspark.read.format.return_value.load.assert_called_once_with(
-            "/Volumes/main/staging/raw_data/upstream_task"
-        )
-
-    def test_read_with_read_options(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkUCVolumeParquetIoManager,
-        )
-
+    def test_read_options(self, spark: SparkSession, tmp_path, monkeypatch):
         io = SparkUCVolumeParquetIoManager(
             catalog="main",
             schema="staging",
@@ -504,297 +448,95 @@ class TestSparkUCVolumeParquetIoManagerRead:
             read_options={"mergeSchema": "true"},
         )
         io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
 
-        io.read(_input_ctx("upstream_task"))
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("read_opts"), df)
 
-        reader = _mock_pyspark.read.format.return_value
-        reader.option.assert_called_once_with("mergeSchema", "true")
-
-
-# ===========================================================================
-# mode parameter – UC Delta IoManagers
-# ===========================================================================
-
-
-class TestSparkUCTableModeParameter:
-    def test_default_mode_is_error(self):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
-        io = SparkUCTableIoManager(catalog="main", schema="staging")
-        assert io._mode == "error"
-
-    def test_custom_mode_append(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
-        io = SparkUCTableIoManager(catalog="main", schema="staging", mode="append")
-        io.setup()
-
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
-
-        spark_df.write.format.return_value.mode.assert_called_once_with("append")
-
-    def test_custom_mode_error(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
-        io = SparkUCTableIoManager(catalog="main", schema="staging", mode="error")
-        io.setup()
-
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
-
-        spark_df.write.format.return_value.mode.assert_called_once_with("error")
-
-
-class TestSparkUCVolumeDeltaModeParameter:
-    def test_default_mode_is_error(self):
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
-
-        io = SparkUCVolumeDeltaIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
-        )
-        assert io._mode == "error"
-
-    def test_custom_mode_append(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
-
-        io = SparkUCVolumeDeltaIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
-            mode="append",
-        )
-        io.setup()
-
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
-
-        spark_df.write.format.return_value.mode.assert_called_once_with("append")
+        result = io.read(_input_ctx("read_opts"))
+        assert result.count() == 1
 
 
 # ===========================================================================
-# DeltaMergeBuilder support – UC Delta IoManagers
+# Partition value extraction – all UC IoManagers
 # ===========================================================================
-
-
-class TestSparkUCTableMergeBuilder:
-    def test_merge_builder_calls_execute(self, _mock_pyspark, monkeypatch):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
-        delta_mod = types.ModuleType("delta")
-        tables_mod = types.ModuleType("delta.tables")
-
-        class _FakeDeltaMergeBuilder:
-            execute = MagicMock()
-
-        tables_mod.DeltaMergeBuilder = _FakeDeltaMergeBuilder  # type: ignore[attr-defined]
-        delta_mod.tables = tables_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "delta", delta_mod)
-        monkeypatch.setitem(sys.modules, "delta.tables", tables_mod)
-
-        io = SparkUCTableIoManager(catalog="main", schema="staging")
-        io.setup()
-
-        builder = _FakeDeltaMergeBuilder()
-        io.write(_output_ctx("t"), builder)
-
-        builder.execute.assert_called_once()
-
-    def test_merge_builder_skips_save_as_table(self, _mock_pyspark, monkeypatch):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
-        delta_mod = types.ModuleType("delta")
-        tables_mod = types.ModuleType("delta.tables")
-
-        class _FakeDeltaMergeBuilder:
-            execute = MagicMock()
-
-        tables_mod.DeltaMergeBuilder = _FakeDeltaMergeBuilder  # type: ignore[attr-defined]
-        delta_mod.tables = tables_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "delta", delta_mod)
-        monkeypatch.setitem(sys.modules, "delta.tables", tables_mod)
-
-        io = SparkUCTableIoManager(catalog="main", schema="staging")
-        io.setup()
-
-        spark_df = MagicMock()
-        builder = _FakeDeltaMergeBuilder()
-        io.write(_output_ctx("t"), builder)
-
-        spark_df.write.format.assert_not_called()
-
-
-class TestSparkUCVolumeDeltaMergeBuilder:
-    def test_merge_builder_calls_execute(self, _mock_pyspark, monkeypatch):
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
-
-        delta_mod = types.ModuleType("delta")
-        tables_mod = types.ModuleType("delta.tables")
-
-        class _FakeDeltaMergeBuilder:
-            execute = MagicMock()
-
-        tables_mod.DeltaMergeBuilder = _FakeDeltaMergeBuilder  # type: ignore[attr-defined]
-        delta_mod.tables = tables_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "delta", delta_mod)
-        monkeypatch.setitem(sys.modules, "delta.tables", tables_mod)
-
-        io = SparkUCVolumeDeltaIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
-        )
-        io.setup()
-
-        builder = _FakeDeltaMergeBuilder()
-        io.write(_output_ctx("t"), builder)
-
-        builder.execute.assert_called_once()
-
-    def test_merge_builder_skips_save(self, _mock_pyspark, monkeypatch):
-        from databricks_bundle_decorators.io_managers import SparkUCVolumeDeltaIoManager
-
-        delta_mod = types.ModuleType("delta")
-        tables_mod = types.ModuleType("delta.tables")
-
-        class _FakeDeltaMergeBuilder:
-            execute = MagicMock()
-
-        tables_mod.DeltaMergeBuilder = _FakeDeltaMergeBuilder  # type: ignore[attr-defined]
-        delta_mod.tables = tables_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "delta", delta_mod)
-        monkeypatch.setitem(sys.modules, "delta.tables", tables_mod)
-
-        io = SparkUCVolumeDeltaIoManager(
-            catalog="main",
-            schema="staging",
-            volume="raw_data",
-        )
-        io.setup()
-
-        spark_df = MagicMock()
-        builder = _FakeDeltaMergeBuilder()
-        io.write(_output_ctx("t"), builder)
-
-        spark_df.write.format.assert_not_called()
 
 
 class TestPartitionValueExtraction:
-    """Verify _last_partition_values is populated during partitioned write."""
-
-    def test_uc_table_write_caches_partition_values(self, _mock_pyspark, monkeypatch):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.io_managers.spark_uc._spark_extract_partition_values",
-            lambda df, partition_by: {"region": ["us"]},
+    def test_uc_table_caches_partition_values(
+        self, spark: SparkSession, uc_schema: str
+    ):
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="error"
         )
-        io = SparkUCTableIoManager(catalog="main", schema="staging")
         io.setup()
 
-        spark_df = MagicMock()
-        ctx = OutputContext(
-            job_name="j", task_key="t", run_id="r1", partition_by=["region"]
-        )
+        df = spark.createDataFrame([(1, "us"), (2, "eu")], ["id", "region"])
+        ctx = _output_ctx("pv_task", partition_by=["region"])
+        io.write(ctx, df)
 
-        io.write(ctx, spark_df)
+        assert io._last_partition_values == {"region": ["eu", "us"]}
 
-        assert io._last_partition_values == {"region": ["us"]}
-        assert io._extract_partition_values(ctx) == {"region": ["us"]}
-
-    def test_uc_volume_delta_write_caches_partition_values(
-        self, _mock_pyspark, monkeypatch
+    def test_uc_volume_delta_caches_partition_values(
+        self, spark: SparkSession, tmp_path, monkeypatch
     ):
-        from databricks_bundle_decorators.io_managers import (
-            SparkUCVolumeDeltaIoManager,
-        )
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.io_managers.spark_uc._spark_extract_partition_values",
-            lambda df, partition_by: {"date": ["2026-03-01"]},
-        )
         io = SparkUCVolumeDeltaIoManager(
-            catalog="main", schema="staging", volume="raw_data"
+            catalog="main", schema="staging", volume="raw_data", mode="overwrite"
         )
         io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
 
-        spark_df = MagicMock()
-        ctx = OutputContext(
-            job_name="j", task_key="t", run_id="r1", partition_by=["date"]
+        df = spark.createDataFrame(
+            [(1, "2026-03-01"), (2, "2026-03-02")], ["id", "date"]
         )
+        ctx = _output_ctx("pv_vol_d", partition_by=["date"])
+        io.write(ctx, df)
 
-        io.write(ctx, spark_df)
+        assert io._last_partition_values == {"date": ["2026-03-01", "2026-03-02"]}
 
-        assert io._last_partition_values == {"date": ["2026-03-01"]}
-
-    def test_uc_volume_parquet_write_caches_partition_values(
-        self, _mock_pyspark, monkeypatch
+    def test_uc_volume_parquet_caches_partition_values(
+        self, spark: SparkSession, tmp_path, monkeypatch
     ):
-        from databricks_bundle_decorators.io_managers import (
-            SparkUCVolumeParquetIoManager,
-        )
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.io_managers.spark_uc._spark_extract_partition_values",
-            lambda df, partition_by: {"date": ["2026-03-01"]},
-        )
         io = SparkUCVolumeParquetIoManager(
             catalog="main", schema="staging", volume="raw_data"
         )
         io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
 
-        spark_df = MagicMock()
-        ctx = OutputContext(
-            job_name="j", task_key="t", run_id="r1", partition_by=["date"]
+        df = spark.createDataFrame(
+            [(1, "2026-03-01"), (2, "2026-03-02")], ["id", "date"]
         )
+        ctx = _output_ctx("pv_vol_p", partition_by=["date"])
+        io.write(ctx, df)
 
-        io.write(ctx, spark_df)
+        assert io._last_partition_values == {"date": ["2026-03-01", "2026-03-02"]}
 
-        assert io._last_partition_values == {"date": ["2026-03-01"]}
-
-    def test_sequential_writes_replace_partition_values(
-        self, _mock_pyspark, monkeypatch
+    def test_no_partition_write_does_not_set_values(
+        self, spark: SparkSession, uc_schema: str
     ):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
-        call_count = 0
-
-        def _fake_extract(df, partition_by):
-            nonlocal call_count
-            call_count += 1
-            return {"date": [f"2026-03-0{call_count}"]}
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.io_managers.spark_uc._spark_extract_partition_values",
-            _fake_extract,
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="error"
         )
-        io = SparkUCTableIoManager(catalog="main", schema="staging")
         io.setup()
 
-        spark_df = MagicMock()
-        ctx1 = OutputContext(
-            job_name="j", task_key="t", run_id="r1", partition_by=["date"]
-        )
-        io.write(ctx1, spark_df)
-        assert io._extract_partition_values(ctx1) == {"date": ["2026-03-01"]}
-
-        ctx2 = OutputContext(
-            job_name="j", task_key="t", run_id="r2", partition_by=["date"]
-        )
-        io.write(ctx2, spark_df)
-        assert io._extract_partition_values(ctx2) == {"date": ["2026-03-02"]}
-
-    def test_no_partition_write_does_not_set_values(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
-
-        io = SparkUCTableIoManager(catalog="main", schema="staging")
-        io.setup()
-
-        spark_df = MagicMock()
-        ctx = OutputContext(job_name="j", task_key="t", run_id="r1")
-
-        io.write(ctx, spark_df)
-
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("no_part"), df)
         assert io._last_partition_values is None
+
+    def test_sequential_writes_replace_values(
+        self, spark: SparkSession, uc_schema: str
+    ):
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="append"
+        )
+        io.setup()
+
+        df1 = spark.createDataFrame([(1, "us")], ["id", "region"])
+        ctx1 = _output_ctx("seq1", partition_by=["region"])
+        io.write(ctx1, df1)
+        assert io._extract_partition_values(ctx1) == {"region": ["us"]}
+
+        df2 = spark.createDataFrame([(2, "eu"), (3, "ap")], ["id", "region"])
+        ctx2 = _output_ctx("seq2", partition_by=["region"])
+        io.write(ctx2, df2)
+        assert io._extract_partition_values(ctx2) == {"region": ["ap", "eu"]}
