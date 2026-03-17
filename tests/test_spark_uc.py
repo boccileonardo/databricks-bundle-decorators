@@ -679,3 +679,122 @@ class TestSparkUCVolumeDeltaMergeBuilder:
         io.write(_output_ctx("t"), builder)
 
         spark_df.write.format.assert_not_called()
+
+
+class TestPartitionValueExtraction:
+    """Verify _last_partition_values is populated during partitioned write."""
+
+    def test_uc_table_write_caches_partition_values(self, _mock_pyspark, monkeypatch):
+        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.io_managers.spark_uc._spark_extract_partition_values",
+            lambda df, partition_by: {"region": ["us"]},
+        )
+        io = SparkUCTableIoManager(catalog="main", schema="staging")
+        io.setup()
+
+        spark_df = MagicMock()
+        ctx = OutputContext(
+            job_name="j", task_key="t", run_id="r1", partition_by=["region"]
+        )
+
+        io.write(ctx, spark_df)
+
+        assert io._last_partition_values == {"region": ["us"]}
+        assert io._extract_partition_values(ctx) == {"region": ["us"]}
+
+    def test_uc_volume_delta_write_caches_partition_values(
+        self, _mock_pyspark, monkeypatch
+    ):
+        from databricks_bundle_decorators.io_managers import (
+            SparkUCVolumeDeltaIoManager,
+        )
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.io_managers.spark_uc._spark_extract_partition_values",
+            lambda df, partition_by: {"date": ["2026-03-01"]},
+        )
+        io = SparkUCVolumeDeltaIoManager(
+            catalog="main", schema="staging", volume="raw_data"
+        )
+        io.setup()
+
+        spark_df = MagicMock()
+        ctx = OutputContext(
+            job_name="j", task_key="t", run_id="r1", partition_by=["date"]
+        )
+
+        io.write(ctx, spark_df)
+
+        assert io._last_partition_values == {"date": ["2026-03-01"]}
+
+    def test_uc_volume_parquet_write_caches_partition_values(
+        self, _mock_pyspark, monkeypatch
+    ):
+        from databricks_bundle_decorators.io_managers import (
+            SparkUCVolumeParquetIoManager,
+        )
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.io_managers.spark_uc._spark_extract_partition_values",
+            lambda df, partition_by: {"date": ["2026-03-01"]},
+        )
+        io = SparkUCVolumeParquetIoManager(
+            catalog="main", schema="staging", volume="raw_data"
+        )
+        io.setup()
+
+        spark_df = MagicMock()
+        ctx = OutputContext(
+            job_name="j", task_key="t", run_id="r1", partition_by=["date"]
+        )
+
+        io.write(ctx, spark_df)
+
+        assert io._last_partition_values == {"date": ["2026-03-01"]}
+
+    def test_sequential_writes_replace_partition_values(
+        self, _mock_pyspark, monkeypatch
+    ):
+        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
+
+        call_count = 0
+
+        def _fake_extract(df, partition_by):
+            nonlocal call_count
+            call_count += 1
+            return {"date": [f"2026-03-0{call_count}"]}
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.io_managers.spark_uc._spark_extract_partition_values",
+            _fake_extract,
+        )
+        io = SparkUCTableIoManager(catalog="main", schema="staging")
+        io.setup()
+
+        spark_df = MagicMock()
+        ctx1 = OutputContext(
+            job_name="j", task_key="t", run_id="r1", partition_by=["date"]
+        )
+        io.write(ctx1, spark_df)
+        assert io._extract_partition_values(ctx1) == {"date": ["2026-03-01"]}
+
+        ctx2 = OutputContext(
+            job_name="j", task_key="t", run_id="r2", partition_by=["date"]
+        )
+        io.write(ctx2, spark_df)
+        assert io._extract_partition_values(ctx2) == {"date": ["2026-03-02"]}
+
+    def test_no_partition_write_does_not_set_values(self, _mock_pyspark):
+        from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
+
+        io = SparkUCTableIoManager(catalog="main", schema="staging")
+        io.setup()
+
+        spark_df = MagicMock()
+        ctx = OutputContext(job_name="j", task_key="t", run_id="r1")
+
+        io.write(ctx, spark_df)
+
+        assert io._last_partition_values is None

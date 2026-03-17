@@ -497,3 +497,70 @@ class TestTableMerger:
         # DataFrame / LazyFrame write methods must NOT be called.
         _mock_polars.DataFrame.write_delta.assert_not_called()
         _mock_polars.LazyFrame.sink_delta.assert_not_called()
+
+
+class TestPartitionValueExtraction:
+    """Verify _last_partition_values is populated during partitioned write."""
+
+    def test_write_dataframe_caches_partition_values(self, _mock_polars, monkeypatch):
+        from databricks_bundle_decorators.io_managers import PolarsDeltaIoManager
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.io_managers.polars_delta._polars_extract_partition_values",
+            lambda obj, partition_by: {"region": ["us"]},
+        )
+        io = PolarsDeltaIoManager(base_path="/data")
+        df = _mock_polars.DataFrame()
+        ctx = OutputContext(
+            job_name="j",
+            task_key="t",
+            run_id="r1",
+            partition_by=["region"],
+        )
+
+        io.write(ctx, df)
+
+        assert io._last_partition_values == {"region": ["us"]}
+        assert io._extract_partition_values(ctx) == {"region": ["us"]}
+
+    def test_sequential_writes_replace_partition_values(
+        self, _mock_polars, monkeypatch
+    ):
+        from databricks_bundle_decorators.io_managers import PolarsDeltaIoManager
+
+        call_count = 0
+
+        def _fake_extract(obj, partition_by):
+            nonlocal call_count
+            call_count += 1
+            return {"date": [f"2026-03-0{call_count}"]}
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.io_managers.polars_delta._polars_extract_partition_values",
+            _fake_extract,
+        )
+        io = PolarsDeltaIoManager(base_path="/data")
+        df = _mock_polars.DataFrame()
+
+        ctx1 = OutputContext(
+            job_name="j", task_key="t", run_id="r1", partition_by=["date"]
+        )
+        io.write(ctx1, df)
+        assert io._extract_partition_values(ctx1) == {"date": ["2026-03-01"]}
+
+        ctx2 = OutputContext(
+            job_name="j", task_key="t", run_id="r2", partition_by=["date"]
+        )
+        io.write(ctx2, df)
+        assert io._extract_partition_values(ctx2) == {"date": ["2026-03-02"]}
+
+    def test_no_partition_write_does_not_set_values(self, _mock_polars):
+        from databricks_bundle_decorators.io_managers import PolarsDeltaIoManager
+
+        io = PolarsDeltaIoManager(base_path="/data")
+        df = _mock_polars.DataFrame()
+        ctx = OutputContext(job_name="j", task_key="t", run_id="r1")
+
+        io.write(ctx, df)
+
+        assert io._last_partition_values is None
