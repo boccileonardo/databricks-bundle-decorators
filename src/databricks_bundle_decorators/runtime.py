@@ -51,8 +51,9 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
         ``python_wheel_task`` invocation.
     """
     # ---- extract internal parameters -------------------------------------
-    job_name = cli_params.get("__job_name__", "unknown")
-    task_key_param = cli_params.get("__task_key__")  # noqa: F841
+    job_name = cli_params.get("__job_name__")
+    if not job_name:
+        raise RuntimeError("--__job_name__=<name> is required.")
     run_id = cli_params.get("__run_id__", os.environ.get("DATABRICKS_RUN_ID", "local"))
 
     # ---- extract upstream mappings (__upstream__<param>=<upstream_task>) ---

@@ -87,8 +87,8 @@ class TestGenerateResources:
 
         resources = generate_resources(package_name="test_pkg")
         task_obj = resources["docker_job"].tasks[0]
-        # No libraries attached — the SDK defaults unset libraries to []
-        assert task_obj.libraries == [] or task_obj.libraries is None
+        # No libraries attached — codegen omits the key, SDK defaults to None
+        assert not task_obj.libraries
 
     def test_libraries_custom_forwarded(self):
         """Custom Library objects are forwarded to generated tasks."""

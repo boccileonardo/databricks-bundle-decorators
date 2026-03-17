@@ -496,7 +496,7 @@ class TestJobBodySafeguard:
 
 
 class TestReservedParamValidation:
-    """Fix #1: Reserved job parameter names must be rejected at decoration time."""
+    """Reserved job parameter names must be rejected at decoration time."""
 
     def setup_method(self):
         reset_registries()
@@ -572,7 +572,7 @@ class TestReservedParamValidation:
 
 
 class TestDuplicateTaskInvocation:
-    """Fix #4: Calling the same @task twice inside one @job body must raise."""
+    """Calling the same @task twice inside one @job body must raise."""
 
     def setup_method(self):
         reset_registries()
@@ -614,7 +614,7 @@ class TestDuplicateTaskInvocation:
 
 
 class TestDuplicateStandaloneTask:
-    """Fix #5: Duplicate standalone @task names must raise DuplicateResourceError."""
+    """Duplicate standalone @task names must raise DuplicateResourceError."""
 
     def setup_method(self):
         reset_registries()

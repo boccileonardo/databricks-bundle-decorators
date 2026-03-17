@@ -23,6 +23,7 @@ from databricks_bundle_decorators.backfill import (
 class TestDailyBackfill:
     def test_basic_range(self):
         p = DailyBackfill(start_date="2024-01-01", end_date="2024-01-05")
+        assert p.tz == "UTC"
         keys = p.keys()
         assert keys == [
             "2024-01-01",
@@ -65,6 +66,7 @@ class TestDailyBackfill:
 class TestWeeklyBackfill:
     def test_basic_range(self):
         p = WeeklyBackfill(start_date="2024-W01", end_date="2024-W04")
+        assert p.tz == "UTC"
         keys = p.keys()
         assert len(keys) == 4
         assert keys[0] == "2024-W01"
@@ -83,6 +85,7 @@ class TestWeeklyBackfill:
 class TestMonthlyBackfill:
     def test_basic_range(self):
         p = MonthlyBackfill(start_date="2024-01-01", end_date="2024-06-01")
+        assert p.tz == "UTC"
         keys = p.keys()
         assert keys == [
             "2024-01-01",
@@ -231,30 +234,7 @@ class TestGetRunLogicalDate:
 
 
 class TestTimezoneAwareDefaults:
-    """Tests for tz parameter on time-based backfill definitions."""
-
-    def test_daily_tz_utc_is_default(self):
-        """DailyBackfill defaults to tz='UTC'."""
-        p = DailyBackfill(start_date="2024-01-01", end_date="2024-01-03")
-        assert p.tz == "UTC"
-        keys = p.keys()
-        assert keys == ["2024-01-01", "2024-01-02", "2024-01-03"]
-
-    def test_weekly_tz_default_utc(self):
-        from databricks_bundle_decorators.backfill import WeeklyBackfill
-
-        p = WeeklyBackfill(start_date="2024-W01", end_date="2024-W04")
-        assert p.tz == "UTC"
-        keys = p.keys()
-        assert len(keys) == 4
-
-    def test_monthly_tz_default_utc(self):
-        from databricks_bundle_decorators.backfill import MonthlyBackfill
-
-        p = MonthlyBackfill(start_date="2024-01-01", end_date="2024-06-01")
-        assert p.tz == "UTC"
-        keys = p.keys()
-        assert len(keys) == 6
+    """Tests for tz parameter edge cases."""
 
     def test_hourly_fold_deterministic(self):
         """HourlyBackfill with a DST-ambiguous hour should not crash."""
@@ -281,13 +261,6 @@ class TestParseLogicalDateStr:
 
         dt = _parse_logical_date_str("2024-06-15")
         assert dt == datetime(2024, 6, 15, tzinfo=timezone.utc)
-
-    def test_monthly_format(self):
-        """MonthlyBackfill default '%Y-%m-01' keys are valid ISO dates."""
-        from datetime import datetime, timezone
-
-        dt = _parse_logical_date_str("2024-01-01")
-        assert dt == datetime(2024, 1, 1, tzinfo=timezone.utc)
 
     def test_invalid_raises_value_error(self):
         with pytest.raises(ValueError, match="Cannot parse"):

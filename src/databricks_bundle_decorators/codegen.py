@@ -73,8 +73,8 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
 
             # ----- per-task SDK config (max_retries, timeout, etc.) -----
             qualified_key = f"{job_name}.{task_key}"
-            task_meta = _TASK_REGISTRY.get(qualified_key)
-            task_sdk_config = task_meta.sdk_config if task_meta else {}
+            task_meta = _TASK_REGISTRY[qualified_key]
+            task_sdk_config = task_meta.sdk_config
 
             # Use job-level libraries if explicitly set, else default wheel
             if job_meta.libraries is not None:
@@ -112,7 +112,7 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
 
                 # Determine the inputs expression
                 if fe_meta.inputs_task_key is not None:
-                    value_key = fe_meta.inputs_value_key or "result"
+                    value_key = fe_meta.inputs_value_key
                     inputs_expr = (
                         "{{"
                         + f"tasks.{fe_meta.inputs_task_key}.values.{value_key}"
