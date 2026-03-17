@@ -1,12 +1,13 @@
-# Partitioning
+# Backfilling & Partitioning
 
-Every job run has a **logical date** — a `datetime` that represents
-*when* the data slice belongs (similar to Airflow's `logical_date` or
-Dagster's partition key).  By default it's the current UTC time; for
-backfills it's a specific date set via job parameters.
+Jobs that use `@job(backfill=...)` get a **logical date** — a
+`datetime` job parameter that represents *which* data slice the run
+belongs to (similar to Airflow's `logical_date` or Dagster's partition
+key).  The backfill CLI enumerates these dates for bulk run submission.
 
-Data partitioning is handled via the `partition_by` parameter on the
-`@task` decorator of the producing task — see
+On the storage side, IoManagers can write data in a **Hive-style
+partitioned layout** (`column=value/` directories) using the
+`partition_by` parameter on the `@task` decorator — see
 [Built-in IoManagers](api/io-managers/index.md) for format-specific
 details.
 

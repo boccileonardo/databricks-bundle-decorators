@@ -16,8 +16,9 @@ wheels/
 .coverage
 coverage.xml
 
-# MkDocs build output
+# Zensical build output
 site/
+.cache/
 
 # Spark local testing artifacts
 spark-warehouse/

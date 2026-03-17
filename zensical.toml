@@ -9,7 +9,7 @@ nav = [
     { "Home" = "index.md" },
     { "Getting Started" = "getting-started.md" },
     { "How It Works" = "how-it-works.md" },
-    { "Partitioning" = "partitioning.md" },
+    { "Backfilling & Partitioning" = "partitioning.md" },
     { "Docker Deployment" = "docker-deployment.md" },
     { "Examples" = [
         "examples/index.md",
@@ -32,7 +32,7 @@ nav = [
             { "Spark \u2013 Unity Catalog" = "api/io-managers/spark-uc.md" },
         ]},
         { "Custom IoManagers" = "api/custom-io-manager.md" },
-        { "Backfill Definitions" = "api/partitions.md" },
+        { "Backfill Definitions" = "api/backfill.md" },
     ]},
     { "Internals" = [
         "internals/index.md",
