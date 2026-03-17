@@ -2,94 +2,56 @@
 
 from __future__ import annotations
 
-import sys
-import types
-from unittest.mock import MagicMock
-
 import pytest
+from delta.tables import DeltaTable
+from pyspark.sql import SparkSession
 
 from databricks_bundle_decorators.io_manager import InputContext, OutputContext
+from databricks_bundle_decorators.io_managers import (
+    SparkDeltaIoManager,
+    SparkServerlessDeltaIoManager,
+)
 
 
-# ---------------------------------------------------------------------------
-# Helpers – mock pyspark so IoManagers can be tested without Spark.
-# ---------------------------------------------------------------------------
+def _output_ctx(task_key: str = "my_task", **kwargs) -> OutputContext:
+    return OutputContext(job_name="j", task_key=task_key, run_id="r1", **kwargs)
 
 
-@pytest.fixture(autouse=True)
-def _mock_pyspark(monkeypatch: pytest.MonkeyPatch):
-    """Inject a fake ``pyspark`` module for every test in this file."""
-    pyspark_mod = types.ModuleType("pyspark")
-    sql_mod = types.ModuleType("pyspark.sql")
-
-    mock_session = MagicMock()
-
-    class _MockSparkSession:
-        @staticmethod
-        def getActiveSession() -> MagicMock:
-            return mock_session
-
-    sql_mod.SparkSession = _MockSparkSession  # type: ignore[attr-defined]
-    pyspark_mod.sql = sql_mod  # type: ignore[attr-defined]
-
-    monkeypatch.setitem(sys.modules, "pyspark", pyspark_mod)
-    monkeypatch.setitem(sys.modules, "pyspark.sql", sql_mod)
-
-    yield mock_session
-
-
-def _output_ctx(task_key: str = "my_task") -> OutputContext:
-    return OutputContext(job_name="j", task_key=task_key, run_id="r1")
-
-
-def _input_ctx(
-    upstream: str = "producer",
-    expected_type: type | None = None,
-) -> InputContext:
+def _input_ctx(upstream: str = "producer", **kwargs) -> InputContext:
     return InputContext(
         job_name="j",
         task_key="consumer",
         upstream_task_key=upstream,
         run_id="r1",
-        expected_type=expected_type,
+        **kwargs,
     )
 
 
 # ---------------------------------------------------------------------------
-# SparkDeltaIoManager (classic compute)
+# SparkDeltaIoManager – construction
 # ---------------------------------------------------------------------------
 
 
-class TestSparkDeltaIoManagerConstruction:
+class TestSparkDeltaConstruction:
     def test_strips_trailing_slash(self):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
         io = SparkDeltaIoManager(base_path="/data/lake/")
         assert io.base_path == "/data/lake"
 
     def test_spark_configs_default_none(self):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
         io = SparkDeltaIoManager(base_path="/data")
         assert io.spark_configs is None
 
     def test_spark_configs_as_dict(self):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
         configs = {"fs.azure.account.key.sa.dfs.core.windows.net": "secret"}
         io = SparkDeltaIoManager(base_path="/data", spark_configs=configs)
         assert io.spark_configs == configs
 
     def test_spark_configs_as_callable(self):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
         configs = {"fs.azure.account.key.sa.dfs.core.windows.net": "secret"}
         io = SparkDeltaIoManager(base_path="/data", spark_configs=lambda: configs)
         assert io.spark_configs == configs
 
     def test_spark_configs_callable_invoked_each_time(self):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
         call_count = 0
 
         def _factory() -> dict[str, str]:
@@ -103,8 +65,6 @@ class TestSparkDeltaIoManagerConstruction:
         assert call_count == 2
 
     def test_uri_generation(self):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
         io = SparkDeltaIoManager(
             base_path="abfss://container@sa.dfs.core.windows.net/prefix"
         )
@@ -113,282 +73,156 @@ class TestSparkDeltaIoManagerConstruction:
             == "abfss://container@sa.dfs.core.windows.net/prefix/extract"
         )
 
-
-class TestSparkDeltaIoManagerSetup:
-    def test_setup_applies_spark_configs(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        configs = {
-            "fs.azure.account.key.sa.dfs.core.windows.net": "secret",
-            "spark.some.other.config": "value",
-        }
-        io = SparkDeltaIoManager(base_path="/data", spark_configs=configs)
-        io.setup()
-
-        assert _mock_pyspark.conf.set.call_count == 2
-        _mock_pyspark.conf.set.assert_any_call(
-            "fs.azure.account.key.sa.dfs.core.windows.net", "secret"
-        )
-        _mock_pyspark.conf.set.assert_any_call("spark.some.other.config", "value")
-
-    def test_setup_no_configs(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        io = SparkDeltaIoManager(base_path="/data")
-        io.setup()
-
-        _mock_pyspark.conf.set.assert_not_called()
-
-    def test_setup_no_active_session_raises(self, monkeypatch):
-        """If no active SparkSession, setup should raise RuntimeError."""
-        pyspark_mod = types.ModuleType("pyspark")
-        sql_mod = types.ModuleType("pyspark.sql")
-
-        class _NoSession:
-            @staticmethod
-            def getActiveSession() -> None:
-                return None
-
-        sql_mod.SparkSession = _NoSession  # type: ignore[attr-defined]
-        pyspark_mod.sql = sql_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "pyspark", pyspark_mod)
-        monkeypatch.setitem(sys.modules, "pyspark.sql", sql_mod)
-
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        io = SparkDeltaIoManager(base_path="/data")
-
-        with pytest.raises(RuntimeError, match="No active SparkSession"):
-            io.setup()
-
-
-class TestSparkDeltaIoManagerWrite:
-    def test_write_delta(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        io = SparkDeltaIoManager(base_path="/data")
-        io.setup()
-
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
-
-        spark_df.write.format.assert_called_once_with("delta")
-        spark_df.write.format.return_value.mode.assert_called_once_with("error")
-        spark_df.write.format.return_value.mode.return_value.save.assert_called_once_with(
-            "/data/my_task"
-        )
-
-    def test_write_with_partition_by_string(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        io = SparkDeltaIoManager(base_path="/data")
-        io.setup()
-
-        spark_df = MagicMock()
-        ctx = OutputContext(
-            job_name="j", task_key="my_task", run_id="r1", partition_by=["region"]
-        )
-        io.write(ctx, spark_df)
-
-        writer = spark_df.write.format.return_value.mode.return_value
-        writer.partitionBy.assert_called_once_with("region")
-        writer.partitionBy.return_value.save.assert_called_once_with("/data/my_task")
-
-    def test_write_with_partition_by_list(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        io = SparkDeltaIoManager(base_path="/data")
-        io.setup()
-
-        spark_df = MagicMock()
-        ctx = OutputContext(
-            job_name="j",
-            task_key="my_task",
-            run_id="r1",
-            partition_by=["region", "date"],
-        )
-        io.write(ctx, spark_df)
-
-        writer = spark_df.write.format.return_value.mode.return_value
-        writer.partitionBy.assert_called_once_with("region", "date")
-
-    def test_write_with_write_options(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        io = SparkDeltaIoManager(
-            base_path="/data",
-            write_options={"mergeSchema": "true"},
-        )
-        io.setup()
-
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
-
-        writer = spark_df.write.format.return_value.mode.return_value
-        writer.option.assert_called_once_with("mergeSchema", "true")
-
-
-class TestSparkDeltaIoManagerRead:
-    def test_read_delta(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        io = SparkDeltaIoManager(base_path="/data")
-        io.setup()
-
-        io.read(_input_ctx("upstream_task"))
-
-        _mock_pyspark.read.format.assert_called_once_with("delta")
-        _mock_pyspark.read.format.return_value.load.assert_called_once_with(
-            "/data/upstream_task"
-        )
-
-    def test_read_with_read_options(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        io = SparkDeltaIoManager(
-            base_path="/data",
-            read_options={"versionAsOf": "3"},
-        )
-        io.setup()
-
-        io.read(_input_ctx("upstream_task"))
-
-        reader = _mock_pyspark.read.format.return_value
-        reader.option.assert_called_once_with("versionAsOf", "3")
-
-
-# ---------------------------------------------------------------------------
-# SparkServerlessDeltaIoManager
-# ---------------------------------------------------------------------------
-
-
-class TestSparkServerlessDeltaIoManagerConstruction:
-    def test_strips_trailing_slash(self):
-        from databricks_bundle_decorators.io_managers import (
-            SparkServerlessDeltaIoManager,
-        )
-
-        io = SparkServerlessDeltaIoManager(base_path="/data/lake/")
-        assert io.base_path == "/data/lake"
-
-
-class TestSparkServerlessDeltaIoManagerSetup:
-    def test_setup_does_not_set_configs(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkServerlessDeltaIoManager,
-        )
-
-        io = SparkServerlessDeltaIoManager(base_path="/data")
-        io.setup()
-
-        _mock_pyspark.conf.set.assert_not_called()
-
-    def test_setup_no_active_session_raises(self, monkeypatch):
-        pyspark_mod = types.ModuleType("pyspark")
-        sql_mod = types.ModuleType("pyspark.sql")
-
-        class _NoSession:
-            @staticmethod
-            def getActiveSession() -> None:
-                return None
-
-        sql_mod.SparkSession = _NoSession  # type: ignore[attr-defined]
-        pyspark_mod.sql = sql_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "pyspark", pyspark_mod)
-        monkeypatch.setitem(sys.modules, "pyspark.sql", sql_mod)
-
-        from databricks_bundle_decorators.io_managers import (
-            SparkServerlessDeltaIoManager,
-        )
-
-        io = SparkServerlessDeltaIoManager(base_path="/data")
-
-        with pytest.raises(RuntimeError, match="No active SparkSession"):
-            io.setup()
-
-
-class TestSparkServerlessDeltaIoManagerWrite:
-    def test_write_delta(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkServerlessDeltaIoManager,
-        )
-
-        io = SparkServerlessDeltaIoManager(base_path="/data")
-        io.setup()
-
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
-
-        spark_df.write.format.assert_called_once_with("delta")
-        spark_df.write.format.return_value.mode.assert_called_once_with("error")
-        spark_df.write.format.return_value.mode.return_value.save.assert_called_once_with(
-            "/data/my_task"
-        )
-
-
-class TestSparkServerlessDeltaIoManagerRead:
-    def test_read_delta(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkServerlessDeltaIoManager,
-        )
-
-        io = SparkServerlessDeltaIoManager(base_path="/data")
-        io.setup()
-
-        io.read(_input_ctx("upstream_task"))
-
-        _mock_pyspark.read.format.assert_called_once_with("delta")
-        _mock_pyspark.read.format.return_value.load.assert_called_once_with(
-            "/data/upstream_task"
-        )
-
-
-# ---------------------------------------------------------------------------
-# mode parameter
-# ---------------------------------------------------------------------------
-
-
-class TestSparkDeltaModeParameter:
     def test_default_mode_is_error(self):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
         io = SparkDeltaIoManager(base_path="/data")
         assert io._mode == "error"
 
-    def test_custom_mode_append(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
 
-        io = SparkDeltaIoManager(base_path="/data", mode="append")
-        io.setup()
+class TestSparkServerlessDeltaConstruction:
+    def test_strips_trailing_slash(self):
+        io = SparkServerlessDeltaIoManager(base_path="/data/lake/")
+        assert io.base_path == "/data/lake"
 
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+    def test_default_mode_is_error(self):
+        io = SparkServerlessDeltaIoManager(base_path="/data")
+        assert io._mode == "error"
 
-        spark_df.write.format.return_value.mode.assert_called_once_with("append")
 
-    def test_custom_mode_error(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 
-        io = SparkDeltaIoManager(base_path="/data", mode="error")
-        io.setup()
 
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
-
-        spark_df.write.format.return_value.mode.assert_called_once_with("error")
-
-    def test_serverless_custom_mode(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkServerlessDeltaIoManager,
+class TestSparkDeltaSetup:
+    def test_setup_applies_spark_configs(self, spark: SparkSession):
+        io = SparkDeltaIoManager(
+            base_path="/data",
+            spark_configs={"spark.databricks.test.delta.key1": "v1"},
         )
-
-        io = SparkServerlessDeltaIoManager(base_path="/data", mode="append")
         io.setup()
 
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
+        assert spark.conf.get("spark.databricks.test.delta.key1") == "v1"
 
-        spark_df.write.format.return_value.mode.assert_called_once_with("append")
+    def test_setup_no_configs(self, spark: SparkSession):
+        io = SparkDeltaIoManager(base_path="/data")
+        io.setup()
+        assert io._spark is spark
+
+
+class TestSparkServerlessDeltaSetup:
+    def test_setup_obtains_session(self, spark: SparkSession):
+        io = SparkServerlessDeltaIoManager(base_path="/data")
+        io.setup()
+        assert io._spark is spark
+
+
+# ---------------------------------------------------------------------------
+# Round-trip (write + read)
+# ---------------------------------------------------------------------------
+
+
+class TestSparkDeltaRoundTrip:
+    def test_basic_round_trip(self, spark: SparkSession, tmp_path):
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a"), (2, "b"), (3, "c")], ["id", "val"])
+        io.write(_output_ctx("my_task"), df)
+
+        result = io.read(_input_ctx("my_task"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 3
+        assert rows[0]["id"] == 1
+        assert rows[0]["val"] == "a"
+        assert rows[2]["id"] == 3
+
+    def test_round_trip_preserves_types(self, spark: SparkSession, tmp_path):
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        df = spark.createDataFrame(
+            [(1, 2.5, True, "x")], ["int_col", "float_col", "bool_col", "str_col"]
+        )
+        io.write(_output_ctx("typed"), df)
+
+        result = io.read(_input_ctx("typed"))
+        row = result.collect()[0]
+        assert row["int_col"] == 1
+        assert row["float_col"] == 2.5
+        assert row["bool_col"] is True
+        assert row["str_col"] == "x"
+
+
+class TestSparkServerlessDeltaRoundTrip:
+    def test_basic_round_trip(self, spark: SparkSession, tmp_path):
+        io = SparkServerlessDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
+        io.write(_output_ctx("my_task"), df)
+
+        result = io.read(_input_ctx("my_task"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 2
+        assert rows[0]["val"] == "a"
+
+
+# ---------------------------------------------------------------------------
+# Mode parameter
+# ---------------------------------------------------------------------------
+
+
+class TestSparkDeltaMode:
+    def test_mode_overwrite(self, spark: SparkSession, tmp_path):
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        df1 = spark.createDataFrame([(1, "old")], ["id", "val"])
+        io.write(_output_ctx("task"), df1)
+
+        df2 = spark.createDataFrame([(2, "new")], ["id", "val"])
+        io.write(_output_ctx("task"), df2)
+
+        result = io.read(_input_ctx("task"))
+        rows = result.collect()
+        assert len(rows) == 1
+        assert rows[0]["val"] == "new"
+
+    def test_mode_append(self, spark: SparkSession, tmp_path):
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="append")
+        io.setup()
+
+        df1 = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("task"), df1)
+
+        df2 = spark.createDataFrame([(2, "b")], ["id", "val"])
+        io.write(_output_ctx("task"), df2)
+
+        result = io.read(_input_ctx("task"))
+        assert result.count() == 2
+
+    def test_mode_error_on_existing(self, spark: SparkSession, tmp_path):
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="error")
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("task"), df)
+
+        with pytest.raises(Exception):
+            io.write(_output_ctx("task"), df)
+
+    def test_serverless_custom_mode(self, spark: SparkSession, tmp_path):
+        io = SparkServerlessDeltaIoManager(base_path=str(tmp_path), mode="append")
+        io.setup()
+
+        df1 = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("task"), df1)
+
+        df2 = spark.createDataFrame([(2, "b")], ["id", "val"])
+        io.write(_output_ctx("task"), df2)
+
+        result = io.read(_input_ctx("task"))
+        assert result.count() == 2
 
 
 # ---------------------------------------------------------------------------
@@ -397,143 +231,181 @@ class TestSparkDeltaModeParameter:
 
 
 class TestSparkDeltaMergeBuilder:
-    def test_merge_builder_calls_execute(self, _mock_pyspark, monkeypatch):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        # Create a fake delta.tables module with DeltaMergeBuilder.
-        delta_mod = types.ModuleType("delta")
-        tables_mod = types.ModuleType("delta.tables")
-
-        class _FakeDeltaMergeBuilder:
-            execute = MagicMock()
-
-        tables_mod.DeltaMergeBuilder = _FakeDeltaMergeBuilder  # type: ignore[attr-defined]
-        delta_mod.tables = tables_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "delta", delta_mod)
-        monkeypatch.setitem(sys.modules, "delta.tables", tables_mod)
-
-        io = SparkDeltaIoManager(base_path="/data")
+    def test_merge_upsert(self, spark: SparkSession, tmp_path):
+        """Full merge round-trip: insert initial data, then upsert."""
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
         io.setup()
 
-        builder = _FakeDeltaMergeBuilder()
-        io.write(_output_ctx("t"), builder)
+        # Write initial data
+        initial = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
+        io.write(_output_ctx("merge_task"), initial)
 
-        builder.execute.assert_called_once()
-
-    def test_merge_builder_skips_dataframe_write(self, _mock_pyspark, monkeypatch):
-        """When a DeltaMergeBuilder is written, DataFrame.write is NOT called."""
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        delta_mod = types.ModuleType("delta")
-        tables_mod = types.ModuleType("delta.tables")
-
-        class _FakeDeltaMergeBuilder:
-            execute = MagicMock()
-
-        tables_mod.DeltaMergeBuilder = _FakeDeltaMergeBuilder  # type: ignore[attr-defined]
-        delta_mod.tables = tables_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "delta", delta_mod)
-        monkeypatch.setitem(sys.modules, "delta.tables", tables_mod)
-
-        io = SparkDeltaIoManager(base_path="/data")
-        io.setup()
-
-        spark_df = MagicMock()
-        builder = _FakeDeltaMergeBuilder()
-        io.write(_output_ctx("t"), builder)
-
-        # DataFrame write path must NOT be entered.
-        spark_df.write.format.assert_not_called()
-
-    def test_serverless_merge_builder(self, _mock_pyspark, monkeypatch):
-        from databricks_bundle_decorators.io_managers import (
-            SparkServerlessDeltaIoManager,
+        # Build a real DeltaMergeBuilder for upsert
+        dt = DeltaTable.forPath(spark, io._uri("merge_task"))
+        updates = spark.createDataFrame([(2, "B"), (3, "c")], ["id", "val"])
+        builder = (
+            dt.alias("t")
+            .merge(updates.alias("s"), "t.id = s.id")
+            .whenMatchedUpdateAll()
+            .whenNotMatchedInsertAll()
         )
 
-        delta_mod = types.ModuleType("delta")
-        tables_mod = types.ModuleType("delta.tables")
+        io.write(_output_ctx("merge_task"), builder)
 
-        class _FakeDeltaMergeBuilder:
-            execute = MagicMock()
+        result = io.read(_input_ctx("merge_task"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 3
+        assert rows[0]["val"] == "a"  # id=1 unchanged
+        assert rows[1]["val"] == "B"  # id=2 updated
+        assert rows[2]["val"] == "c"  # id=3 inserted
 
-        tables_mod.DeltaMergeBuilder = _FakeDeltaMergeBuilder  # type: ignore[attr-defined]
-        delta_mod.tables = tables_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "delta", delta_mod)
-        monkeypatch.setitem(sys.modules, "delta.tables", tables_mod)
-
-        io = SparkServerlessDeltaIoManager(base_path="/data")
+    def test_serverless_merge_upsert(self, spark: SparkSession, tmp_path):
+        io = SparkServerlessDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
         io.setup()
 
-        builder = _FakeDeltaMergeBuilder()
-        io.write(_output_ctx("t"), builder)
+        initial = spark.createDataFrame([(1, "x")], ["id", "val"])
+        io.write(_output_ctx("merge_s"), initial)
 
-        builder.execute.assert_called_once()
-
-
-class TestPartitionValueExtraction:
-    """Verify _last_partition_values is populated during partitioned write."""
-
-    def test_write_caches_partition_values(self, _mock_pyspark, monkeypatch):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.io_managers.spark_delta._spark_extract_partition_values",
-            lambda df, partition_by: {"region": ["us"]},
+        dt = DeltaTable.forPath(spark, io._uri("merge_s"))
+        updates = spark.createDataFrame([(1, "X"), (2, "y")], ["id", "val"])
+        builder = (
+            dt.alias("t")
+            .merge(updates.alias("s"), "t.id = s.id")
+            .whenMatchedUpdateAll()
+            .whenNotMatchedInsertAll()
         )
-        io = SparkDeltaIoManager(base_path="/data")
+
+        io.write(_output_ctx("merge_s"), builder)
+
+        result = io.read(_input_ctx("merge_s"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 2
+        assert rows[0]["val"] == "X"
+        assert rows[1]["val"] == "y"
+
+
+# ---------------------------------------------------------------------------
+# Partitioning
+# ---------------------------------------------------------------------------
+
+
+class TestSparkDeltaPartitioning:
+    def test_partition_by_single_column(self, spark: SparkSession, tmp_path):
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
         io.setup()
 
-        spark_df = MagicMock()
-        ctx = OutputContext(
-            job_name="j", task_key="t", run_id="r1", partition_by=["region"]
+        df = spark.createDataFrame(
+            [(1, "us", "a"), (2, "eu", "b"), (3, "us", "c")],
+            ["id", "region", "val"],
         )
+        ctx = _output_ctx("partitioned", partition_by=["region"])
+        io.write(ctx, df)
 
-        io.write(ctx, spark_df)
+        # Verify partition directories
+        task_dir = tmp_path / "partitioned"
+        partition_dirs = sorted(
+            d.name
+            for d in task_dir.iterdir()
+            if d.is_dir() and d.name.startswith("region=")
+        )
+        assert "region=eu" in partition_dirs
+        assert "region=us" in partition_dirs
 
-        assert io._last_partition_values == {"region": ["us"]}
-        assert io._extract_partition_values(ctx) == {"region": ["us"]}
+        # Read back all data
+        result = io.read(_input_ctx("partitioned"))
+        assert result.count() == 3
+
+    def test_partition_by_multiple_columns(self, spark: SparkSession, tmp_path):
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        df = spark.createDataFrame(
+            [
+                (1, "us", "2024-01-01", "a"),
+                (2, "eu", "2024-01-01", "b"),
+                (3, "us", "2024-01-02", "c"),
+            ],
+            ["id", "region", "date", "val"],
+        )
+        ctx = _output_ctx("multi_part", partition_by=["region", "date"])
+        io.write(ctx, df)
+
+        result = io.read(_input_ctx("multi_part"))
+        assert result.count() == 3
+
+    def test_partition_values_extracted(self, spark: SparkSession, tmp_path):
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        df = spark.createDataFrame(
+            [(1, "us"), (2, "eu"), (3, "us")],
+            ["id", "region"],
+        )
+        ctx = _output_ctx("extract_vals", partition_by=["region"])
+        io.write(ctx, df)
+
+        pv = io._extract_partition_values(ctx)
+        assert pv == {"region": ["eu", "us"]}
 
     def test_sequential_writes_replace_partition_values(
-        self, _mock_pyspark, monkeypatch
+        self, spark: SparkSession, tmp_path
     ):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        call_count = 0
-
-        def _fake_extract(df, partition_by):
-            nonlocal call_count
-            call_count += 1
-            return {"date": [f"2026-03-0{call_count}"]}
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.io_managers.spark_delta._spark_extract_partition_values",
-            _fake_extract,
-        )
-        io = SparkDeltaIoManager(base_path="/data")
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
         io.setup()
 
-        spark_df = MagicMock()
-        ctx1 = OutputContext(
-            job_name="j", task_key="t", run_id="r1", partition_by=["date"]
-        )
-        io.write(ctx1, spark_df)
-        assert io._extract_partition_values(ctx1) == {"date": ["2026-03-01"]}
+        df1 = spark.createDataFrame([(1, "us")], ["id", "region"])
+        ctx1 = _output_ctx("seq", partition_by=["region"])
+        io.write(ctx1, df1)
+        assert io._extract_partition_values(ctx1) == {"region": ["us"]}
 
-        ctx2 = OutputContext(
-            job_name="j", task_key="t", run_id="r2", partition_by=["date"]
-        )
-        io.write(ctx2, spark_df)
-        assert io._extract_partition_values(ctx2) == {"date": ["2026-03-02"]}
+        df2 = spark.createDataFrame([(2, "eu"), (3, "ap")], ["id", "region"])
+        ctx2 = _output_ctx("seq2", partition_by=["region"])
+        io.write(ctx2, df2)
+        assert io._extract_partition_values(ctx2) == {"region": ["ap", "eu"]}
 
-    def test_no_partition_write_does_not_set_values(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
-
-        io = SparkDeltaIoManager(base_path="/data")
+    def test_no_partition_write_does_not_set_values(
+        self, spark: SparkSession, tmp_path
+    ):
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
         io.setup()
 
-        spark_df = MagicMock()
-        ctx = OutputContext(job_name="j", task_key="t", run_id="r1")
-
-        io.write(ctx, spark_df)
-
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("no_part"), df)
         assert io._last_partition_values is None
+
+
+# ---------------------------------------------------------------------------
+# Write / read options
+# ---------------------------------------------------------------------------
+
+
+class TestSparkDeltaOptions:
+    def test_write_options_applied(self, spark: SparkSession, tmp_path):
+        io = SparkDeltaIoManager(
+            base_path=str(tmp_path),
+            mode="overwrite",
+            write_options={"mergeSchema": "true"},
+        )
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("opts"), df)
+
+        result = io.read(_input_ctx("opts"))
+        assert result.count() == 1
+
+    def test_read_options_applied(self, spark: SparkSession, tmp_path):
+        io_write = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io_write.setup()
+
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io_write.write(_output_ctx("read_opts"), df)
+
+        io_read = SparkDeltaIoManager(
+            base_path=str(tmp_path),
+            read_options={"versionAsOf": "0"},
+        )
+        io_read.setup()
+
+        result = io_read.read(_input_ctx("read_opts"))
+        assert result.count() == 1

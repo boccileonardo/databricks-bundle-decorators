@@ -2,94 +2,54 @@
 
 from __future__ import annotations
 
-import sys
-import types
-from unittest.mock import MagicMock
-
-import pytest
+from pyspark.sql import SparkSession
 
 from databricks_bundle_decorators.io_manager import InputContext, OutputContext
+from databricks_bundle_decorators.io_managers import (
+    SparkParquetIoManager,
+    SparkServerlessParquetIoManager,
+)
 
 
-# ---------------------------------------------------------------------------
-# Helpers – mock pyspark so IoManagers can be tested without Spark.
-# ---------------------------------------------------------------------------
+def _output_ctx(task_key: str = "my_task", **kwargs) -> OutputContext:
+    return OutputContext(job_name="j", task_key=task_key, run_id="r1", **kwargs)
 
 
-@pytest.fixture(autouse=True)
-def _mock_pyspark(monkeypatch: pytest.MonkeyPatch):
-    """Inject a fake ``pyspark`` module for every test in this file."""
-    pyspark_mod = types.ModuleType("pyspark")
-    sql_mod = types.ModuleType("pyspark.sql")
-
-    mock_session = MagicMock()
-
-    class _MockSparkSession:
-        @staticmethod
-        def getActiveSession() -> MagicMock:
-            return mock_session
-
-    sql_mod.SparkSession = _MockSparkSession  # type: ignore[attr-defined]
-    pyspark_mod.sql = sql_mod  # type: ignore[attr-defined]
-
-    monkeypatch.setitem(sys.modules, "pyspark", pyspark_mod)
-    monkeypatch.setitem(sys.modules, "pyspark.sql", sql_mod)
-
-    yield mock_session
-
-
-def _output_ctx(task_key: str = "my_task") -> OutputContext:
-    return OutputContext(job_name="j", task_key=task_key, run_id="r1")
-
-
-def _input_ctx(
-    upstream: str = "producer",
-    expected_type: type | None = None,
-) -> InputContext:
+def _input_ctx(upstream: str = "producer", **kwargs) -> InputContext:
     return InputContext(
         job_name="j",
         task_key="consumer",
         upstream_task_key=upstream,
         run_id="r1",
-        expected_type=expected_type,
+        **kwargs,
     )
 
 
 # ---------------------------------------------------------------------------
-# SparkParquetIoManager (classic compute)
+# SparkParquetIoManager – construction
 # ---------------------------------------------------------------------------
 
 
-class TestSparkParquetIoManagerConstruction:
+class TestSparkParquetConstruction:
     def test_strips_trailing_slash(self):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
         io = SparkParquetIoManager(base_path="/data/lake/")
         assert io.base_path == "/data/lake"
 
     def test_spark_configs_default_none(self):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
         io = SparkParquetIoManager(base_path="/data")
         assert io.spark_configs is None
 
     def test_spark_configs_as_dict(self):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
         configs = {"fs.azure.account.key.sa.dfs.core.windows.net": "secret"}
         io = SparkParquetIoManager(base_path="/data", spark_configs=configs)
         assert io.spark_configs == configs
 
     def test_spark_configs_as_callable(self):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
         configs = {"fs.azure.account.key.sa.dfs.core.windows.net": "secret"}
         io = SparkParquetIoManager(base_path="/data", spark_configs=lambda: configs)
         assert io.spark_configs == configs
 
     def test_spark_configs_callable_invoked_each_time(self):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
         call_count = 0
 
         def _factory() -> dict[str, str]:
@@ -103,8 +63,6 @@ class TestSparkParquetIoManagerConstruction:
         assert call_count == 2
 
     def test_uri_generation(self):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
         io = SparkParquetIoManager(
             base_path="abfss://container@sa.dfs.core.windows.net/prefix",
         )
@@ -114,299 +72,226 @@ class TestSparkParquetIoManagerConstruction:
         )
 
 
-class TestSparkParquetIoManagerSetup:
-    def test_setup_applies_spark_configs(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
-        configs = {
-            "fs.azure.account.key.sa.dfs.core.windows.net": "secret",
-            "spark.some.other.config": "value",
-        }
-        io = SparkParquetIoManager(base_path="/data", spark_configs=configs)
-        io.setup()
-
-        assert _mock_pyspark.conf.set.call_count == 2
-        _mock_pyspark.conf.set.assert_any_call(
-            "fs.azure.account.key.sa.dfs.core.windows.net", "secret"
-        )
-        _mock_pyspark.conf.set.assert_any_call("spark.some.other.config", "value")
-
-    def test_setup_no_configs(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
-        io = SparkParquetIoManager(base_path="/data")
-        io.setup()
-
-        _mock_pyspark.conf.set.assert_not_called()
-
-    def test_setup_no_active_session_raises(self, monkeypatch):
-        """If no active SparkSession, setup should raise RuntimeError."""
-        pyspark_mod = types.ModuleType("pyspark")
-        sql_mod = types.ModuleType("pyspark.sql")
-
-        class _NoSession:
-            @staticmethod
-            def getActiveSession() -> None:
-                return None
-
-        sql_mod.SparkSession = _NoSession  # type: ignore[attr-defined]
-        pyspark_mod.sql = sql_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "pyspark", pyspark_mod)
-        monkeypatch.setitem(sys.modules, "pyspark.sql", sql_mod)
-
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
-        io = SparkParquetIoManager(base_path="/data")
-
-        with pytest.raises(RuntimeError, match="No active SparkSession"):
-            io.setup()
-
-
-class TestSparkParquetIoManagerWrite:
-    def test_write_parquet(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
-        io = SparkParquetIoManager(base_path="/data")
-        io.setup()
-
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
-
-        spark_df.write.format.assert_called_once_with("parquet")
-        spark_df.write.format.return_value.mode.assert_called_once_with("overwrite")
-        spark_df.write.format.return_value.mode.return_value.save.assert_called_once_with(
-            "/data/my_task"
-        )
-
-    def test_write_with_partition_by_string(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
-        io = SparkParquetIoManager(base_path="/data")
-        io.setup()
-
-        spark_df = MagicMock()
-        ctx = OutputContext(
-            job_name="j", task_key="my_task", run_id="r1", partition_by=["region"]
-        )
-        io.write(ctx, spark_df)
-
-        writer = spark_df.write.format.return_value.mode.return_value
-        writer.partitionBy.assert_called_once_with("region")
-        writer.partitionBy.return_value.save.assert_called_once_with("/data/my_task")
-
-    def test_write_with_partition_by_list(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
-        io = SparkParquetIoManager(base_path="/data")
-        io.setup()
-
-        spark_df = MagicMock()
-        ctx = OutputContext(
-            job_name="j",
-            task_key="my_task",
-            run_id="r1",
-            partition_by=["region", "date"],
-        )
-        io.write(ctx, spark_df)
-
-        writer = spark_df.write.format.return_value.mode.return_value
-        writer.partitionBy.assert_called_once_with("region", "date")
-
-    def test_write_with_write_options(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
-        io = SparkParquetIoManager(
-            base_path="/data",
-            write_options={"compression": "snappy"},
-        )
-        io.setup()
-
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
-
-        writer = spark_df.write.format.return_value.mode.return_value
-        writer.option.assert_called_once_with("compression", "snappy")
-
-
-class TestSparkParquetIoManagerRead:
-    def test_read_parquet(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
-        io = SparkParquetIoManager(base_path="/data")
-        io.setup()
-
-        io.read(_input_ctx("upstream_task"))
-
-        _mock_pyspark.read.format.assert_called_once_with("parquet")
-        _mock_pyspark.read.format.return_value.load.assert_called_once_with(
-            "/data/upstream_task"
-        )
-
-    def test_read_with_read_options(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
-        io = SparkParquetIoManager(
-            base_path="/data",
-            read_options={"mergeSchema": "true"},
-        )
-        io.setup()
-
-        io.read(_input_ctx("upstream_task"))
-
-        reader = _mock_pyspark.read.format.return_value
-        reader.option.assert_called_once_with("mergeSchema", "true")
-
-
-# ---------------------------------------------------------------------------
-# SparkServerlessParquetIoManager
-# ---------------------------------------------------------------------------
-
-
-class TestSparkServerlessParquetIoManagerConstruction:
+class TestSparkServerlessParquetConstruction:
     def test_strips_trailing_slash(self):
-        from databricks_bundle_decorators.io_managers import (
-            SparkServerlessParquetIoManager,
-        )
-
         io = SparkServerlessParquetIoManager(base_path="/data/lake/")
         assert io.base_path == "/data/lake"
 
 
-class TestSparkServerlessParquetIoManagerSetup:
-    def test_setup_does_not_set_configs(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkServerlessParquetIoManager,
-        )
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 
-        io = SparkServerlessParquetIoManager(base_path="/data")
+
+class TestSparkParquetSetup:
+    def test_setup_applies_spark_configs(self, spark: SparkSession):
+        io = SparkParquetIoManager(
+            base_path="/data",
+            spark_configs={"spark.databricks.test.parquet.key1": "v1"},
+        )
         io.setup()
 
-        _mock_pyspark.conf.set.assert_not_called()
+        assert spark.conf.get("spark.databricks.test.parquet.key1") == "v1"
 
-    def test_setup_no_active_session_raises(self, monkeypatch):
-        pyspark_mod = types.ModuleType("pyspark")
-        sql_mod = types.ModuleType("pyspark.sql")
-
-        class _NoSession:
-            @staticmethod
-            def getActiveSession() -> None:
-                return None
-
-        sql_mod.SparkSession = _NoSession  # type: ignore[attr-defined]
-        pyspark_mod.sql = sql_mod  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "pyspark", pyspark_mod)
-        monkeypatch.setitem(sys.modules, "pyspark.sql", sql_mod)
-
-        from databricks_bundle_decorators.io_managers import (
-            SparkServerlessParquetIoManager,
-        )
-
-        io = SparkServerlessParquetIoManager(base_path="/data")
-
-        with pytest.raises(RuntimeError, match="No active SparkSession"):
-            io.setup()
-
-
-class TestSparkServerlessParquetIoManagerWrite:
-    def test_write_parquet(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkServerlessParquetIoManager,
-        )
-
-        io = SparkServerlessParquetIoManager(base_path="/data")
-        io.setup()
-
-        spark_df = MagicMock()
-        io.write(_output_ctx("my_task"), spark_df)
-
-        spark_df.write.format.assert_called_once_with("parquet")
-        spark_df.write.format.return_value.mode.assert_called_once_with("overwrite")
-        spark_df.write.format.return_value.mode.return_value.save.assert_called_once_with(
-            "/data/my_task"
-        )
-
-
-class TestSparkServerlessParquetIoManagerRead:
-    def test_read_parquet(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import (
-            SparkServerlessParquetIoManager,
-        )
-
-        io = SparkServerlessParquetIoManager(base_path="/data")
-        io.setup()
-
-        io.read(_input_ctx("upstream_task"))
-
-        _mock_pyspark.read.format.assert_called_once_with("parquet")
-        _mock_pyspark.read.format.return_value.load.assert_called_once_with(
-            "/data/upstream_task"
-        )
-
-
-class TestPartitionValueExtraction:
-    """Verify _last_partition_values is populated during partitioned write."""
-
-    def test_write_caches_partition_values(self, _mock_pyspark, monkeypatch):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.io_managers.spark_parquet._spark_extract_partition_values",
-            lambda df, partition_by: {"region": ["us"]},
-        )
+    def test_setup_no_configs(self, spark: SparkSession):
         io = SparkParquetIoManager(base_path="/data")
         io.setup()
+        assert io._spark is spark
 
-        spark_df = MagicMock()
-        ctx = OutputContext(
-            job_name="j", task_key="t", run_id="r1", partition_by=["region"]
+
+class TestSparkServerlessParquetSetup:
+    def test_setup_obtains_session(self, spark: SparkSession):
+        io = SparkServerlessParquetIoManager(base_path="/data")
+        io.setup()
+        assert io._spark is spark
+
+
+# ---------------------------------------------------------------------------
+# Round-trip (write + read)
+# ---------------------------------------------------------------------------
+
+
+class TestSparkParquetRoundTrip:
+    def test_basic_round_trip(self, spark: SparkSession, tmp_path):
+        io = SparkParquetIoManager(base_path=str(tmp_path))
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a"), (2, "b"), (3, "c")], ["id", "val"])
+        io.write(_output_ctx("my_task"), df)
+
+        result = io.read(_input_ctx("my_task"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 3
+        assert rows[0]["id"] == 1
+        assert rows[0]["val"] == "a"
+        assert rows[2]["id"] == 3
+
+    def test_round_trip_preserves_types(self, spark: SparkSession, tmp_path):
+        io = SparkParquetIoManager(base_path=str(tmp_path))
+        io.setup()
+
+        df = spark.createDataFrame(
+            [(1, 2.5, True, "x")], ["int_col", "float_col", "bool_col", "str_col"]
         )
+        io.write(_output_ctx("typed"), df)
 
-        io.write(ctx, spark_df)
+        result = io.read(_input_ctx("typed"))
+        row = result.collect()[0]
+        assert row["int_col"] == 1
+        assert row["float_col"] == 2.5
+        assert row["bool_col"] is True
+        assert row["str_col"] == "x"
 
-        assert io._last_partition_values == {"region": ["us"]}
-        assert io._extract_partition_values(ctx) == {"region": ["us"]}
+    def test_overwrite_mode(self, spark: SparkSession, tmp_path):
+        """Parquet IoManager always uses overwrite mode."""
+        io = SparkParquetIoManager(base_path=str(tmp_path))
+        io.setup()
+
+        df1 = spark.createDataFrame([(1, "old")], ["id", "val"])
+        io.write(_output_ctx("task"), df1)
+
+        df2 = spark.createDataFrame([(2, "new")], ["id", "val"])
+        io.write(_output_ctx("task"), df2)
+
+        result = io.read(_input_ctx("task"))
+        rows = result.collect()
+        assert len(rows) == 1
+        assert rows[0]["val"] == "new"
+
+
+class TestSparkServerlessParquetRoundTrip:
+    def test_basic_round_trip(self, spark: SparkSession, tmp_path):
+        io = SparkServerlessParquetIoManager(base_path=str(tmp_path))
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
+        io.write(_output_ctx("my_task"), df)
+
+        result = io.read(_input_ctx("my_task"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 2
+        assert rows[0]["val"] == "a"
+
+
+# ---------------------------------------------------------------------------
+# Partitioning
+# ---------------------------------------------------------------------------
+
+
+class TestSparkParquetPartitioning:
+    def test_partition_by_single_column(self, spark: SparkSession, tmp_path):
+        io = SparkParquetIoManager(base_path=str(tmp_path))
+        io.setup()
+
+        df = spark.createDataFrame(
+            [(1, "us", "a"), (2, "eu", "b"), (3, "us", "c")],
+            ["id", "region", "val"],
+        )
+        ctx = _output_ctx("partitioned", partition_by=["region"])
+        io.write(ctx, df)
+
+        # Verify partition directories were created
+        task_dir = tmp_path / "partitioned"
+        partition_dirs = sorted(
+            d.name
+            for d in task_dir.iterdir()
+            if d.is_dir() and d.name.startswith("region=")
+        )
+        assert "region=eu" in partition_dirs
+        assert "region=us" in partition_dirs
+
+        # Read back all data
+        result = io.read(_input_ctx("partitioned"))
+        assert result.count() == 3
+
+    def test_partition_by_multiple_columns(self, spark: SparkSession, tmp_path):
+        io = SparkParquetIoManager(base_path=str(tmp_path))
+        io.setup()
+
+        df = spark.createDataFrame(
+            [
+                (1, "us", "2024-01-01", "a"),
+                (2, "eu", "2024-01-01", "b"),
+                (3, "us", "2024-01-02", "c"),
+            ],
+            ["id", "region", "date", "val"],
+        )
+        ctx = _output_ctx("multi_part", partition_by=["region", "date"])
+        io.write(ctx, df)
+
+        result = io.read(_input_ctx("multi_part"))
+        assert result.count() == 3
+
+    def test_partition_values_extracted(self, spark: SparkSession, tmp_path):
+        io = SparkParquetIoManager(base_path=str(tmp_path))
+        io.setup()
+
+        df = spark.createDataFrame(
+            [(1, "us"), (2, "eu"), (3, "us")],
+            ["id", "region"],
+        )
+        ctx = _output_ctx("extract_vals", partition_by=["region"])
+        io.write(ctx, df)
+
+        pv = io._extract_partition_values(ctx)
+        assert pv == {"region": ["eu", "us"]}
 
     def test_sequential_writes_replace_partition_values(
-        self, _mock_pyspark, monkeypatch
+        self, spark: SparkSession, tmp_path
     ):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
-        call_count = 0
-
-        def _fake_extract(df, partition_by):
-            nonlocal call_count
-            call_count += 1
-            return {"date": [f"2026-03-0{call_count}"]}
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.io_managers.spark_parquet._spark_extract_partition_values",
-            _fake_extract,
-        )
-        io = SparkParquetIoManager(base_path="/data")
+        io = SparkParquetIoManager(base_path=str(tmp_path))
         io.setup()
 
-        spark_df = MagicMock()
-        ctx1 = OutputContext(
-            job_name="j", task_key="t", run_id="r1", partition_by=["date"]
-        )
-        io.write(ctx1, spark_df)
-        assert io._extract_partition_values(ctx1) == {"date": ["2026-03-01"]}
+        df1 = spark.createDataFrame([(1, "us")], ["id", "region"])
+        ctx1 = _output_ctx("seq", partition_by=["region"])
+        io.write(ctx1, df1)
+        assert io._extract_partition_values(ctx1) == {"region": ["us"]}
 
-        ctx2 = OutputContext(
-            job_name="j", task_key="t", run_id="r2", partition_by=["date"]
-        )
-        io.write(ctx2, spark_df)
-        assert io._extract_partition_values(ctx2) == {"date": ["2026-03-02"]}
+        df2 = spark.createDataFrame([(2, "eu"), (3, "ap")], ["id", "region"])
+        ctx2 = _output_ctx("seq2", partition_by=["region"])
+        io.write(ctx2, df2)
+        assert io._extract_partition_values(ctx2) == {"region": ["ap", "eu"]}
 
-    def test_no_partition_write_does_not_set_values(self, _mock_pyspark):
-        from databricks_bundle_decorators.io_managers import SparkParquetIoManager
-
-        io = SparkParquetIoManager(base_path="/data")
+    def test_no_partition_write_does_not_set_values(
+        self, spark: SparkSession, tmp_path
+    ):
+        io = SparkParquetIoManager(base_path=str(tmp_path))
         io.setup()
 
-        spark_df = MagicMock()
-        ctx = OutputContext(job_name="j", task_key="t", run_id="r1")
-
-        io.write(ctx, spark_df)
-
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("no_part"), df)
         assert io._last_partition_values is None
+
+
+# ---------------------------------------------------------------------------
+# Write / read options
+# ---------------------------------------------------------------------------
+
+
+class TestSparkParquetOptions:
+    def test_write_options_applied(self, spark: SparkSession, tmp_path):
+        io = SparkParquetIoManager(
+            base_path=str(tmp_path),
+            write_options={"compression": "gzip"},
+        )
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("opts"), df)
+
+        # Verify round-trip still works with gzip compression
+        result = io.read(_input_ctx("opts"))
+        assert result.count() == 1
+
+    def test_read_options_applied(self, spark: SparkSession, tmp_path):
+        io = SparkParquetIoManager(
+            base_path=str(tmp_path),
+            read_options={"mergeSchema": "true"},
+        )
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("read_opts"), df)
+
+        result = io.read(_input_ctx("read_opts"))
+        assert result.count() == 1

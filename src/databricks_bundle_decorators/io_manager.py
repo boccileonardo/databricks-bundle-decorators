@@ -75,7 +75,7 @@ def _spark_apply_partition_filter(
     result: Any, partition_filter: dict[str, list[str]]
 ) -> Any:
     """Filter a PySpark DataFrame to matching partition values."""
-    from pyspark.sql import functions as F  # type: ignore[import-untyped]
+    from pyspark.sql import functions as F
 
     for col, values in partition_filter.items():
         if len(values) == 1:
