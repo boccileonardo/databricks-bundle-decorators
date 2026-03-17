@@ -4,7 +4,7 @@
 
 All Polars IoManagers support Hive-style partitioning via the
 `partition_by` parameter on the `@task` decorator.  When `partition_by`
-includes `"logical_date"`, the column is auto-injected before writing
+includes `"backfill_key"`, the column is auto-injected before writing
 and auto-filtered on read.
 
 ```python
@@ -12,7 +12,7 @@ io = PolarsParquetIoManager(
     base_path="abfss://lake@acct.dfs.core.windows.net/data",
 )
 
-@task(io_manager=io, partition_by=["logical_date", "region"])
+@task(io_manager=io, partition_by=["backfill_key", "region"])
 def extract(): ...
 ```
 

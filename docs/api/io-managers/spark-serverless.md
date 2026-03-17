@@ -10,7 +10,7 @@ not registered as external locations will fail at runtime.
 
 Same behaviour as classic compute — `partition_by` is specified on the
 `@task` decorator and uses Spark's native `partitionBy()`.  
-`"logical_date"` is auto-injected on write and auto-filtered on read.
+`"backfill_key"` is auto-injected on write and auto-filtered on read.
 
 ## Delta
 

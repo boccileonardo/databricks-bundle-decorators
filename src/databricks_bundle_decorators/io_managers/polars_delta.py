@@ -18,8 +18,8 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
-    _format_logical_date,
-    _needs_logical_date_col,
+    _needs_backfill_key_col,
+    _resolve_backfill_key,
     _polars_apply_partition_filter,
     _polars_extract_partition_values,
 )
@@ -170,10 +170,10 @@ class PolarsDeltaIoManager(IoManager):
         uri = self._uri(context.task_key)
         partition_by = context.partition_by
 
-        # Inject logical_date column if it's a partition column
-        if _needs_logical_date_col(partition_by):
-            ld_str = _format_logical_date(context.logical_date)
-            obj = obj.with_columns(pl.lit(ld_str).alias("logical_date"))
+        # Inject backfill_key column if it's a partition column
+        if _needs_backfill_key_col(partition_by):
+            bk = _resolve_backfill_key(context.backfill_key)
+            obj = obj.with_columns(pl.lit(bk).alias("backfill_key"))
 
         # Merge partition_by into write_options for Delta
         write_opts = dict(self._write_options)
@@ -217,7 +217,7 @@ class PolarsDeltaIoManager(IoManager):
         (lazy `polars.LazyFrame`) — this is the default for
         unannotated parameters.
 
-        When ``partition_by`` includes ``"logical_date"``, reads are
+        When ``partition_by`` includes ``"backfill_key"``, reads are
         filtered to the current partition unless the upstream
         dependency uses `all_partitions()` or the consuming
         task uses ``@task(all_partitions=True)``.
@@ -238,10 +238,10 @@ class PolarsDeltaIoManager(IoManager):
         if context.partition_filter and not context.all_partitions:
             result = _polars_apply_partition_filter(result, context.partition_filter)
         elif (
-            _needs_logical_date_col(context.partition_by) and not context.all_partitions
+            _needs_backfill_key_col(context.partition_by) and not context.all_partitions
         ):
             result = result.filter(
-                pl.col("logical_date") == _format_logical_date(context.logical_date)
+                pl.col("backfill_key") == _resolve_backfill_key(context.backfill_key)
             )
 
         return result

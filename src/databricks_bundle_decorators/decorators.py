@@ -19,7 +19,7 @@ import warnings
 from typing import Any, Callable, Unpack, overload
 
 from databricks_bundle_decorators.io_manager import IoManager
-from databricks_bundle_decorators.backfill import LOGICAL_DATE_PARAM, BackfillDef
+from databricks_bundle_decorators.backfill import BACKFILL_KEY_PARAM, BackfillDef
 from databricks_bundle_decorators.registry import (
     ClusterMeta,
     DuplicateResourceError,
@@ -121,7 +121,7 @@ def all_partitions(proxy: TaskProxy) -> _AllPartitionsProxy:
 
     Use inside a ``@job`` body to indicate that the downstream task
     should read the **entire** dataset from the upstream task, across
-    all partitions, rather than filtering to the current ``logical_date``.
+    all partitions, rather than filtering to the current ``backfill_key``.
 
     Parameters
     ----------
@@ -222,7 +222,7 @@ def task(
     all_partitions:
         When ``True``, **all** upstream data dependencies read the
         entire dataset (all partitions) instead of filtering to the
-        current ``logical_date``.  For fine-grained control, use the
+        current ``backfill_key``.  For fine-grained control, use the
         `all_partitions` function to wrap individual `TaskProxy`
         arguments instead.
     **kwargs:
@@ -457,8 +457,8 @@ def job(
         as the shared job cluster for all tasks.
     backfill:
         A `BackfillDef` that declares the universe of valid
-        ``logical_date`` values for this job.  The ``dbxdec backfill``
-        CLI command uses this to enumerate dates when submitting bulk
+        ``backfill_key`` values for this job.  The ``dbxdec backfill``
+        CLI command uses this to enumerate keys when submitting bulk
         runs.  Has no effect on runtime behaviour.
     libraries:
         Library dependencies to attach to each task.  When ``None``
@@ -507,10 +507,10 @@ def job(
                 f"got {type(backfill).__name__!r}."
             )
 
-        # Auto-inject the logical_date parameter when backfill is set
+        # Auto-inject the backfill_key parameter when backfill is set
         effective_params: dict[str, str] = dict(params) if params else {}
         if backfill is not None:
-            effective_params.setdefault(LOGICAL_DATE_PARAM, "")
+            effective_params.setdefault(BACKFILL_KEY_PARAM, "")
 
         # --- execute the body to collect tasks and build the DAG ----------
         _current_job_tasks.clear()

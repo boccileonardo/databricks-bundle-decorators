@@ -1,9 +1,9 @@
 # Backfilling & Partitioning
 
-Jobs that use `@job(backfill=...)` get a **logical date** — a
-`datetime` job parameter that represents *which* data slice the run
+Jobs that use `@job(backfill=...)` get a **backfill key** — a
+string job parameter that represents *which* data slice the run
 belongs to (similar to Airflow's `logical_date` or Dagster's partition
-key).  The backfill CLI enumerates these dates for bulk run submission.
+key).  The backfill CLI enumerates these keys for bulk run submission.
 
 On the storage side, IoManagers can write data in a **Hive-style
 partitioned layout** (`column=value/` directories) using the
@@ -15,7 +15,7 @@ details.
 
 ```python
 from databricks_bundle_decorators import job, task
-from databricks_bundle_decorators.backfill import DailyBackfill, get_run_logical_date
+from databricks_bundle_decorators.backfill import DailyBackfill, get_backfill_key
 from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
 io = PolarsParquetIoManager(
@@ -24,10 +24,10 @@ io = PolarsParquetIoManager(
 
 @job(backfill=DailyBackfill(start_date="2024-01-01"))
 def daily_pipeline():
-    @task(io_manager=io, partition_by="logical_date")
+    @task(io_manager=io, partition_by="backfill_key")
     def extract():
-        date = get_run_logical_date()
-        return fetch_data(date.strftime("%Y-%m-%d"))
+        key = get_backfill_key()
+        return fetch_data(key)  # key is e.g. "2024-01-15"
 
     @task
     def transform(df):
@@ -46,26 +46,26 @@ By default (`auto_filter=True`), all built-in IoManagers automatically
 push the distinct partition column values written by the producing task
 to downstream consumers via Databricks task values.  Downstream reads
 are then filtered to exactly the partition values that were written —
-regardless of column name.  This works for `logical_date`, custom date
+regardless of column name.  This works for `backfill_key`, custom date
 columns, categorical columns, and multi-column partitioning alike.
 
-The special column name `"logical_date"` has one extra convenience on
-top of auto-filtering: the IoManager **auto-injects** a `logical_date`
+The special column name `"backfill_key"` has one extra convenience on
+top of auto-filtering: the IoManager **auto-injects** a `backfill_key`
 column on write (your DataFrame doesn't need to contain it).  Any other
 column name must already exist in the DataFrame.
 
 ### Disabling auto-filtering
 
 Pass `auto_filter=False` when constructing the IoManager to disable
-partition value pushdown.  In this mode, only `logical_date` is
+partition value pushdown.  In this mode, only `backfill_key` is
 auto-filtered (via the runtime context), and a warning is logged for
-any non-`logical_date` partition columns reminding you to filter
+any non-`backfill_key` partition columns reminding you to filter
 manually.
 
 ```python
 io = PolarsParquetIoManager(
     base_path="...",
-    auto_filter=False,   # only logical_date will be auto-filtered
+    auto_filter=False,   # only backfill_key will be auto-filtered
 )
 ```
 
@@ -85,9 +85,9 @@ io = PolarsParquetIoManager(
 def daily_pipeline():
     @task(io_manager=io, partition_by="event_date")
     def extract() -> pl.LazyFrame:
-        date = get_run_logical_date()
+        key = get_backfill_key()
         # The data already contains 'event_date' — no injection needed
-        return pl.scan_ndjson(f"s3://raw/{date:%Y-%m-%d}/*.jsonl")
+        return pl.scan_ndjson(f"s3://raw/{key}/*.jsonl")
 
     @task
     def transform(df: pl.LazyFrame):
@@ -103,46 +103,69 @@ def daily_pipeline():
 ### Deploy time
 
 When `@job(backfill=...)` is specified, the decorator auto-injects a
-`logical_date` job parameter with an empty default value and stores
+`backfill_key` job parameter with an empty default value and stores
 the backfill definition for the CLI.  Jobs without `backfill=` do not
-get a `logical_date` parameter unless you add one explicitly via
-`params={"logical_date": ""}`.
+get a `backfill_key` parameter unless you add one explicitly via
+`params={"backfill_key": ""}`.
 
 ### Runtime
 
-When `logical_date` is present as a job parameter:
+When `backfill_key` is present as a job parameter:
 
-- If non-empty, it is parsed as a `datetime` via
-  `datetime.fromisoformat()`.
-- If empty (e.g. a manual run without specifying a date), it defaults
-  to `datetime.now(tz=timezone.utc)`.
+- If non-empty, it is passed as a raw string to all IoManager
+  contexts.
+- If empty (e.g. a manual run without specifying a key), it defaults
+  to `None`.
 
 This value is passed to all IoManager contexts and is available via
-`get_run_logical_date()`.
+`get_backfill_key()`.  For time-based backfills, use
+`get_run_logical_date()` to parse the key as a `datetime`.
 
-When `logical_date` is **not** a job parameter (no `backfill=` and
-not added manually), the IoManager contexts receive `logical_date=None`.
+When `backfill_key` is **not** a job parameter (no `backfill=` and
+not added manually), the IoManager contexts receive `backfill_key=None`.
 
-## Reading the logical date
+## Reading the backfill key
 
-Inside a task, use the convenience helper:
+Two helpers are available inside task functions:
+
+### `get_backfill_key()`
+
+Returns the **raw key string** — works with all backfill types.
+
+```python
+from databricks_bundle_decorators.backfill import get_backfill_key
+
+key = get_backfill_key()  # "2024-01-15", "2024-W03", "us", etc.
+```
+
+- Raises `RuntimeError` if the `backfill_key` parameter is missing
+  or empty (i.e. the job has no backfill definition and wasn't started
+  via the backfill CLI).
+- Accepts `validate=True` (the default).  When enabled, checks the
+  key against the job's `BackfillDef`: for time-based definitions it
+  verifies `start_date` / `end_date` boundaries; for `StaticBackfill`
+  it verifies the key is in the declared list.  Pass `validate=False`
+  to skip.
+
+### `get_run_logical_date()`
+
+Parses the backfill key as an ISO-8601 **datetime**.  Use this
+for time-based backfills (`DailyBackfill`, `WeeklyBackfill`, etc.)
+when you need a `datetime` object.
 
 ```python
 from databricks_bundle_decorators.backfill import get_run_logical_date
 
-date = get_run_logical_date()  # returns datetime
+dt = get_run_logical_date()  # datetime(2024, 1, 15, tzinfo=UTC)
 ```
 
-`get_run_logical_date()` raises `RuntimeError` if `logical_date` is
-empty or missing — i.e. when the job has no backfill definition and
-was not invoked with a `logical_date` parameter.  This strict behaviour
-prevents silent bugs where tasks assume a logical date that was never
-set.
-
-When `validate=True` (the default), the function also checks that the
-logical date falls within the `start_date` / `end_date` boundaries
-declared by the job's `BackfillDef`.  Pass `validate=False` to skip
-this check.
+- Calls `get_backfill_key()` internally, so the same `RuntimeError`
+  applies when the key is missing.
+- Raises `ValueError` if the key is **not a valid ISO-8601 string**
+  (e.g. calling it on a `StaticBackfill` key like `"us"`).  Use
+  `get_backfill_key()` instead for non-date keys.
+- Also accepts `validate=True` (the default), with the same
+  boundary-checking behaviour as `get_backfill_key()`.
 
 ## Backfill definitions
 
@@ -158,7 +181,7 @@ def my_pipeline():
 ```
 
 The backfill definition only affects **key enumeration** — it
-does not change runtime behavior beyond injecting the `logical_date`
+does not change runtime behavior beyond injecting the `backfill_key`
 parameter.
 
 | Class | Keys | Example |
@@ -257,7 +280,7 @@ io = PolarsParquetIoManager(
 
 @job(backfill=DailyBackfill(start_date="2024-01-01"))
 def daily_pipeline():
-    @task(io_manager=io, partition_by="logical_date")
+    @task(io_manager=io, partition_by="backfill_key")
     def extract():
         ...
 

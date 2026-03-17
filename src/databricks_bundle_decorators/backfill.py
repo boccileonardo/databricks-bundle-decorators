@@ -1,17 +1,18 @@
 """Backfill definitions for time-based and static key enumeration.
 
-Backfill definitions declare the universe of valid ``logical_date``
+Backfill definitions declare the universe of valid ``backfill_key``
 values for a job.  They are used by the ``dbxdec backfill`` CLI command
-to enumerate dates for bulk run submission.
+to enumerate keys for bulk run submission.
 
-Every job automatically receives a ``logical_date`` parameter.  At
-runtime, task code reads it via the convenience helper::
+Every job automatically receives a ``backfill_key`` parameter.  At
+runtime, task code reads the raw key via `get_backfill_key`, or
+parses it as a datetime via `get_run_logical_date`::
 
-    from databricks_bundle_decorators.backfill import get_run_logical_date
+    from databricks_bundle_decorators.backfill import get_backfill_key
 
     @task
     def extract() -> pl.DataFrame:
-        dt = get_run_logical_date()  # returns datetime, raises if unset
+        key = get_backfill_key()  # returns str, raises if unset
         ...
 """
 
@@ -28,8 +29,8 @@ import whenever
 
 _logger = logging.getLogger(__name__)
 
-#: The fixed job-parameter name that carries the logical date.
-LOGICAL_DATE_PARAM: str = "logical_date"
+#: The fixed job-parameter name that carries the backfill key.
+BACKFILL_KEY_PARAM: str = "backfill_key"
 
 
 class BackfillDef(ABC):
@@ -37,7 +38,7 @@ class BackfillDef(ABC):
 
     Subclasses declare the universe of valid backfill keys for
     enumeration.  The ``dbxdec backfill`` CLI uses these to
-    generate ``logical_date`` values.
+    generate ``backfill_key`` values.
     """
 
     @abstractmethod
@@ -294,55 +295,91 @@ class StaticBackfill(BackfillDef):
         return list(self._keys)
 
 
-def get_run_logical_date(*, validate: bool = True) -> datetime:
-    """Return the logical date for the current job run.
+def get_backfill_key(*, validate: bool = True) -> str:
+    """Return the raw backfill key for the current job run.
 
-    Reads the ``logical_date`` job parameter, parses it into a
-    timezone-aware ``datetime``, and optionally validates it against
-    the job's `BackfillDef` boundaries.
+    Reads the ``backfill_key`` job parameter and optionally validates
+    it against the job's `BackfillDef` boundaries.
+
+    For time-based backfills the key is an ISO-8601 date/time string;
+    for `StaticBackfill` it is one of the declared keys (e.g.
+    ``"us"``, ``"eu"``).
 
     Parameters
     ----------
     validate:
-        When ``True`` (the default), verify that the logical date
-        falls within the ``start_date`` / ``end_date`` range declared
-        by the job's `BackfillDef`.  A `ValueError` is raised if the
-        date is out of range.  Ignored when the job has no backfill
+        When ``True`` (the default), verify that the key is valid for
+        the job's `BackfillDef`.  A `ValueError` is raised if the
+        key is out of range.  Ignored when the job has no backfill
         definition.
 
     Raises
     ------
     RuntimeError
-        If ``logical_date`` is missing or empty.  This indicates the
+        If ``backfill_key`` is missing or empty.  This indicates the
         job has no backfill definition and was not started via the
         backfill CLI.
     ValueError
-        If *validate* is ``True`` and the logical date is outside the
+        If *validate* is ``True`` and the backfill key is outside the
         backfill definition's boundaries.
 
     Returns
     -------
-    datetime
-        Timezone-aware datetime representing the logical date.
+    str
+        The raw backfill key string.
     """
     from databricks_bundle_decorators.context import params
 
-    raw = params.get(LOGICAL_DATE_PARAM, "")
+    raw = params.get(BACKFILL_KEY_PARAM, "")
     if not raw:
         raise RuntimeError(
-            "logical_date is not set. "
+            "backfill_key is not set. "
             "This usually means the job was not invoked with a "
-            "logical_date parameter. Use @job(backfill=...) and "
-            "the backfill CLI, or pass logical_date explicitly."
+            "backfill_key parameter. Use @job(backfill=...) and "
+            "the backfill CLI, or pass backfill_key explicitly."
         )
     if validate:
         job_name: str | None = params.get("__job_name__")
-        _validate_logical_date(raw, job_name)
+        _validate_backfill_key(raw, job_name)
 
+    return raw
+
+
+def get_run_logical_date(*, validate: bool = True) -> datetime:
+    """Return the backfill key parsed as a timezone-aware ``datetime``.
+
+    Convenience wrapper around `get_backfill_key` for time-based
+    backfills (`DailyBackfill`, `WeeklyBackfill`, etc.).  Not
+    suitable for `StaticBackfill` with non-date keys — use
+    `get_backfill_key` instead.
+
+    Parameters
+    ----------
+    validate:
+        When ``True`` (the default), verify that the key is valid for
+        the job's `BackfillDef`.  A `ValueError` is raised if the
+        key is out of range.  Ignored when the job has no backfill
+        definition.
+
+    Raises
+    ------
+    RuntimeError
+        If ``backfill_key`` is missing or empty.
+    ValueError
+        If the key cannot be parsed as an ISO-8601 date/time, or if
+        *validate* is ``True`` and it falls outside the backfill
+        definition's boundaries.
+
+    Returns
+    -------
+    datetime
+        Timezone-aware datetime representing the backfill key.
+    """
+    raw = get_backfill_key(validate=validate)
     return _parse_logical_date_str(raw)
 
 
-def _validate_logical_date(raw: str, job_name: str | None) -> None:
+def _validate_backfill_key(raw: str, job_name: str | None) -> None:
     """Check *raw* is within the current job's backfill boundaries."""
     from databricks_bundle_decorators.registry import _JOB_REGISTRY
 
@@ -357,7 +394,7 @@ def _validate_logical_date(raw: str, job_name: str | None) -> None:
     if isinstance(backfill, StaticBackfill):
         if raw not in backfill._keys:
             raise ValueError(
-                f"logical_date {raw!r} is not in the StaticBackfill "
+                f"backfill_key {raw!r} is not in the StaticBackfill "
                 f"keys for job {job_name!r}. "
                 f"Valid keys: {backfill._keys}"
             )
@@ -373,7 +410,7 @@ def _validate_logical_date(raw: str, job_name: str | None) -> None:
 
     if dt < start_dt:
         raise ValueError(
-            f"logical_date {raw!r} is before the backfill "
+            f"backfill_key {raw!r} is before the backfill "
             f"start_date {start!r} for job {job_name!r}."
         )
 
@@ -382,7 +419,7 @@ def _validate_logical_date(raw: str, job_name: str | None) -> None:
         end_dt = _parse_logical_date_str(end)
         if dt > end_dt:
             raise ValueError(
-                f"logical_date {raw!r} is after the backfill "
+                f"backfill_key {raw!r} is after the backfill "
                 f"end_date {end!r} for job {job_name!r}."
             )
 
@@ -406,7 +443,7 @@ def _parse_logical_date_str(raw: str) -> datetime:
         dt = datetime.fromisoformat(raw)
     except ValueError:
         raise ValueError(
-            f"Cannot parse logical_date {raw!r}. "
+            f"Cannot parse backfill_key {raw!r} as a date. "
             f"Expected an ISO-8601 string parseable by "
             f"datetime.fromisoformat() (e.g. YYYY-MM-DD, YYYY-Www, "
             f"YYYY-MM-DDThh)."

@@ -443,7 +443,7 @@ class TestBackfillCmd:
         for call in calls:
             assert call[:4] == ["databricks", "bundle", "run", "test_pipeline"]
             assert "--no-wait" in call
-            assert any("logical_date=" in arg for arg in call)
+            assert any("backfill_key=" in arg for arg in call)
 
         out = capsys.readouterr().out
         assert "Submitted 2/2" in out

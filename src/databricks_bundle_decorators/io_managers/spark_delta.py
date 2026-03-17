@@ -20,8 +20,8 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
-    _format_logical_date,
-    _needs_logical_date_col,
+    _needs_backfill_key_col,
+    _resolve_backfill_key,
     _spark_apply_partition_filter,
     _spark_extract_partition_values,
 )
@@ -58,7 +58,7 @@ class _SparkDeltaBase(IoManager):
         - Otherwise builds a DataFrameWriter with the configured
           ``mode``, ``partition_by``, and ``write_options``.
 
-        When ``partition_by`` includes ``"logical_date"``, the column
+        When ``partition_by`` includes ``"backfill_key"``, the column
         is injected automatically from the context.
         """
         # Handle merge builders first.
@@ -76,12 +76,12 @@ class _SparkDeltaBase(IoManager):
 
         partition_by = context.partition_by
 
-        # Inject logical_date column if it's a partition column
-        if _needs_logical_date_col(partition_by):
+        # Inject backfill_key column if it's a partition column
+        if _needs_backfill_key_col(partition_by):
             from pyspark.sql import functions as F
 
-            ld_str = _format_logical_date(context.logical_date)
-            obj = obj.withColumn("logical_date", F.lit(ld_str))
+            bk = _resolve_backfill_key(context.backfill_key)
+            obj = obj.withColumn("backfill_key", F.lit(bk))
 
         uri = self._uri(context.task_key)
         writer = obj.write.format("delta").mode(self._mode)
@@ -98,7 +98,7 @@ class _SparkDeltaBase(IoManager):
     def read(self, context: InputContext) -> Any:
         """Read a Delta table as a PySpark DataFrame.
 
-        When ``partition_by`` includes ``"logical_date"``, reads are
+        When ``partition_by`` includes ``"backfill_key"``, reads are
         filtered to the current partition unless the upstream
         dependency uses `all_partitions()` or the consuming
         task uses ``@task(all_partitions=True)``.
@@ -112,12 +112,12 @@ class _SparkDeltaBase(IoManager):
         if context.partition_filter and not context.all_partitions:
             result = _spark_apply_partition_filter(result, context.partition_filter)
         elif (
-            _needs_logical_date_col(context.partition_by) and not context.all_partitions
+            _needs_backfill_key_col(context.partition_by) and not context.all_partitions
         ):
             from pyspark.sql import functions as F
 
             result = result.filter(
-                F.col("logical_date") == _format_logical_date(context.logical_date)
+                F.col("backfill_key") == _resolve_backfill_key(context.backfill_key)
             )
 
         return result

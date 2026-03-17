@@ -6,7 +6,7 @@ Subclass `IoManager` to implement your own storage backend when the
 
 ## Partitioning support
 
-When building a custom IoManager, use `context.logical_date` to scope
+When building a custom IoManager, use `context.backfill_key` to scope
 storage to the current partition, and `context.all_partitions` to
 support cross-partition reads (triggered by the `all_partitions()`
 wrapper or `@task(all_partitions=True)`).
@@ -36,9 +36,8 @@ class MyIoManager(IoManager):
 
     def write(self, context: OutputContext, obj):
         path = f"/data/{context.task_key}"
-        if context.logical_date:
-            date_str = context.logical_date.strftime("%Y-%m-%d")
-            path = f"{path}/logical_date={date_str}"
+        if context.backfill_key:
+            path = f"{path}/backfill_key={context.backfill_key}"
         save(path, obj)
 
     def _extract_partition_values(
@@ -53,14 +52,13 @@ class MyIoManager(IoManager):
             return load_all(path)  # Read all partition directories
         if context.partition_filter:
             return load_filtered(path, context.partition_filter)
-        if context.logical_date:
-            date_str = context.logical_date.strftime("%Y-%m-%d")
-            path = f"{path}/logical_date={date_str}"
+        if context.backfill_key:
+            path = f"{path}/backfill_key={context.backfill_key}"
         return load(path)
 ```
 
 If you set `auto_filter=False`, `context.partition_filter` will
-always be `None` and only the `logical_date` fallback applies.
+always be `None` and only the `backfill_key` fallback applies.
 
 ### Delta replaceWhere example
 
@@ -80,17 +78,13 @@ class DeltaReplaceWhereIoManager(IoManager):
 
     def write(self, context: OutputContext, obj) -> None:
         uri = f"{self.base_path}/{context.task_key}"
-        date_str = (
-            context.logical_date.strftime("%Y-%m-%d")
-            if context.logical_date
-            else "unknown"
-        )
-        obj = obj.withColumn("logical_date", F.lit(date_str))
+        bk = context.backfill_key or "unknown"
+        obj = obj.withColumn("backfill_key", F.lit(bk))
         (
             obj.write.format("delta")
             .mode("overwrite")
-            .option("replaceWhere", f"logical_date = '{date_str}'")
-            .partitionBy("logical_date")
+            .option("replaceWhere", f"backfill_key = '{bk}'")
+            .partitionBy("backfill_key")
             .save(uri)
         )
 
