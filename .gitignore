@@ -18,3 +18,8 @@ coverage.xml
 
 # MkDocs build output
 site/
+
+# Spark local testing artifacts
+spark-warehouse/
+derby.log
+metastore_db/

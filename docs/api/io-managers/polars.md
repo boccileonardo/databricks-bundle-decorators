@@ -16,9 +16,9 @@ io = PolarsParquetIoManager(
 def extract(): ...
 ```
 
-Parquet, CSV, and NDJSON use `pl.PartitionByKey` for LazyFrame sinks.
+Parquet, CSV, and NDJSON use `pl.PartitionBy` for LazyFrame sinks.
 DataFrame writes use native `partition_by` (Parquet) or
-`.lazy().sink_*` with `PartitionByKey` (CSV/NDJSON).
+`.lazy().sink_*` with `PartitionBy` (CSV/NDJSON).
 Delta uses `delta_write_options={"partition_by": ...}`.
 
 Reads use `hive_partitioning=True` (Parquet, CSV, NDJSON) or

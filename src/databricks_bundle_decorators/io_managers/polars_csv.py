@@ -125,13 +125,13 @@ class PolarsCsvIoManager(IoManager):
 
         - `polars.LazyFrame` → ``sink_csv``
         - `polars.DataFrame` → ``write_csv`` (single file) or
-          ``.lazy().sink_csv(PartitionByKey)`` (partitioned)
+          ``.lazy().sink_csv(PartitionBy)`` (partitioned)
 
         When ``partition_by`` is set on the ``@task`` decorator, writes
         to Hive-style partitioned directories using
-        ``pl.PartitionByKey``.
+        ``pl.PartitionBy``.
         """
-        import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional
+        import polars as pl
 
         base_uri = self._uri(context.task_key)
         partition_by = context.partition_by
@@ -148,14 +148,14 @@ class PolarsCsvIoManager(IoManager):
             )
             if isinstance(obj, pl.LazyFrame):
                 obj.sink_csv(
-                    pl.PartitionByKey(base_uri, by=partition_by),
+                    pl.PartitionBy(base_uri, key=partition_by),
                     mkdir=True,
                     storage_options=self.storage_options,
                     **self._write_options,
                 )
             elif isinstance(obj, pl.DataFrame):
                 obj.lazy().sink_csv(
-                    pl.PartitionByKey(base_uri, by=partition_by),
+                    pl.PartitionBy(base_uri, key=partition_by),
                     mkdir=True,
                     storage_options=self.storage_options,
                     **self._write_options,
@@ -197,7 +197,7 @@ class PolarsCsvIoManager(IoManager):
         upstream dependency or ``@task(all_partitions=True)`` on
         the consuming task to read all partitions.
         """
-        import polars as pl  # ty: ignore[unresolved-import]  # lazy – polars is optional
+        import polars as pl
 
         base_uri = self._uri(context.upstream_task_key)
         partition_by = context.partition_by
@@ -207,14 +207,12 @@ class PolarsCsvIoManager(IoManager):
             if context.expected_type is pl.DataFrame:
                 result = pl.read_csv(
                     glob_uri,
-                    hive_partitioning=True,
                     storage_options=self.storage_options,
                     **self._read_options,
                 )
             else:
                 result = pl.scan_csv(
                     glob_uri,
-                    hive_partitioning=True,
                     storage_options=self.storage_options,
                     **self._read_options,
                 )
