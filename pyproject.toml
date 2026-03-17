@@ -44,7 +44,10 @@ scripts.dbxdec-run = "databricks_bundle_decorators.runtime:main"
 [dependency-groups]
 dev = [
   "databricks-bundle-decorators",
+  "deltalake",
+  "polars",
   "prek>=0.3.3",
+  "pyarrow>=23.0.1",
   "pyproject-fmt>=2.16.1",
   "pytest>=9.0.2",
   "pytest-cov>=6",

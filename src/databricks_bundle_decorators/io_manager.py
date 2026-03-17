@@ -42,7 +42,7 @@ def _polars_extract_partition_values(
     obj: Any, partition_by: list[str]
 ) -> dict[str, list[str]]:
     """Extract distinct partition values from a Polars DataFrame or LazyFrame."""
-    import polars as pl  # ty: ignore[unresolved-import]
+    import polars as pl
 
     selected = obj.select(partition_by).unique()
     df = selected.collect() if isinstance(selected, pl.LazyFrame) else selected
@@ -53,7 +53,7 @@ def _polars_apply_partition_filter(
     result: Any, partition_filter: dict[str, list[str]]
 ) -> Any:
     """Filter a Polars DataFrame/LazyFrame to matching partition values."""
-    import polars as pl  # ty: ignore[unresolved-import]
+    import polars as pl
 
     for col, values in partition_filter.items():
         if len(values) == 1:

@@ -1,76 +1,31 @@
-"""Tests for PolarsParquetIoManager with mocked polars."""
+"""Tests for PolarsParquetIoManager using real Polars I/O on local files."""
 
 from __future__ import annotations
 
-import sys
-import types
-from typing import Any
-from unittest.mock import MagicMock
+from pathlib import Path
 
+import polars as pl
 import pytest
 
 from databricks_bundle_decorators.io_manager import InputContext, OutputContext
+from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
 
 # ---------------------------------------------------------------------------
-# Helpers – create a fake ``polars`` module so the IoManager can be imported
-# and exercised without a real polars installation.
+# Helpers
 # ---------------------------------------------------------------------------
 
-
-def _make_mock_polars() -> types.ModuleType:
-    """Build a minimal mock ``polars`` module with DataFrame and LazyFrame."""
-    mod = types.ModuleType("polars")
-
-    class _DataFrame:
-        """Fake polars.DataFrame."""
-
-        def __init__(self, data: Any = None) -> None:
-            self.data = data
-
-        write_parquet = MagicMock()
-
-    class _LazyFrame:
-        """Fake polars.LazyFrame."""
-
-        def __init__(self, data: Any = None) -> None:
-            self.data = data
-
-        sink_parquet = MagicMock()
-
-    mod.DataFrame = _DataFrame  # type: ignore[attr-defined]
-    mod.LazyFrame = _LazyFrame  # type: ignore[attr-defined]
-    mod.read_parquet = MagicMock(return_value=_DataFrame({"col": [1, 2]}))  # type: ignore[attr-defined]
-    mod.scan_parquet = MagicMock(return_value=_LazyFrame({"col": [1, 2]}))  # type: ignore[attr-defined]
-    mod.col = MagicMock()  # type: ignore[attr-defined]
-    mod.lit = MagicMock()  # type: ignore[attr-defined]
-    mod.PartitionByKey = MagicMock()  # type: ignore[attr-defined]
-
-    return mod
+_SAMPLE = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
 
 
-@pytest.fixture(autouse=True)
-def _mock_polars(monkeypatch: pytest.MonkeyPatch):
-    """Inject a fake ``polars`` module for every test in this file."""
-    mock_pl = _make_mock_polars()
-    monkeypatch.setitem(sys.modules, "polars", mock_pl)
-    # Reset call tracking between tests
-    mock_pl.DataFrame.write_parquet.reset_mock()
-    mock_pl.LazyFrame.sink_parquet.reset_mock()
-    mock_pl.read_parquet.reset_mock()
-    mock_pl.scan_parquet.reset_mock()
-    mock_pl.col.reset_mock()
-    mock_pl.lit.reset_mock()
-    yield mock_pl
-
-
-def _output_ctx(task_key: str = "my_task") -> OutputContext:
-    return OutputContext(job_name="j", task_key=task_key, run_id="r1")
+def _output_ctx(task_key: str = "my_task", **kwargs: object) -> OutputContext:
+    return OutputContext(job_name="j", task_key=task_key, run_id="r1", **kwargs)  # type: ignore[arg-type]
 
 
 def _input_ctx(
     upstream: str = "producer",
     expected_type: type | None = None,
+    **kwargs: object,
 ) -> InputContext:
     return InputContext(
         job_name="j",
@@ -78,6 +33,7 @@ def _input_ctx(
         upstream_task_key=upstream,
         run_id="r1",
         expected_type=expected_type,
+        **kwargs,  # type: ignore[arg-type]
     )
 
 
@@ -87,35 +43,25 @@ def _input_ctx(
 
 
 class TestConstruction:
-    def test_strips_trailing_slash(self):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
+    def test_strips_trailing_slash(self) -> None:
         io = PolarsParquetIoManager(base_path="/data/lake/")
         assert io.base_path == "/data/lake"
 
-    def test_storage_options_default_none(self):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
+    def test_storage_options_default_none(self) -> None:
         io = PolarsParquetIoManager(base_path="/data")
         assert io.storage_options is None
 
-    def test_storage_options_as_dict(self):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
+    def test_storage_options_as_dict(self) -> None:
         opts = {"account_name": "sa", "account_key": "secret"}
         io = PolarsParquetIoManager(base_path="/data", storage_options=opts)
         assert io.storage_options == opts
 
-    def test_storage_options_as_callable(self):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
+    def test_storage_options_as_callable(self) -> None:
         opts = {"account_name": "sa", "account_key": "secret"}
         io = PolarsParquetIoManager(base_path="/data", storage_options=lambda: opts)
         assert io.storage_options == opts
 
-    def test_storage_options_callable_invoked_each_time(self):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
+    def test_storage_options_callable_invoked_each_time(self) -> None:
         call_count = 0
 
         def _factory() -> dict[str, str]:
@@ -128,388 +74,164 @@ class TestConstruction:
         assert io.storage_options == {"key": "2"}
         assert call_count == 2
 
-    def test_uri_generation(self):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
+    def test_uri_generation(self) -> None:
         io = PolarsParquetIoManager(base_path="s3://bucket/prefix")
         assert io._uri("extract") == "s3://bucket/prefix/extract"
 
 
 # ---------------------------------------------------------------------------
-# Write dispatch
+# Write + Read round-trips
 # ---------------------------------------------------------------------------
 
 
-class TestWrite:
-    def test_write_dataframe_calls_write_parquet(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+class TestRoundTrip:
+    def test_dataframe_round_trip(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+        io.write(_output_ctx("t"), _SAMPLE)
 
-        io = PolarsParquetIoManager(
-            base_path="/data",
-            storage_options={"key": "val"},
-        )
-        df = _mock_polars.DataFrame()
+        result = io.read(_input_ctx("t", expected_type=pl.DataFrame))
+        assert isinstance(result, pl.DataFrame)
+        assert result.equals(_SAMPLE)
 
-        io.write(_output_ctx("extract"), df)
+    def test_lazyframe_round_trip(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+        io.write(_output_ctx("t"), _SAMPLE.lazy())
 
-        df.write_parquet.assert_called_once_with(
-            "/data/extract.parquet",
-            storage_options={"key": "val"},
-        )
+        result = io.read(_input_ctx("t"))
+        assert isinstance(result, pl.LazyFrame)
+        assert result.collect().equals(_SAMPLE)
 
-    def test_write_lazyframe_calls_sink_parquet(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+    def test_write_creates_parquet_file(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+        io.write(_output_ctx("extract"), _SAMPLE)
+        assert (tmp_path / "extract.parquet").exists()
 
-        io = PolarsParquetIoManager(
-            base_path="/data",
-            storage_options={"key": "val"},
-        )
-        lf = _mock_polars.LazyFrame()
-
-        io.write(_output_ctx("extract"), lf)
-
-        lf.sink_parquet.assert_called_once_with(
-            "/data/extract.parquet",
-            storage_options={"key": "val"},
-        )
-
-    def test_write_unsupported_type_raises(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        io = PolarsParquetIoManager(base_path="/data")
-
+    def test_unsupported_type_raises(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
         with pytest.raises(TypeError, match="got dict"):
             io.write(_output_ctx(), {"not": "a dataframe"})
 
-    def test_write_none_storage_options(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        io = PolarsParquetIoManager(base_path="/data")
-        df = _mock_polars.DataFrame()
-
-        io.write(_output_ctx("t"), df)
-
-        df.write_parquet.assert_called_once_with(
-            "/data/t.parquet",
-            storage_options=None,
-        )
-
-    def test_write_callable_storage_options(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        opts = {"account_name": "sa", "account_key": "secret"}
-        io = PolarsParquetIoManager(base_path="/data", storage_options=lambda: opts)
-        df = _mock_polars.DataFrame()
-
-        io.write(_output_ctx("t"), df)
-
-        df.write_parquet.assert_called_once_with(
-            "/data/t.parquet",
-            storage_options=opts,
-        )
-
 
 # ---------------------------------------------------------------------------
-# Read dispatch
+# Read type dispatch
 # ---------------------------------------------------------------------------
 
 
-class TestRead:
-    def test_read_defaults_to_scan(self, _mock_polars):
-        """Unannotated parameter → scan_parquet (lazy)."""
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+class TestReadDispatch:
+    def test_defaults_to_lazyframe(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+        _SAMPLE.write_parquet(tmp_path / "t.parquet")
+        result = io.read(_input_ctx("t"))
+        assert isinstance(result, pl.LazyFrame)
 
-        io = PolarsParquetIoManager(
-            base_path="/data",
-            storage_options={"key": "val"},
-        )
+    def test_dataframe_annotation(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+        _SAMPLE.write_parquet(tmp_path / "t.parquet")
+        result = io.read(_input_ctx("t", expected_type=pl.DataFrame))
+        assert isinstance(result, pl.DataFrame)
 
-        result = io.read(_input_ctx("upstream_task", expected_type=None))
-
-        _mock_polars.scan_parquet.assert_called_once_with(
-            "/data/upstream_task.parquet",
-            storage_options={"key": "val"},
-        )
-        assert isinstance(result, _mock_polars.LazyFrame)
-
-    def test_read_lazyframe_annotation_uses_scan(self, _mock_polars):
-        """Explicit LazyFrame annotation → scan_parquet."""
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        io = PolarsParquetIoManager(base_path="/data")
-
-        result = io.read(
-            _input_ctx("upstream_task", expected_type=_mock_polars.LazyFrame)
-        )
-
-        _mock_polars.scan_parquet.assert_called_once()
-        assert isinstance(result, _mock_polars.LazyFrame)
-
-    def test_read_dataframe_annotation_uses_read(self, _mock_polars):
-        """Explicit DataFrame annotation → read_parquet (eager)."""
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        io = PolarsParquetIoManager(
-            base_path="/data",
-            storage_options={"key": "val"},
-        )
-
-        result = io.read(
-            _input_ctx("upstream_task", expected_type=_mock_polars.DataFrame)
-        )
-
-        _mock_polars.read_parquet.assert_called_once_with(
-            "/data/upstream_task.parquet",
-            storage_options={"key": "val"},
-        )
-        _mock_polars.scan_parquet.assert_not_called()
-        assert isinstance(result, _mock_polars.DataFrame)
-
-    def test_read_none_storage_options(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        io = PolarsParquetIoManager(base_path="/data")
-
-        io.read(_input_ctx("t"))
-
-        _mock_polars.scan_parquet.assert_called_once_with(
-            "/data/t.parquet",
-            storage_options=None,
-        )
-
-    def test_read_callable_storage_options(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        opts = {"account_name": "sa", "account_key": "secret"}
-        io = PolarsParquetIoManager(base_path="/data", storage_options=lambda: opts)
-
-        io.read(_input_ctx("t"))
-
-        _mock_polars.scan_parquet.assert_called_once_with(
-            "/data/t.parquet",
-            storage_options=opts,
-        )
+    def test_lazyframe_annotation(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+        _SAMPLE.write_parquet(tmp_path / "t.parquet")
+        result = io.read(_input_ctx("t", expected_type=pl.LazyFrame))
+        assert isinstance(result, pl.LazyFrame)
 
 
 # ---------------------------------------------------------------------------
-# write_options / read_options passthrough
+# write_options / read_options
 # ---------------------------------------------------------------------------
 
 
-class TestWriteOptions:
-    def test_write_options_forwarded_to_write_parquet(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
+class TestOptions:
+    def test_write_options_applied(self, tmp_path: Path) -> None:
         io = PolarsParquetIoManager(
-            base_path="/data",
-            write_options={"compression": "zstd", "row_group_size": 100_000},
-        )
-        df = _mock_polars.DataFrame()
-
-        io.write(_output_ctx("t"), df)
-
-        df.write_parquet.assert_called_once_with(
-            "/data/t.parquet",
-            storage_options=None,
-            compression="zstd",
-            row_group_size=100_000,
-        )
-
-    def test_write_options_forwarded_to_sink_parquet(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        io = PolarsParquetIoManager(
-            base_path="/data",
+            base_path=str(tmp_path),
             write_options={"compression": "zstd"},
         )
-        lf = _mock_polars.LazyFrame()
+        io.write(_output_ctx("t"), _SAMPLE)
+        result = pl.read_parquet(tmp_path / "t.parquet")
+        assert result.equals(_SAMPLE)
 
-        io.write(_output_ctx("t"), lf)
-
-        lf.sink_parquet.assert_called_once_with(
-            "/data/t.parquet",
-            storage_options=None,
-            compression="zstd",
+    def test_read_options_applied(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(
+            base_path=str(tmp_path),
+            read_options={"n_rows": 1},
         )
+        _SAMPLE.write_parquet(tmp_path / "t.parquet")
+        result = io.read(_input_ctx("t", expected_type=pl.DataFrame))
+        assert len(result) == 1
 
-    def test_write_options_default_empty(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
+    def test_write_options_default_empty(self) -> None:
         io = PolarsParquetIoManager(base_path="/data")
         assert io._write_options == {}
 
-
-class TestReadOptions:
-    def test_read_options_forwarded_to_scan_parquet(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        io = PolarsParquetIoManager(
-            base_path="/data",
-            read_options={"n_rows": 100},
-        )
-
-        io.read(_input_ctx("t"))
-
-        _mock_polars.scan_parquet.assert_called_once_with(
-            "/data/t.parquet",
-            storage_options=None,
-            n_rows=100,
-        )
-
-    def test_read_options_forwarded_to_read_parquet(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        io = PolarsParquetIoManager(
-            base_path="/data",
-            read_options={"n_rows": 100},
-        )
-
-        io.read(_input_ctx("t", expected_type=_mock_polars.DataFrame))
-
-        _mock_polars.read_parquet.assert_called_once_with(
-            "/data/t.parquet",
-            storage_options=None,
-            n_rows=100,
-        )
-
-    def test_read_options_default_empty(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
+    def test_read_options_default_empty(self) -> None:
         io = PolarsParquetIoManager(base_path="/data")
         assert io._read_options == {}
 
 
 # ---------------------------------------------------------------------------
-# Partitioned paths
+# Partitioning (Hive-style)
 # ---------------------------------------------------------------------------
 
 
-class TestPaths:
-    def test_uri(self):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+class TestPartitioning:
+    def test_dataframe_creates_hive_dirs(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+        df = pl.DataFrame({"region": ["us", "eu"], "val": [1, 2]})
+        io.write(_output_ctx("t", partition_by=["region"]), df)
+        assert (tmp_path / "t" / "region=eu").is_dir()
+        assert (tmp_path / "t" / "region=us").is_dir()
 
-        io = PolarsParquetIoManager(base_path="s3://bucket/prefix")
-        assert io._uri("extract") == "s3://bucket/prefix/extract"
+    def test_lazyframe_creates_hive_dirs(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+        lf = pl.LazyFrame({"region": ["us", "eu"], "val": [1, 2]})
+        io.write(_output_ctx("t", partition_by=["region"]), lf)
+        assert (tmp_path / "t" / "region=eu").is_dir()
+        assert (tmp_path / "t" / "region=us").is_dir()
 
-    def test_write_no_partition(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        io = PolarsParquetIoManager(base_path="/data")
-        df = _mock_polars.DataFrame()
-        ctx = OutputContext(
-            job_name="j",
-            task_key="extract",
-            run_id="r1",
-        )
-
+    def test_extracts_partition_values(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+        df = pl.DataFrame({"region": ["us", "eu", "us"], "val": [1, 2, 3]})
+        ctx = _output_ctx("t", partition_by=["region"])
         io.write(ctx, df)
+        assert io._last_partition_values == {"region": ["eu", "us"]}
 
-        df.write_parquet.assert_called_once_with(
-            "/data/extract.parquet",
-            storage_options=None,
+    def test_partitioned_round_trip(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+        df = pl.DataFrame({"region": ["us", "eu", "us"], "val": [1, 2, 3]})
+        io.write(_output_ctx("t", partition_by=["region"]), df)
+        result = io.read(_input_ctx("t", partition_by=["region"], all_partitions=True))
+        collected = result.collect().sort("val")
+        assert collected["val"].to_list() == [1, 2, 3]
+
+    def test_partition_filter_on_read(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+        df = pl.DataFrame({"region": ["us", "eu", "us"], "val": [1, 2, 3]})
+        io.write(_output_ctx("t", partition_by=["region"]), df)
+        result = io.read(
+            _input_ctx(
+                "t",
+                partition_by=["region"],
+                partition_filter={"region": ["us"]},
+            )
         )
+        collected = result.collect().sort("val")
+        assert collected["region"].to_list() == ["us", "us"]
+        assert collected["val"].to_list() == [1, 3]
 
-    def test_read_no_partition(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        io = PolarsParquetIoManager(base_path="/data")
-        ctx = InputContext(
-            job_name="j",
-            task_key="consumer",
-            upstream_task_key="extract",
-            run_id="r1",
-        )
-
-        io.read(ctx)
-
-        _mock_polars.scan_parquet.assert_called_once_with(
-            "/data/extract.parquet",
-            storage_options=None,
-        )
-
-
-class TestPartitionValueExtraction:
-    """Verify _last_partition_values is populated during partitioned write."""
-
-    def test_write_dataframe_caches_partition_values(self, _mock_polars, monkeypatch):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.io_managers.polars_parquet._polars_extract_partition_values",
-            lambda obj, partition_by: {"region": ["us"]},
-        )
-        io = PolarsParquetIoManager(base_path="/data")
-        df = _mock_polars.DataFrame()
-        ctx = OutputContext(
-            job_name="j",
-            task_key="t",
-            run_id="r1",
-            partition_by=["region"],
-        )
-
-        io.write(ctx, df)
-
-        assert io._last_partition_values == {"region": ["us"]}
-        assert io._extract_partition_values(ctx) == {"region": ["us"]}
-
-    def test_write_lazyframe_caches_partition_values(self, _mock_polars, monkeypatch):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.io_managers.polars_parquet._polars_extract_partition_values",
-            lambda obj, partition_by: {"region": ["eu"]},
-        )
-        io = PolarsParquetIoManager(base_path="/data")
-        lf = _mock_polars.LazyFrame()
-        ctx = OutputContext(
-            job_name="j",
-            task_key="t",
-            run_id="r1",
-            partition_by=["region"],
-        )
-
-        io.write(ctx, lf)
-
-        assert io._last_partition_values == {"region": ["eu"]}
-
-    def test_sequential_writes_replace_partition_values(
-        self, _mock_polars, monkeypatch
-    ):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        call_count = 0
-
-        def _fake_extract(obj, partition_by):
-            nonlocal call_count
-            call_count += 1
-            return {"date": [f"2026-03-0{call_count}"]}
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.io_managers.polars_parquet._polars_extract_partition_values",
-            _fake_extract,
-        )
-        io = PolarsParquetIoManager(base_path="/data")
-        df = _mock_polars.DataFrame()
-
-        ctx1 = OutputContext(
-            job_name="j", task_key="t", run_id="r1", partition_by=["date"]
-        )
-        io.write(ctx1, df)
-        assert io._extract_partition_values(ctx1) == {"date": ["2026-03-01"]}
-
-        ctx2 = OutputContext(
-            job_name="j", task_key="t", run_id="r2", partition_by=["date"]
-        )
-        io.write(ctx2, df)
-        assert io._extract_partition_values(ctx2) == {"date": ["2026-03-02"]}
-
-    def test_no_partition_write_does_not_set_values(self, _mock_polars):
-        from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
-
-        io = PolarsParquetIoManager(base_path="/data")
-        df = _mock_polars.DataFrame()
-        ctx = OutputContext(job_name="j", task_key="t", run_id="r1")
-
-        io.write(ctx, df)
-
+    def test_no_partition_write_does_not_set_values(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+        io.write(_output_ctx("t"), _SAMPLE)
         assert io._last_partition_values is None
+
+    def test_sequential_writes_replace_partition_values(self, tmp_path: Path) -> None:
+        io = PolarsParquetIoManager(base_path=str(tmp_path))
+
+        df1 = pl.DataFrame({"region": ["us"], "val": [1]})
+        io.write(_output_ctx("t1", partition_by=["region"]), df1)
+        assert io._last_partition_values == {"region": ["us"]}
+
+        df2 = pl.DataFrame({"region": ["eu"], "val": [2]})
+        io.write(_output_ctx("t2", partition_by=["region"]), df2)
+        assert io._last_partition_values == {"region": ["eu"]}
