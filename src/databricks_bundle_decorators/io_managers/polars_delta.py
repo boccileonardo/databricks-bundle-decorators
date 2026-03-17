@@ -181,6 +181,12 @@ class PolarsDeltaIoManager(IoManager):
             delta_opts = write_opts.setdefault("delta_write_options", {})
             delta_opts.setdefault("partition_by", partition_by)
 
+        # Extract partition values from data before writing
+        if partition_by:
+            self._last_partition_values = _polars_extract_partition_values(
+                obj, partition_by
+            )
+
         if isinstance(obj, pl.LazyFrame):
             obj.sink_delta(
                 uri,
@@ -202,14 +208,6 @@ class PolarsDeltaIoManager(IoManager):
                 f"got {type(obj).__name__}"
             )
             raise TypeError(msg)
-
-    def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:
-        import polars as pl  # ty: ignore[unresolved-import]
-
-        assert context.partition_by is not None
-        uri = self._uri(context.task_key)
-        scan = pl.scan_delta(uri, storage_options=self.storage_options)
-        return _polars_extract_partition_values(scan, context.partition_by)
 
     def read(self, context: InputContext) -> Any:
         """Read a Delta table as a LazyFrame or DataFrame.

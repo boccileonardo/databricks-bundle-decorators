@@ -39,12 +39,13 @@ def _format_logical_date(context_logical_date: datetime | None) -> str:
 
 
 def _polars_extract_partition_values(
-    scan: Any, partition_by: list[str]
+    obj: Any, partition_by: list[str]
 ) -> dict[str, list[str]]:
-    """Extract distinct partition values from a Polars scan (LazyFrame)."""
+    """Extract distinct partition values from a Polars DataFrame or LazyFrame."""
     import polars as pl  # ty: ignore[unresolved-import]
 
-    df = scan.select(partition_by).unique().collect()
+    selected = obj.select(partition_by).unique()
+    df = selected.collect() if isinstance(selected, pl.LazyFrame) else selected
     return {col: sorted(df[col].cast(pl.Utf8).to_list()) for col in partition_by}
 
 
@@ -179,6 +180,11 @@ class IoManager(ABC):
     _is_setup: bool = False
     """Internal flag to ensure `setup` is called at most once."""
 
+    _last_partition_values: dict[str, list[str]] | None = None
+    """Partition values extracted from the most recent `write` call.
+    Populated by subclass ``write()`` methods; returned by
+    `_extract_partition_values`."""
+
     auto_filter: bool = True
     """When True, partition values are pushed via task values on write
     and used to auto-filter reads.  Set to False to disable."""
@@ -202,21 +208,24 @@ class IoManager(ABC):
             self._is_setup = True
 
     def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:
-        """Extract distinct partition column values from written data.
+        """Return partition column values captured during `write`.
 
         Called by the runtime after `write` when ``auto_filter=True``
         and ``partition_by`` is set.  The returned dict is pushed as a
         task value so downstream tasks can filter reads automatically.
 
-        Subclasses **must** implement this method to support
-        ``auto_filter=True``.
+        Subclass ``write()`` methods must populate
+        ``self._last_partition_values`` before the actual I/O call.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement "
-            f"_extract_partition_values(). "
-            f"Set auto_filter=False to disable automatic partition "
-            f"filtering."
-        )
+        if self._last_partition_values is None:
+            raise RuntimeError(
+                f"{type(self).__name__}.write() did not populate "
+                f"_last_partition_values.  Ensure write() extracts "
+                f"partition values from the data before writing, or "
+                f"set auto_filter=False to disable automatic "
+                f"partition filtering."
+            )
+        return self._last_partition_values
 
     @abstractmethod
     def write(self, context: OutputContext, obj: Any) -> None:

@@ -735,3 +735,87 @@ class TestAutoFilterRuntime:
 
         assert "auto_filter=False" in caplog.text
         assert "event_date" in caplog.text
+
+
+class TestPartitionValueExtraction:
+    """Verify _extract_partition_values returns cached values from write."""
+
+    def setup_method(self):
+        reset_registries()
+        _MemoryIo.storage = {}
+        _local_task_values.clear()
+
+    def test_extract_raises_when_no_write(self):
+        """_extract_partition_values raises RuntimeError if write was not called."""
+
+        class _NoWriteIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                return "data"
+
+        io = _NoWriteIo()
+        ctx = OutputContext(
+            job_name="j", task_key="t", run_id="r", partition_by=["region"]
+        )
+        with pytest.raises(RuntimeError, match="did not populate"):
+            io._extract_partition_values(ctx)
+
+    def test_write_populates_last_partition_values(self):
+        """write() populating _last_partition_values feeds _extract_partition_values."""
+
+        class _RealisticIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                self._last_partition_values = {"region": ["us-east"]}
+
+            def read(self, context: InputContext) -> Any:
+                return "data"
+
+        io = _RealisticIo()
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=lambda: "data",
+            task_key="producer",
+            io_manager=io,
+            partition_by=["region"],
+        )
+
+        run_task(
+            "producer",
+            {"__job_name__": "j", "__task_key__": "producer"},
+        )
+
+        assert get_task_value("producer", "__partition_values__") == {
+            "region": ["us-east"],
+        }
+
+    def test_sequential_writes_only_return_latest(self):
+        """Second write replaces _last_partition_values, not accumulates."""
+
+        class _SequentialIo(IoManager):
+            def __init__(self) -> None:
+                self._call_count = 0
+
+            def write(self, context: OutputContext, obj: Any) -> None:
+                self._call_count += 1
+                if self._call_count == 1:
+                    self._last_partition_values = {"date": ["2026-03-01"]}
+                else:
+                    self._last_partition_values = {"date": ["2026-03-02"]}
+
+            def read(self, context: InputContext) -> Any:
+                return "data"
+
+        io = _SequentialIo()
+        ctx1 = OutputContext(
+            job_name="j", task_key="t", run_id="r1", partition_by=["date"]
+        )
+        ctx2 = OutputContext(
+            job_name="j", task_key="t", run_id="r2", partition_by=["date"]
+        )
+
+        io.write(ctx1, "data")
+        assert io._extract_partition_values(ctx1) == {"date": ["2026-03-01"]}
+
+        io.write(ctx2, "data")
+        assert io._extract_partition_values(ctx2) == {"date": ["2026-03-02"]}

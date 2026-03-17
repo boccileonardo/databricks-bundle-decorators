@@ -86,16 +86,14 @@ class _SparkDeltaBase(IoManager):
         uri = self._uri(context.task_key)
         writer = obj.write.format("delta").mode(self._mode)
         if partition_by:
+            # Extract partition values from data before writing
+            self._last_partition_values = _spark_extract_partition_values(
+                obj, partition_by
+            )
             writer = writer.partitionBy(*partition_by)
         for k, v in self._write_options.items():
             writer = writer.option(k, v)
         writer.save(uri)
-
-    def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:
-        assert context.partition_by is not None
-        uri = self._uri(context.task_key)
-        df = self._spark.read.format("delta").load(uri)
-        return _spark_extract_partition_values(df, context.partition_by)
 
     def read(self, context: InputContext) -> Any:
         """Read a Delta table as a PySpark DataFrame.
