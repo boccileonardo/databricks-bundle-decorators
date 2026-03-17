@@ -7,7 +7,7 @@ is needed.
 ## Partitioning
 
 All UC IoManagers support `partition_by` via the `@task` decorator.
-`"logical_date"` is auto-injected on write and auto-filtered on read.
+`"backfill_key"` is auto-injected on write and auto-filtered on read.
 Managed tables use `partitionBy()` with `saveAsTable()`; volume paths
 use `partitionBy()` with `save()`.
 
@@ -18,7 +18,7 @@ io = SparkUCTableIoManager(
     mode="overwrite",
 )
 
-@task(io_manager=io, partition_by="logical_date")
+@task(io_manager=io, partition_by="backfill_key")
 def extract(): ...
 ```
 

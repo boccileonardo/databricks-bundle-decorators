@@ -7,7 +7,7 @@ the same dict-or-callable pattern as the Polars `storage_options`.
 ## Partitioning
 
 Both Delta and Parquet IoManagers support `partition_by` via the
-`@task` decorator.  When `partition_by` includes `"logical_date"`,
+`@task` decorator.  When `partition_by` includes `"backfill_key"`,
 the column is auto-injected via `F.lit()` before writing, and
 auto-filtered on read.  Partitioning uses Spark's native
 `partitionBy()`.
@@ -19,7 +19,7 @@ io = SparkDeltaIoManager(
     mode="overwrite",
 )
 
-@task(io_manager=io, partition_by=["logical_date", "region"])
+@task(io_manager=io, partition_by=["backfill_key", "region"])
 def extract(): ...
 ```
 

@@ -97,7 +97,7 @@ class JobMeta:
     for_each_tasks: dict[str, ForEachMeta] = field(default_factory=dict)
     backfill: BackfillDef | None = None
     """Backfill definition for key enumeration.  Does not affect
-    runtime behaviour — ``logical_date`` is always available."""
+    runtime behaviour — ``backfill_key`` is always available."""
 
 
 # ---------------------------------------------------------------------------

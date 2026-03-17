@@ -17,8 +17,8 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
-    _format_logical_date,
-    _needs_logical_date_col,
+    _needs_backfill_key_col,
+    _resolve_backfill_key,
     _polars_apply_partition_filter,
     _polars_extract_partition_values,
 )
@@ -141,10 +141,10 @@ class PolarsParquetIoManager(IoManager):
         base_uri = self._uri(context.task_key)
         partition_by = context.partition_by
 
-        # Inject logical_date column if it's a partition column
-        if _needs_logical_date_col(partition_by):
-            ld_str = _format_logical_date(context.logical_date)
-            obj = obj.with_columns(pl.lit(ld_str).alias("logical_date"))
+        # Inject backfill_key column if it's a partition column
+        if _needs_backfill_key_col(partition_by):
+            bk = _resolve_backfill_key(context.backfill_key)
+            obj = obj.with_columns(pl.lit(bk).alias("backfill_key"))
 
         if partition_by:
             # Extract partition values from data before writing
@@ -199,7 +199,7 @@ class PolarsParquetIoManager(IoManager):
 
         When ``partition_by`` is set on the producing ``@task``, reads
         from the Hive-partitioned directory.  By default only the
-        current ``logical_date`` partition is returned; use
+        current ``backfill_key`` partition is returned; use
         `all_partitions()` on the upstream dependency or
         ``@task(all_partitions=True)`` on the consuming task to read
         all partitions.
@@ -229,9 +229,10 @@ class PolarsParquetIoManager(IoManager):
                 result = _polars_apply_partition_filter(
                     result, context.partition_filter
                 )
-            elif _needs_logical_date_col(partition_by) and not context.all_partitions:
+            elif _needs_backfill_key_col(partition_by) and not context.all_partitions:
                 result = result.filter(
-                    pl.col("logical_date") == _format_logical_date(context.logical_date)
+                    pl.col("backfill_key")
+                    == _resolve_backfill_key(context.backfill_key)
                 )
             return result
 

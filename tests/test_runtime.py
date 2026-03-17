@@ -329,15 +329,15 @@ class TestForEachRuntime:
 
 
 class TestLogicalDateRuntime:
-    """Runtime wires logical_date into IoManager contexts."""
+    """Runtime wires backfill_key into IoManager contexts."""
 
     def setup_method(self):
         reset_registries()
         _MemoryIo.storage = {}
         _local_task_values.clear()
 
-    def test_logical_date_passed_to_output_context(self):
-        """OutputContext receives logical_date as a datetime."""
+    def test_backfill_key_passed_to_output_context(self):
+        """OutputContext receives backfill_key as a string."""
         captured_ctx: list[OutputContext] = []
 
         class _CapturingIo(IoManager):
@@ -359,19 +359,15 @@ class TestLogicalDateRuntime:
             {
                 "__job_name__": "j",
                 "__task_key__": "t",
-                "logical_date": "2024-01-15T00:00:00+00:00",
+                "backfill_key": "2024-01-15T00:00:00+00:00",
             },
         )
 
         assert len(captured_ctx) == 1
-        from datetime import datetime, timezone
+        assert captured_ctx[0].backfill_key == "2024-01-15T00:00:00+00:00"
 
-        assert captured_ctx[0].logical_date == datetime(
-            2024, 1, 15, tzinfo=timezone.utc
-        )
-
-    def test_empty_logical_date_defaults_to_now_utc(self):
-        """Empty string logical_date defaults to now(UTC)."""
+    def test_empty_backfill_key_defaults_to_none(self):
+        """Empty string backfill_key defaults to None."""
         captured_ctx: list[OutputContext] = []
 
         class _CapturingIo(IoManager):
@@ -389,18 +385,14 @@ class TestLogicalDateRuntime:
             {
                 "__job_name__": "j",
                 "__task_key__": "t",
-                "logical_date": "",
+                "backfill_key": "",
             },
         )
 
-        from datetime import datetime
+        assert captured_ctx[0].backfill_key is None
 
-        assert isinstance(captured_ctx[0].logical_date, datetime)
-        assert captured_ctx[0].logical_date is not None
-        assert captured_ctx[0].logical_date.tzinfo is not None
-
-    def test_missing_logical_date_defaults_to_none(self):
-        """When logical_date is not in params, logical_date is None."""
+    def test_missing_backfill_key_defaults_to_none(self):
+        """When backfill_key is not in params, backfill_key is None."""
         captured_ctx: list[OutputContext] = []
 
         class _CapturingIo(IoManager):
@@ -421,10 +413,10 @@ class TestLogicalDateRuntime:
             },
         )
 
-        assert captured_ctx[0].logical_date is None
+        assert captured_ctx[0].backfill_key is None
 
-    def test_logical_date_passed_to_input_context(self):
-        """InputContext receives logical_date as a datetime."""
+    def test_backfill_key_passed_to_input_context(self):
+        """InputContext receives backfill_key as a string."""
         captured_ctx: list[InputContext] = []
 
         class _CapturingIo(IoManager):
@@ -449,16 +441,12 @@ class TestLogicalDateRuntime:
                 "__job_name__": "j",
                 "__task_key__": "consumer",
                 "__upstream__x": "producer",
-                "logical_date": "2024-06-01T12:00:00+00:00",
+                "backfill_key": "2024-06-01T12:00:00+00:00",
             },
         )
 
         assert len(captured_ctx) == 1
-        from datetime import datetime, timezone
-
-        assert captured_ctx[0].logical_date == datetime(
-            2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc
-        )
+        assert captured_ctx[0].backfill_key == "2024-06-01T12:00:00+00:00"
 
 
 class TestAllPartitionsRuntime:
@@ -496,7 +484,7 @@ class TestAllPartitionsRuntime:
                 "__task_key__": "consumer",
                 "__upstream__x": "producer",
                 "__all_partitions__x": "true",
-                "logical_date": "2024-01-15T00:00:00+00:00",
+                "backfill_key": "2024-01-15T00:00:00+00:00",
             },
         )
 
@@ -529,7 +517,7 @@ class TestAllPartitionsRuntime:
                 "__job_name__": "j",
                 "__task_key__": "consumer",
                 "__upstream__x": "producer",
-                "logical_date": "2024-01-15T00:00:00+00:00",
+                "backfill_key": "2024-01-15T00:00:00+00:00",
             },
         )
 
@@ -696,7 +684,7 @@ class TestAutoFilterRuntime:
         assert captured_ctx[0].partition_filter is None
 
     def test_auto_filter_false_warns_for_non_ld_columns(self, caplog):
-        """auto_filter=False with non-logical_date cols emits a warning."""
+        """auto_filter=False with non-backfill_key cols emits a warning."""
 
         class _NoFilterIo(IoManager):
             auto_filter = False
@@ -819,3 +807,62 @@ class TestPartitionValueExtraction:
 
         io.write(ctx2, "data")
         assert io._extract_partition_values(ctx2) == {"date": ["2026-03-02"]}
+
+
+class TestStaticBackfillRuntime:
+    """Runtime handles StaticBackfill keys that are not ISO-8601 dates."""
+
+    def setup_method(self):
+        reset_registries()
+        _MemoryIo.storage = {}
+        _local_task_values.clear()
+
+    def _register_static_job(self, keys: list[str]) -> None:
+        from databricks_bundle_decorators.backfill import StaticBackfill
+        from databricks_bundle_decorators.registry import JobMeta, _JOB_REGISTRY
+
+        _JOB_REGISTRY["j"] = JobMeta(
+            fn=lambda: None,
+            name="j",
+            backfill=StaticBackfill(keys=keys),
+        )
+
+    def test_non_iso_key_does_not_crash(self):
+        """StaticBackfill with non-ISO key (e.g. 'us') must not crash."""
+        self._register_static_job(["us", "eu", "jp"])
+        call_log: list[str] = []
+
+        def my_task():
+            call_log.append("executed")
+
+        _TASK_REGISTRY["j.my_task"] = TaskMeta(fn=my_task, task_key="my_task")
+
+        run_task(
+            "my_task",
+            {"__job_name__": "j", "__task_key__": "my_task", "backfill_key": "us"},
+        )
+
+        assert call_log == ["executed"]
+
+    def test_non_iso_key_backfill_key_is_raw_string(self):
+        """For StaticBackfill, backfill_key in IoManager contexts is the raw key."""
+        self._register_static_job(["us", "eu"])
+        captured_ctx: list[OutputContext] = []
+
+        class _CapturingIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                captured_ctx.append(context)
+
+            def read(self, context: InputContext) -> Any:
+                return None
+
+        io = _CapturingIo()
+        _TASK_REGISTRY["j.t"] = TaskMeta(fn=lambda: "data", task_key="t", io_manager=io)
+
+        run_task(
+            "t",
+            {"__job_name__": "j", "__task_key__": "t", "backfill_key": "us"},
+        )
+
+        assert len(captured_ctx) == 1
+        assert captured_ctx[0].backfill_key == "us"

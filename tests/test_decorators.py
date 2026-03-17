@@ -1065,8 +1065,8 @@ class TestJobPartition:
 
         assert _JOB_REGISTRY["my_job"].backfill is part
 
-    def test_logical_date_auto_injected_on_backfill_jobs(self):
-        """logical_date param is injected when backfill is set."""
+    def test_backfill_key_auto_injected_on_backfill_jobs(self):
+        """backfill_key param is injected when backfill is set."""
         part = DailyBackfill(start_date="2024-01-01")
 
         @job(backfill=part)
@@ -1075,11 +1075,11 @@ class TestJobPartition:
             def step():
                 pass
 
-        assert "logical_date" in _JOB_REGISTRY["my_job"].params
-        assert _JOB_REGISTRY["my_job"].params["logical_date"] == ""
+        assert "backfill_key" in _JOB_REGISTRY["my_job"].params
+        assert _JOB_REGISTRY["my_job"].params["backfill_key"] == ""
 
-    def test_logical_date_not_injected_without_backfill(self):
-        """Jobs without backfill= don't get logical_date."""
+    def test_backfill_key_not_injected_without_backfill(self):
+        """Jobs without backfill= don't get backfill_key."""
 
         @job
         def my_job():
@@ -1087,7 +1087,7 @@ class TestJobPartition:
             def step():
                 pass
 
-        assert "logical_date" not in _JOB_REGISTRY["my_job"].params
+        assert "backfill_key" not in _JOB_REGISTRY["my_job"].params
 
     def test_partition_preserves_existing_params(self):
         part = DailyBackfill(start_date="2024-01-01")
@@ -1100,20 +1100,20 @@ class TestJobPartition:
 
         meta = _JOB_REGISTRY["my_job"]
         assert meta.params["source"] == "api"
-        assert meta.params["logical_date"] == ""
+        assert meta.params["backfill_key"] == ""
 
-    def test_logical_date_does_not_overwrite_user_param(self):
-        """If user explicitly sets logical_date param, don't overwrite."""
+    def test_backfill_key_does_not_overwrite_user_param(self):
+        """If user explicitly sets backfill_key param, don't overwrite."""
         part = DailyBackfill(start_date="2024-01-01")
 
-        @job(backfill=part, params={"logical_date": "2024-06-01T00:00:00+00:00"})
+        @job(backfill=part, params={"backfill_key": "2024-06-01T00:00:00+00:00"})
         def my_job():
             @task
             def step():
                 pass
 
         assert (
-            _JOB_REGISTRY["my_job"].params["logical_date"]
+            _JOB_REGISTRY["my_job"].params["backfill_key"]
             == "2024-06-01T00:00:00+00:00"
         )
 

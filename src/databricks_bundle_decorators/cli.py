@@ -434,7 +434,7 @@ def _cmd_backfill(
 
     from databricks_bundle_decorators.discovery import discover_pipelines
     from databricks_bundle_decorators.backfill import (
-        LOGICAL_DATE_PARAM,
+        BACKFILL_KEY_PARAM,
         BackfillDef,
     )
     from databricks_bundle_decorators.registry import _JOB_REGISTRY
@@ -510,7 +510,7 @@ def _cmd_backfill(
                 cmd = [
                     *base_cmd,
                     "--params",
-                    f"{LOGICAL_DATE_PARAM}={key}",
+                    f"{BACKFILL_KEY_PARAM}={key}",
                 ]
                 if not wait:
                     cmd.append("--no-wait")

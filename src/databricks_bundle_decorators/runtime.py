@@ -15,7 +15,6 @@ import json
 import logging
 import os
 import typing
-from datetime import datetime, timezone
 from typing import Any
 
 from databricks_bundle_decorators.context import _populate_params
@@ -23,7 +22,6 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     OutputContext,
 )
-from databricks_bundle_decorators.backfill import _parse_logical_date_str
 from databricks_bundle_decorators.registry import _TASK_REGISTRY
 
 _logger = logging.getLogger(__name__)
@@ -83,17 +81,11 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
             f"Available: {available}"
         )
 
-    # ---- resolve logical_date ------------------------------------------
-    # logical_date is available when the job has a backfill definition or
-    # the user added the param explicitly.  When the param is present but
-    # empty, fall back to the current UTC time.
-    _raw_ld = cli_params.get("logical_date", "")
-    if _raw_ld:
-        logical_date: datetime | None = _parse_logical_date_str(_raw_ld)
-    elif "logical_date" in cli_params:
-        logical_date = datetime.now(tz=timezone.utc)
-    else:
-        logical_date = None
+    # ---- resolve backfill_key ------------------------------------------
+    # backfill_key is the raw string key from the backfill definition
+    # (e.g. "2024-01-15" for DailyBackfill, "us" for StaticBackfill).
+    # An empty string is treated as absent.
+    backfill_key: str | None = cli_params.get("backfill_key") or None
 
     # ---- resolve type hints for expected_type ----------------------------
     try:
@@ -127,8 +119,8 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 and upstream_meta.partition_by
                 and not is_all_partitions
             ):
-                non_ld = [c for c in upstream_meta.partition_by if c != "logical_date"]
-                if non_ld:
+                non_bk = [c for c in upstream_meta.partition_by if c != "backfill_key"]
+                if non_bk:
                     _logger.warning(
                         "IoManager for task '%s' has auto_filter=False. "
                         "Downstream reads for partition columns %s will "
@@ -136,7 +128,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                         "all_partitions() to suppress this warning, or "
                         "filter manually in your task code.",
                         upstream_task_key,
-                        non_ld,
+                        non_bk,
                     )
 
             context = InputContext(
@@ -145,7 +137,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 upstream_task_key=upstream_task_key,
                 run_id=run_id,
                 expected_type=type_hints.get(param_name),
-                logical_date=logical_date,
+                backfill_key=backfill_key,
                 all_partitions=is_all_partitions,
                 partition_by=upstream_meta.partition_by,
                 partition_filter=partition_filter,
@@ -181,7 +173,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 job_name=job_name,
                 task_key=task_key,
                 run_id=run_id,
-                logical_date=logical_date,
+                backfill_key=backfill_key,
                 partition_by=task_meta.partition_by,
             )
             task_meta.io_manager.write(context, result)
