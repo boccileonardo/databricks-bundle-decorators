@@ -628,7 +628,7 @@ class TestBackfillCatchupCmd:
             return subprocess.CompletedProcess(
                 cmd,
                 0,
-                stdout=json.dumps({"runs": runs, "has_more": False}),
+                stdout=json.dumps(runs),
             )
 
         return handler
@@ -957,7 +957,7 @@ class TestGetLaunchedBackfillKeys:
         monkeypatch.setattr(
             "subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(
-                cmd, 0, stdout=json.dumps({"runs": runs, "has_more": False})
+                cmd, 0, stdout=json.dumps(runs)
             ),
         )
 
@@ -992,63 +992,9 @@ class TestGetLaunchedBackfillKeys:
         monkeypatch.setattr(
             "subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(
-                cmd, 0, stdout=json.dumps({"runs": runs, "has_more": False})
+                cmd, 0, stdout=json.dumps(runs)
             ),
         )
 
         result = _get_launched_backfill_keys("123", None, None)
         assert result == {"2024-01-01"}
-
-    def test_paginates(self, monkeypatch):
-        """Follows pagination via has_more / next_page_token."""
-        import json
-        import subprocess
-
-        call_count = 0
-
-        def _paginated(cmd, **kw):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return subprocess.CompletedProcess(
-                    cmd,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "runs": [
-                                {
-                                    "state": {"result_state": "SUCCESS"},
-                                    "job_parameters": [
-                                        {"name": "backfill_key", "value": "key-1"}
-                                    ],
-                                }
-                            ],
-                            "has_more": True,
-                            "next_page_token": "page2",
-                        }
-                    ),
-                )
-            return subprocess.CompletedProcess(
-                cmd,
-                0,
-                stdout=json.dumps(
-                    {
-                        "runs": [
-                            {
-                                "state": {"result_state": "SUCCESS"},
-                                "job_parameters": [
-                                    {"name": "backfill_key", "value": "key-2"}
-                                ],
-                            }
-                        ],
-                        "has_more": False,
-                    }
-                ),
-            )
-
-        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
-        monkeypatch.setattr("subprocess.run", _paginated)
-
-        result = _get_launched_backfill_keys("123", None, None)
-        assert result == {"key-1", "key-2"}
-        assert call_count == 2

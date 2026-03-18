@@ -655,54 +655,46 @@ def _get_launched_backfill_keys(
     (``FAILED``, ``TIMED_OUT``, ``CANCELED``) are **excluded** so
     they will be retried on the next catchup.
 
-    Shells out to ``databricks jobs list-runs`` with JSON output
-    and paginates through all runs.
+    Shells out to ``databricks jobs list-runs`` with JSON output.
+    The CLI handles pagination internally and returns all runs as
+    a JSON array.
     """
     #: Terminal result states that should NOT block a re-run.
     _FAILED_STATES = {"FAILED", "TIMEDOUT", "TIMED_OUT", "CANCELED", "CANCELLED"}
 
+    cmd: list[str] = [
+        "databricks",
+        "jobs",
+        "list-runs",
+        "--job-id",
+        job_id,
+        "--output",
+        "json",
+    ]
+    if profile:
+        cmd += ["--profile", profile]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        err = result.stderr.strip() or result.stdout.strip()
+        print(
+            f"Error: 'databricks jobs list-runs' failed: {err}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    runs: list[dict] = json.loads(result.stdout)
     launched: set[str] = set()
-    page_token: str | None = None
-
-    while True:
-        cmd: list[str] = [
-            "databricks",
-            "jobs",
-            "list-runs",
-            "--job-id",
-            job_id,
-            "--output",
-            "json",
-        ]
-        if page_token:
-            cmd += ["--page-token", page_token]
-        if profile:
-            cmd += ["--profile", profile]
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            err = result.stderr.strip() or result.stdout.strip()
-            print(
-                f"Error: 'databricks jobs list-runs' failed: {err}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        data = json.loads(result.stdout)
-        for run in data.get("runs", []):
-            state = run.get("state", {})
-            result_state = state.get("result_state")
-            # Skip terminally-failed runs so they get retried.
-            # Active runs have result_state=None — we keep those.
-            if result_state in _FAILED_STATES:
-                continue
-            for param in run.get("job_parameters", []):
-                if param.get("name") == "backfill_key":
-                    launched.add(param["value"])
-
-        if not data.get("has_more", False):
-            break
-        page_token = data.get("next_page_token")
+    for run in runs:
+        state = run.get("state", {})
+        result_state = state.get("result_state")
+        # Skip terminally-failed runs so they get retried.
+        # Active runs have result_state=None — we keep those.
+        if result_state in _FAILED_STATES:
+            continue
+        for param in run.get("job_parameters", []):
+            if param.get("name") == "backfill_key":
+                launched.add(param["value"])
 
     return launched
 
