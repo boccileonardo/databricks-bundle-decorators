@@ -246,7 +246,9 @@ class PolarsDeltaIoManager(IoManager):
         if context.partition_filter and not context.all_partitions:
             result = _polars_apply_partition_filter(result, context.partition_filter)
         elif (
-            _needs_backfill_key_col(context.partition_by) and not context.all_partitions
+            self.auto_filter
+            and _needs_backfill_key_col(context.partition_by)
+            and not context.all_partitions
         ):
             result = result.filter(
                 pl.col("backfill_key") == _resolve_backfill_key(context.backfill_key)

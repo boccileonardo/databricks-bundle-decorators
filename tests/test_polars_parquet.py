@@ -343,3 +343,34 @@ class TestPartitionScopedOverwrite:
             "2024-01-01",
             "2024-01-02",
         ]
+
+    def test_auto_filter_false_skips_backfill_key_filter(self, tmp_path: Path) -> None:
+        """auto_filter=False returns all backfill_key partitions on read."""
+        io = PolarsParquetIoManager(base_path=str(tmp_path), auto_filter=False)
+
+        df_day1 = pl.DataFrame({"val": [10]})
+        io.write(
+            _output_ctx("t", partition_by=["backfill_key"], backfill_key="2024-01-01"),
+            df_day1,
+        )
+
+        df_day2 = pl.DataFrame({"val": [20]})
+        io.write(
+            _output_ctx("t", partition_by=["backfill_key"], backfill_key="2024-01-02"),
+            df_day2,
+        )
+
+        # Read without all_partitions — auto_filter=False means no filtering
+        result = io.read(
+            _input_ctx(
+                "t",
+                expected_type=pl.DataFrame,
+                partition_by=["backfill_key"],
+                backfill_key="2024-01-01",
+            )
+        )
+        assert len(result) == 2
+        assert sorted(result["backfill_key"].to_list()) == [
+            "2024-01-01",
+            "2024-01-02",
+        ]

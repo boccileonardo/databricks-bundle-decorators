@@ -683,8 +683,8 @@ class TestAutoFilterRuntime:
         assert len(captured_ctx) == 1
         assert captured_ctx[0].partition_filter is None
 
-    def test_auto_filter_false_warns_for_non_ld_columns(self, caplog):
-        """auto_filter=False with non-backfill_key cols emits a warning."""
+    def test_auto_filter_false_warns_for_all_columns(self, caplog):
+        """auto_filter=False emits a warning for all partition columns."""
 
         class _NoFilterIo(IoManager):
             auto_filter = False
@@ -723,6 +723,47 @@ class TestAutoFilterRuntime:
 
         assert "auto_filter=False" in caplog.text
         assert "event_date" in caplog.text
+
+    def test_auto_filter_false_warns_for_backfill_key(self, caplog):
+        """auto_filter=False also warns when partition_by is backfill_key."""
+
+        class _NoFilterIo(IoManager):
+            auto_filter = False
+
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                return "data"
+
+        io = _NoFilterIo()
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=lambda: "data",
+            task_key="producer",
+            io_manager=io,
+            partition_by=["backfill_key"],
+        )
+        _TASK_REGISTRY["j.consumer"] = TaskMeta(fn=lambda x: x, task_key="consumer")
+
+        run_task(
+            "producer",
+            {"__job_name__": "j", "__task_key__": "producer"},
+        )
+
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            run_task(
+                "consumer",
+                {
+                    "__job_name__": "j",
+                    "__task_key__": "consumer",
+                    "__upstream__x": "producer",
+                },
+            )
+
+        assert "auto_filter=False" in caplog.text
+        assert "backfill_key" in caplog.text
 
 
 class TestPartitionValueExtraction:
