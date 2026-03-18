@@ -8,7 +8,7 @@ key).  The backfill CLI enumerates these keys for bulk run submission.
 On the storage side, IoManagers can write data in a **Hive-style
 partitioned layout** (`column=value/` directories) using the
 `partition_by` parameter on the `@task` decorator — see
-[Built-in IoManagers](api/io-managers/index.md) for format-specific
+[Built-in IoManagers](../api/io-managers/index.md) for format-specific
 details.
 
 ## Quick start
@@ -68,7 +68,7 @@ The mechanism varies by format:
     `replaceWhere` / `partitionOverwriteMode` mechanisms above
     only apply to regular DataFrame writes, not merge builders.
 
-    See [Delta Write Modes & Merge](how-it-works.md#delta-write-modes-merge)
+    See [Delta Write Modes & Merge](../api/io-managers/index.md#delta-write-modes--merge)
     for full merge examples.
 
 !!! warning "Without `partition_by`"
@@ -136,72 +136,28 @@ def daily_pipeline():
 
 ## How it works
 
-### Deploy time
-
 When `@job(backfill=...)` is specified, the decorator auto-injects a
-`backfill_key` job parameter with an empty default value and stores
-the backfill definition for the CLI.  Jobs without `backfill=` do not
-get a `backfill_key` parameter unless you add one explicitly via
-`params={"backfill_key": ""}`.
-
-### Runtime
-
-When `backfill_key` is present as a job parameter:
-
-- If non-empty, it is passed as a raw string to all IoManager
-  contexts.
-- If empty (e.g. a manual run without specifying a key), it defaults
-  to `None`.
-
-This value is passed to all IoManager contexts and is available via
-`get_backfill_key()`.  For time-based backfills, use
-`get_run_logical_date()` to parse the key as a `datetime`.
-
-When `backfill_key` is **not** a job parameter (no `backfill=` and
-not added manually), the IoManager contexts receive `backfill_key=None`.
+`backfill_key` job parameter with an empty default value. At runtime,
+a non-empty key is passed as a string to all IoManager contexts and is
+available via `get_backfill_key()`. An empty key (e.g. a manual run)
+defaults to `None`.
 
 ## Reading the backfill key
 
 Two helpers are available inside task functions:
 
-### `get_backfill_key()`
-
-Returns the **raw key string** — works with all backfill types.
-
-```python
-from databricks_bundle_decorators.backfill import get_backfill_key
-
-key = get_backfill_key()  # "2024-01-15", "2024-W03", "us", etc.
-```
-
-- Raises `RuntimeError` if the `backfill_key` parameter is missing
-  or empty (i.e. the job has no backfill definition and wasn't started
-  via the backfill CLI).
-- Accepts `validate=True` (the default).  When enabled, checks the
-  key against the job's `BackfillDef`: for time-based definitions it
-  verifies `start_date` / `end_date` boundaries; for `StaticBackfill`
-  it verifies the key is in the declared list.  Pass `validate=False`
-  to skip.
-
-### `get_run_logical_date()`
-
-Parses the backfill key as an ISO-8601 **datetime**.  Use this
-for time-based backfills (`DailyBackfill`, `WeeklyBackfill`, etc.)
-when you need a `datetime` object.
+- **`get_backfill_key()`** — returns the raw key string (e.g. `"2024-01-15"`, `"us"`). Works with all backfill types.
+- **`get_run_logical_date()`** — parses the key as an ISO-8601 `datetime`. Use for time-based backfills only.
 
 ```python
-from databricks_bundle_decorators.backfill import get_run_logical_date
+from databricks_bundle_decorators.backfill import get_backfill_key, get_run_logical_date
 
-dt = get_run_logical_date()  # datetime(2024, 1, 15, tzinfo=UTC)
+key = get_backfill_key()          # "2024-01-15"
+dt  = get_run_logical_date()      # datetime(2024, 1, 15, tzinfo=UTC)
 ```
 
-- Calls `get_backfill_key()` internally, so the same `RuntimeError`
-  applies when the key is missing.
-- Raises `ValueError` if the key is **not a valid ISO-8601 string**
-  (e.g. calling it on a `StaticBackfill` key like `"us"`).  Use
-  `get_backfill_key()` instead for non-date keys.
-- Also accepts `validate=True` (the default), with the same
-  boundary-checking behaviour as `get_backfill_key()`.
+Both raise `RuntimeError` if the `backfill_key` parameter is missing or empty.
+See the [Backfill Definitions API](../api/backfill.md) for full parameter details.
 
 ## Backfill definitions
 
@@ -370,7 +326,7 @@ def aggregate(data):
 
 Both approaches set `context.all_partitions = True` on the
 `InputContext` passed to `IoManager.read()`.  See
-[Custom IoManagers](api/custom-io-manager.md) for how to handle this
+[Custom IoManagers](../api/custom-io-manager.md) for how to handle this
 in your own implementations.
 
 ## Limitations

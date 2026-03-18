@@ -49,19 +49,24 @@ There are two mechanisms, suited to different data sizes:
 Attach an `IoManager` to a task to persist its return value to external storage. Downstream tasks receive the data as a plain function argument:
 
 ```python
-from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
 
-io = PolarsParquetIoManager(base_path="abfss://lake@account.dfs.core.windows.net/staging")
+io = SparkDeltaIoManager(
+    base_path="abfss://lake@account.dfs.core.windows.net/staging",
+    mode="overwrite",
+)
 
 @job(cluster=my_cluster)
 def pipeline():
     @task(io_manager=io)
-    def extract() -> pl.DataFrame:
-        return pl.DataFrame({"x": [1, 2, 3]})
+    def extract():
+        from pyspark.sql import SparkSession
+        spark = SparkSession.getActiveSession()
+        return spark.table("raw.events").limit(100)
 
     @task
-    def transform(df: pl.DataFrame):
-        print(df.head())
+    def transform(df):
+        print(f"Rows: {df.count()}")
 
     data = extract()    # output saved by IoManager
     transform(data)     # input loaded by upstream's IoManager
@@ -85,68 +90,13 @@ def consume():
 
 ## Delta Write Modes & Merge
 
-All Delta IoManagers accept a `mode` parameter that controls how data
-is written.  The default is `"error"`, which raises if the table
-already exists — this prevents accidental overwrites.  Set it
-explicitly when you want a different behaviour:
+All Delta IoManagers accept a `mode` parameter (`"error"`, `"overwrite"`,
+`"append"`, `"ignore"`).  For **merge / upsert** operations, return a
+merge builder from your task instead of a DataFrame — the IoManager
+detects the type and calls `.execute()` automatically.
 
-```python
-from databricks_bundle_decorators.io_managers import PolarsDeltaIoManager
-
-io_append = PolarsDeltaIoManager(
-    base_path="abfss://lake@account.dfs.core.windows.net/staging",
-    mode="overwrite",   # or "append", "ignore"
-)
-```
-
-For **merge / upsert** operations, return a merge builder from your
-task instead of a DataFrame.  The IoManager detects the type and
-calls `.execute()` automatically:
-
-=== "Polars (deltalake)"
-
-    ```python
-    from deltalake import DeltaTable
-
-    @task(io_manager=io)
-    def upsert(new_data: pl.DataFrame):
-        dt = DeltaTable(io._uri("upsert"))
-        return (
-            dt.merge(
-                source=new_data,
-                predicate="t.id = s.id",
-                source_alias="s",
-                target_alias="t",
-            )
-            .when_matched_update_all()
-            .when_not_matched_insert_all()
-        )  # returns TableMerger — IoManager calls .execute()
-    ```
-
-=== "PySpark (delta-spark)"
-
-    ```python
-    from delta.tables import DeltaTable
-
-    @task(io_manager=io)
-    def upsert(new_data):
-        spark = SparkSession.getActiveSession()
-        dt = DeltaTable.forPath(spark, io._uri("upsert"))
-        return (
-            dt.alias("t")
-            .merge(new_data.alias("s"), "t.id = s.id")
-            .whenMatchedUpdateAll()
-            .whenNotMatchedInsertAll()
-        )  # returns DeltaMergeBuilder — IoManager calls .execute()
-    ```
-
-| Mode | Behaviour |
-|------|-----------|
-| `"error"` (default) | Raise if the target already exists |
-| `"overwrite"` | Replace the target completely |
-| `"append"` | Add rows to the existing target |
-| `"ignore"` | Silently skip if the target already exists |
-| *(merge builder)* | Return a `TableMerger` / `DeltaMergeBuilder` — `mode` is ignored |
+See [Built-in IoManagers](api/io-managers/index.md#delta-write-modes--merge)
+for full details, examples, and the mode reference table.
 
 ## Packaging model
 
@@ -164,90 +114,55 @@ calls `.execute()` automatically:
 
 ## Limitations
 
-This framework is designed for teams deploying jobs with [Databricks Asset Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/). It generates bundle resources from decorated Python code — it is not a general-purpose orchestrator.
-
-Key rules to keep in mind:
-
-- **The `@job` body is for wiring only.** It runs once at import time (during `databricks bundle deploy`), not on a cluster. Do not put data-fetching, transformations, or any real logic in it — only `@task` definitions and calls. The framework warns if a task call receives a non-`TaskProxy` argument.
-- **No conditional or dynamic DAGs.** `if`/`else` or loops in the `@job` body are evaluated at import time, not at runtime. Put conditional logic inside a `@task` function.
-- **Task arguments are symbolic.** Inside a `@job` body, `@task` calls return `TaskProxy` placeholders, not real data. Passing a literal value to a task call has no effect at runtime.
-- **IoManager belongs to the producer.** Attach `io_manager=` to the task that *produces* data. Downstream tasks receive the data as plain function arguments — they don't declare an IoManager.
+- **The `@job` body is for wiring only.** It runs once at import time (during `databricks bundle deploy`), not on a cluster. Keep all business logic inside `@task` functions.
+- **No conditional or dynamic DAGs.** `if`/`else` or loops in the `@job` body are evaluated at import time. Put conditional logic inside a `@task` function.
+- **Task arguments are symbolic.** `@task` calls return `TaskProxy` placeholders, not real data. Passing a literal value to a task call has no effect at runtime.
+- **Dependencies must be direct arguments.** A `TaskProxy` hidden inside a list, dict, or other container will **not** register a dependency edge — use a separate parameter per upstream dependency.
+- **IoManager belongs to the producer.** Attach `io_manager=` to the task that *produces* data. Downstream tasks receive data as plain function arguments.
 - **Names must be unique.** Job names are unique across the project; task names are unique within a job. Duplicates raise `DuplicateResourceError` at import time.
 
-### Dependency wiring is direct-argument only
+??? example "Examples of common mistakes"
 
-The framework detects dependencies by inspecting the direct positional and
-keyword arguments of each task call. A `TaskProxy` hidden inside a list,
-dict, or any other container will **not** register a dependency edge:
+    **Nested proxies — edge NOT captured:**
 
-```python
-@job
-def my_job():
-    @task
-    def a(): ...
-    @task
-    def b(inputs): ...   # inputs is a list
+    ```python
+    @job
+    def my_job():
+        @task
+        def a(): ...
+        @task
+        def b(inputs): ...
 
-    result = a()
-    b(inputs=[result])   # ✗ — edge NOT captured; result is nested in a list
-```
+        result = a()
+        b(inputs=[result])   # ✗ — result is nested in a list
+    ```
 
-The correct approach is to use a separate parameter per upstream dependency:
+    **Correct — direct keyword argument:**
 
-```python
-@job
-def my_job():
-    @task
-    def a(): ...
-    @task
-    def b(a_data): ...
+    ```python
+    @job
+    def my_job():
+        @task
+        def a(): ...
+        @task
+        def b(a_data): ...
 
-    result = a()
-    b(a_data=result)     # ✓ — direct keyword argument, edge captured
-```
+        result = a()
+        b(a_data=result)     # ✓ — edge captured
+    ```
 
-### Keep `@job` bodies free of side effects
+    **Side effects in `@job` body — runs at deploy time:**
 
-The body of a `@job` function runs **at import time** — specifically, when
-`databricks bundle deploy` imports your pipeline module to discover job
-definitions. This means any code you write directly in the job body (outside
-of `@task` definitions) runs during deployment, not when the job executes on
-a cluster.
+    ```python
+    @job
+    def my_job():
+        print("deploying!")  # ✗ — runs every import
+        connect_to_db()      # ✗ — network call at deploy time
 
-Code that is safe in a `@job` body:
-
-```python
-@job
-def my_job():
-    @task                # ✓ — defining tasks is fine
-    def extract(): ...
-
-    @task
-    def transform(df): ...
-
-    df = extract()       # ✓ — calling tasks records the DAG, does not execute them
-    transform(df)
-```
-
-Code that will behave unexpectedly:
-
-```python
-@job
-def my_job():
-    print("deploying!")  # ✗ — runs every time the module is imported
-    connect_to_db()      # ✗ — network call at deploy time
-
-    @task
-    def extract(): ...
-
-    extract()
-```
-
-!!! warning "Side effects in `@job` bodies run at deploy time"
-
-    Only task graph construction belongs in a `@job` body. Keep everything
-    else — logging, network calls, file I/O — inside `@task` functions,
-    where it will only run when the job executes on Databricks.
+        @task
+        def extract(): ...
+        extract()
+    ```
 
 !!! info "Under the hood"
 

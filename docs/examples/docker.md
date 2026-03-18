@@ -35,4 +35,4 @@ def docker_pipeline():
 | `[]` | No libraries — package pre-installed in Docker image |
 | `[Library(...)]` | Custom libraries — e.g. PyPI packages, Maven JARs |
 
-See [Docker Deployment](../docker-deployment.md) for the full guide including Dockerfile and `databricks.yaml` examples.
+See [Docker Deployment](../guides/docker-deployment.md) for the full guide including Dockerfile and `databricks.yaml` examples.

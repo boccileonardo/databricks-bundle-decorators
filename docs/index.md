@@ -28,9 +28,12 @@ uv add databricks-bundle-decorators[azure]  # or [aws], [gcp], [polars]
 
 ```python
 from databricks_bundle_decorators import job, job_cluster, params, task
-from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+from databricks_bundle_decorators.io_managers import SparkDeltaIoManager
 
-io = PolarsParquetIoManager(base_path="abfss://lake@account.dfs.core.windows.net/staging")
+io = SparkDeltaIoManager(
+    base_path="abfss://lake@account.dfs.core.windows.net/staging",
+    mode="overwrite",
+)
 
 small_cluster = job_cluster(name="small", spark_version="16.4.x-scala2.12", node_type_id="Standard_E8ds_v4", num_workers=1)
 
@@ -38,13 +41,39 @@ small_cluster = job_cluster(name="small", spark_version="16.4.x-scala2.12", node
 def my_pipeline():
     @task(io_manager=io)
     def extract():
-        import polars as pl
-        return pl.DataFrame({"x": [1, 2, 3]})
+        from pyspark.sql import SparkSession
+        spark = SparkSession.getActiveSession()
+        return spark.table("raw.events").limit(100)
 
     @task
     def transform(df):
-        print(df.head())
+        print(f"Rows: {df.count()}")
 
     data = extract()
     transform(data)
 ```
+
+??? example "Polars variant"
+
+    ```python
+    from databricks_bundle_decorators import job, job_cluster, task
+    from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
+
+    io = PolarsParquetIoManager(base_path="abfss://lake@account.dfs.core.windows.net/staging")
+
+    small_cluster = job_cluster(name="small", spark_version="16.4.x-scala2.12", node_type_id="Standard_E8ds_v4", num_workers=1)
+
+    @job(schedule="0 * * * *", cluster=small_cluster)
+    def my_pipeline():
+        @task(io_manager=io)
+        def extract():
+            import polars as pl
+            return pl.DataFrame({"x": [1, 2, 3]})
+
+        @task
+        def transform(df):
+            print(df.head())
+
+        data = extract()
+        transform(data)
+    ```
