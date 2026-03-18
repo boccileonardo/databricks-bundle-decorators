@@ -445,6 +445,14 @@ def _cmd_backfill(
         print(f"Error: Job '{job_name}' not found.", file=sys.stderr)
         if available:
             print(f"Available jobs: {', '.join(available)}", file=sys.stderr)
+        else:
+            print(
+                "No jobs were discovered. Ensure your package is installed "
+                "(e.g. 'uv pip install -e .') and has an entry point "
+                "under [project.entry-points.'databricks_bundle_decorators."
+                "pipelines'] in pyproject.toml.",
+                file=sys.stderr,
+            )
         sys.exit(1)
 
     backfill_def: BackfillDef | None = job_meta.backfill
@@ -727,6 +735,14 @@ def _cmd_backfill_catchup(
         print(f"Error: Job '{job_name}' not found.", file=sys.stderr)
         if available:
             print(f"Available jobs: {', '.join(available)}", file=sys.stderr)
+        else:
+            print(
+                "No jobs were discovered. Ensure your package is installed "
+                "(e.g. 'uv pip install -e .') and has an entry point "
+                "under [project.entry-points.'databricks_bundle_decorators."
+                "pipelines'] in pyproject.toml.",
+                file=sys.stderr,
+            )
         sys.exit(1)
 
     backfill_def: BackfillDef | None = job_meta.backfill
@@ -910,8 +926,8 @@ def main() -> None:
         app(standalone_mode=False)
     except SystemExit:
         raise
-    except Exception:
+    except Exception as exc:
         # standalone_mode=False doesn't convert click errors to SystemExit.
-        # Re-raise as SystemExit so the CLI behaves correctly for end users
-        # (e.g. no-args-is-help, missing required argument, etc.).
+        # Print the error so the user can diagnose the problem.
+        print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
