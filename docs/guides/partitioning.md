@@ -93,15 +93,20 @@ column name must already exist in the DataFrame.
 ### Disabling auto-filtering
 
 Pass `auto_filter=False` when constructing the IoManager to disable
-partition value pushdown.  In this mode, only `backfill_key` is
-auto-filtered (via the runtime context), and a warning is logged for
-any non-`backfill_key` partition columns reminding you to filter
-manually.
+all automatic partition filtering.
+In this mode, a warning is logged for all partition columns reminding you to
+filter manually.
+
+This is useful when the list of distinct partition values is large
+enough to exceed the **48 KB limit** that Databricks imposes on task
+values passed between tasks.  Disabling auto-filtering avoids that
+limit entirely — at the cost of requiring manual filtering in
+downstream task code.
 
 ```python
 io = PolarsParquetIoManager(
     base_path="...",
-    auto_filter=False,   # only backfill_key will be auto-filtered
+    auto_filter=False,   # no automatic filtering
 )
 ```
 

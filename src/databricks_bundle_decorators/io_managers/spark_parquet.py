@@ -97,7 +97,9 @@ class _SparkParquetBase(IoManager):
         if context.partition_filter and not context.all_partitions:
             result = _spark_apply_partition_filter(result, context.partition_filter)
         elif (
-            _needs_backfill_key_col(context.partition_by) and not context.all_partitions
+            self.auto_filter
+            and _needs_backfill_key_col(context.partition_by)
+            and not context.all_partitions
         ):
             from pyspark.sql import functions as F
 

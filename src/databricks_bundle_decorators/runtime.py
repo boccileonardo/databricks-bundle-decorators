@@ -119,17 +119,15 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 and upstream_meta.partition_by
                 and not is_all_partitions
             ):
-                non_bk = [c for c in upstream_meta.partition_by if c != "backfill_key"]
-                if non_bk:
-                    _logger.warning(
-                        "IoManager for task '%s' has auto_filter=False. "
-                        "Downstream reads for partition columns %s will "
-                        "not be filtered automatically. Use "
-                        "all_partitions() to suppress this warning, or "
-                        "filter manually in your task code.",
-                        upstream_task_key,
-                        non_bk,
-                    )
+                _logger.warning(
+                    "IoManager for task '%s' has auto_filter=False. "
+                    "Downstream reads for partition columns %s will "
+                    "not be filtered automatically. Use "
+                    "all_partitions() to suppress this warning, or "
+                    "filter manually in your task code.",
+                    upstream_task_key,
+                    list(upstream_meta.partition_by),
+                )
 
             context = InputContext(
                 job_name=job_name,
