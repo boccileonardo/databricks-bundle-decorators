@@ -38,6 +38,23 @@ def _resolve_backfill_key(backfill_key: str | None) -> str:
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
 
 
+def _build_replace_where(partition_values: dict[str, list[str]]) -> str:
+    """Build a SQL predicate for partition-scoped overwrites.
+
+    Used by Delta IoManagers to restrict ``overwrite`` mode to only
+    the partitions present in the data being written.
+    """
+    parts: list[str] = []
+    for col, values in partition_values.items():
+        escaped = [v.replace("'", "''") for v in values]
+        if len(escaped) == 1:
+            parts.append(f"{col} = '{escaped[0]}'")
+        else:
+            in_list = ", ".join(f"'{v}'" for v in escaped)
+            parts.append(f"{col} IN ({in_list})")
+    return " AND ".join(parts)
+
+
 def _polars_extract_partition_values(
     obj: Any, partition_by: list[str]
 ) -> dict[str, list[str]]:

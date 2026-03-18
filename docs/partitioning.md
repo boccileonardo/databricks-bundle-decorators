@@ -40,6 +40,42 @@ def daily_pipeline():
 All `partition_by` columns produce Hive-style partitioned output
 (`column=value/` directory layout).
 
+### Partition-scoped overwrite
+
+When `partition_by` is set, all built-in IoManagers automatically
+scope their writes to **only the partitions present in the data
+being written**. This means an `overwrite` write for `region=eu`
+will never touch `region=us` — existing partitions are preserved.
+
+This is critical for **backfill safety**: running a backfill for
+`2024-01-15` will not destroy data for any other date.
+
+The mechanism varies by format:
+
+| Format | Mechanism |
+|--------|-----------|
+| **Delta** (Polars & Spark) | `replaceWhere` predicate scoped to written partition values |
+| **Parquet** (Spark) | `partitionOverwriteMode=dynamic` — only written partitions are replaced |
+| **Parquet / CSV / JSON** (Polars) | Hive-style `PartitionBy` directories — each partition is a separate directory, naturally isolated |
+
+!!! note "Merge operations are partition-safe by design"
+    When a task returns a `DeltaMergeBuilder` (PySpark) or
+    `TableMerger` (Polars / deltalake), the IoManager calls
+    `.execute()` directly — it bypasses the overwrite path
+    entirely.  The merge predicate (e.g. `t.id = s.id`) controls
+    which rows are touched, so other partitions are never at risk.
+    You can safely combine `partition_by` with merge; the
+    `replaceWhere` / `partitionOverwriteMode` mechanisms above
+    only apply to regular DataFrame writes, not merge builders.
+
+    See [Delta Write Modes & Merge](how-it-works.md#delta-write-modes-merge)
+    for full merge examples.
+
+!!! warning "Without `partition_by`"
+    When `partition_by` is **not** set, `mode="overwrite"` replaces
+    the **entire** table/file as usual. Partition-scoped overwrite
+    only applies when `partition_by` is configured on the `@task`.
+
 ### Auto-filtering (default)
 
 By default (`auto_filter=True`), all built-in IoManagers automatically

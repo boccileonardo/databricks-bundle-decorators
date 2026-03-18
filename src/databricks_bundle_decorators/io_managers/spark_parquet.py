@@ -74,6 +74,8 @@ class _SparkParquetBase(IoManager):
                 obj, partition_by
             )
             writer = writer.partitionBy(*partition_by)
+            # Only overwrite partitions present in the data
+            writer = writer.option("partitionOverwriteMode", "dynamic")
         for k, v in self._write_options.items():
             writer = writer.option(k, v)
         writer.save(uri)
