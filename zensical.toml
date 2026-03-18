@@ -9,8 +9,11 @@ nav = [
     { "Home" = "index.md" },
     { "Getting Started" = "getting-started.md" },
     { "How It Works" = "how-it-works.md" },
-    { "Backfilling & Partitioning" = "partitioning.md" },
-    { "Docker Deployment" = "docker-deployment.md" },
+    { "Guides" = [
+        "guides/index.md",
+        { "Backfilling & Partitioning" = "guides/partitioning.md" },
+        { "Docker Deployment" = "guides/docker-deployment.md" },
+    ]},
     { "Examples" = [
         "examples/index.md",
         { "Basic ETL" = "examples/basic-etl.md" },
