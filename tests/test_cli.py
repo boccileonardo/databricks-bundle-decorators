@@ -246,6 +246,23 @@ class TestMainCli:
         with pytest.raises(SystemExit):
             main()
 
+    def test_main_prints_error_on_exception(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ):
+        """main() prints the exception message instead of silently exiting."""
+        monkeypatch.setattr(sys, "argv", ["dbxdec", "backfill", "some_job"])
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+        from databricks_bundle_decorators.cli import main
+
+        with pytest.raises(SystemExit):
+            main()
+
+        err = capsys.readouterr().err
+        assert "boom" in err
+
     @staticmethod
     def _make_project(tmp_path: Path) -> None:
         (tmp_path / "pyproject.toml").write_text(
@@ -362,6 +379,20 @@ class TestBackfillCmd:
             from databricks_bundle_decorators.cli import _cmd_backfill
 
             _cmd_backfill(job_name="nonexistent")
+
+    def test_job_not_found_empty_registry_hint(self, monkeypatch, capsys):
+        """When no jobs are discovered at all, show a helpful hint."""
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+
+        with pytest.raises(SystemExit):
+            _cmd_backfill(job_name="nonexistent")
+
+        err = capsys.readouterr().err
+        assert "No jobs were discovered" in err
+        assert "entry point" in err
 
     def test_no_partition_no_keys_exits(self, monkeypatch):
         """Exit when job has no backfill definition and --keys is not provided."""
@@ -783,6 +814,20 @@ class TestBackfillCatchupCmd:
 
         with pytest.raises(SystemExit):
             _cmd_backfill_catchup(job_name="nonexistent")
+
+    def test_job_not_found_empty_registry_hint(self, monkeypatch, capsys):
+        """When no jobs are discovered at all, show a helpful hint."""
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+
+        with pytest.raises(SystemExit):
+            _cmd_backfill_catchup(job_name="nonexistent")
+
+        err = capsys.readouterr().err
+        assert "No jobs were discovered" in err
+        assert "entry point" in err
 
     def test_submits_missing_keys(self, monkeypatch, capsys):
         """Non-dry-run submits only missing keys via ``databricks bundle run``."""

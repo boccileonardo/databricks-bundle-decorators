@@ -15,7 +15,13 @@ Flask, Dagster, etc.) and decouples the framework package from concrete
 pipeline implementations.
 """
 
+from __future__ import annotations
+
 import importlib.metadata
+import logging
+import sys
+
+_logger = logging.getLogger(__name__)
 
 
 def discover_pipelines() -> None:
@@ -23,5 +29,18 @@ def discover_pipelines() -> None:
     eps = importlib.metadata.entry_points(
         group="databricks_bundle_decorators.pipelines"
     )
+    loaded: list[str] = []
     for ep in eps:
-        ep.load()  # imports the module, triggering decorator registration
+        _logger.debug("Loading pipeline entry point: %s (%s)", ep.name, ep.value)
+        try:
+            ep.load()  # imports the module, triggering decorator registration
+        except Exception as exc:
+            print(
+                f"Error: Failed to load pipeline entry point '{ep.name}' "
+                f"({ep.value}): {exc}",
+                file=sys.stderr,
+            )
+            raise
+        loaded.append(ep.name)
+    if not loaded:
+        _logger.debug("No pipeline entry points found.")
