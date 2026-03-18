@@ -9,6 +9,10 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
+import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -428,15 +432,8 @@ def _cmd_backfill(
     Uses ``databricks bundle run`` under the hood, which automatically
     resolves the deployed job name (including any dev-mode prefix).
     """
-    import asyncio
-    import shutil
-    import subprocess
-
+    from databricks_bundle_decorators.backfill import BackfillDef
     from databricks_bundle_decorators.discovery import discover_pipelines
-    from databricks_bundle_decorators.backfill import (
-        BACKFILL_KEY_PARAM,
-        BackfillDef,
-    )
     from databricks_bundle_decorators.registry import _JOB_REGISTRY
 
     # 1. Populate registries
@@ -482,7 +479,31 @@ def _cmd_backfill(
         print("\n[DRY RUN] No runs submitted.")
         return
 
-    # 3. Verify databricks CLI is available
+    _submit_backfill_runs(
+        job_name=job_name,
+        key_list=key_list,
+        max_concurrent=max_concurrent,
+        wait=wait,
+        target=target,
+        profile=profile,
+    )
+
+
+def _submit_backfill_runs(
+    *,
+    job_name: str,
+    key_list: list[str],
+    max_concurrent: int | None = None,
+    wait: bool = False,
+    target: str | None = None,
+    profile: str | None = None,
+) -> None:
+    """Submit one ``databricks bundle run`` per backfill key.
+
+    Shared by ``backfill`` and ``catchup`` commands.
+    """
+    from databricks_bundle_decorators.backfill import BACKFILL_KEY_PARAM
+
     if shutil.which("databricks") is None:
         print(
             "Error: 'databricks' CLI not found on PATH. "
@@ -491,7 +512,6 @@ def _cmd_backfill(
         )
         sys.exit(1)
 
-    # 4. Build base command
     base_cmd: list[str] = ["databricks", "bundle", "run", job_name]
     if target:
         base_cmd += ["--target", target]
@@ -556,6 +576,208 @@ def _cmd_backfill(
             file=sys.stderr,
         )
         sys.exit(1)
+
+
+def _get_job_id_from_bundle(
+    job_name: str,
+    target: str | None,
+    profile: str | None,
+) -> str:
+    """Resolve the deployed Databricks job ID from the bundle state.
+
+    Shells out to ``databricks bundle summary --output json`` and
+    extracts the numeric job ID for *job_name*.
+    """
+    if shutil.which("databricks") is None:
+        print(
+            "Error: 'databricks' CLI not found on PATH. "
+            "Install it: https://docs.databricks.com/dev-tools/cli/install.html",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    cmd: list[str] = ["databricks", "bundle", "summary", "--output", "json"]
+    if target:
+        cmd += ["--target", target]
+    if profile:
+        cmd += ["--profile", profile]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        err = result.stderr.strip() or result.stdout.strip()
+        print(
+            f"Error: 'databricks bundle summary' failed: {err}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    summary = json.loads(result.stdout)
+    jobs = summary.get("resources", {}).get("jobs", {})
+    job_resource = jobs.get(job_name)
+    if job_resource is None:
+        available = sorted(jobs.keys())
+        print(
+            f"Error: Job '{job_name}' not found in bundle summary.",
+            file=sys.stderr,
+        )
+        if available:
+            print(f"Available jobs: {', '.join(available)}", file=sys.stderr)
+        sys.exit(1)
+
+    job_id: str | None = job_resource.get("id")
+    if not job_id:
+        print(
+            f"Error: Job '{job_name}' has no ID in the bundle state. "
+            f"Has the bundle been deployed?",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return job_id
+
+
+def _get_launched_backfill_keys(
+    job_id: str,
+    target: str | None,
+    profile: str | None,
+) -> set[str]:
+    """Return the set of ``backfill_key`` values already launched.
+
+    Includes both active and completed (successful) runs so that
+    in-flight runs are not relaunched.  Terminally failed runs
+    (``FAILED``, ``TIMED_OUT``, ``CANCELED``) are **excluded** so
+    they will be retried on the next catchup.
+
+    Shells out to ``databricks jobs list-runs`` with JSON output
+    and paginates through all runs.
+    """
+    #: Terminal result states that should NOT block a re-run.
+    _FAILED_STATES = {"FAILED", "TIMEDOUT", "TIMED_OUT", "CANCELED", "CANCELLED"}
+
+    launched: set[str] = set()
+    page_token: str | None = None
+
+    while True:
+        cmd: list[str] = [
+            "databricks",
+            "jobs",
+            "list-runs",
+            "--job-id",
+            job_id,
+            "--output",
+            "json",
+        ]
+        if page_token:
+            cmd += ["--page-token", page_token]
+        if profile:
+            cmd += ["--profile", profile]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            err = result.stderr.strip() or result.stdout.strip()
+            print(
+                f"Error: 'databricks jobs list-runs' failed: {err}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        data = json.loads(result.stdout)
+        for run in data.get("runs", []):
+            state = run.get("state", {})
+            result_state = state.get("result_state")
+            # Skip terminally-failed runs so they get retried.
+            # Active runs have result_state=None — we keep those.
+            if result_state in _FAILED_STATES:
+                continue
+            for param in run.get("job_parameters", []):
+                if param.get("name") == "backfill_key":
+                    launched.add(param["value"])
+
+        if not data.get("has_more", False):
+            break
+        page_token = data.get("next_page_token")
+
+    return launched
+
+
+def _cmd_backfill_catchup(
+    *,
+    job_name: str,
+    max_concurrent: int | None = None,
+    dry_run: bool = False,
+    wait: bool = False,
+    target: str | None = None,
+    profile: str | None = None,
+) -> None:
+    """Determine and submit missing backfill runs for a job.
+
+    Enumerates all keys from the job's backfill definition, queries
+    the Databricks API for successful past runs, computes the
+    difference, and submits the missing keys.
+    """
+    from databricks_bundle_decorators.backfill import BackfillDef
+    from databricks_bundle_decorators.discovery import discover_pipelines
+    from databricks_bundle_decorators.registry import _JOB_REGISTRY
+
+    # 1. Populate registries
+    discover_pipelines()
+
+    job_meta = _JOB_REGISTRY.get(job_name)
+    if job_meta is None:
+        available = sorted(_JOB_REGISTRY.keys())
+        print(f"Error: Job '{job_name}' not found.", file=sys.stderr)
+        if available:
+            print(f"Available jobs: {', '.join(available)}", file=sys.stderr)
+        sys.exit(1)
+
+    backfill_def: BackfillDef | None = job_meta.backfill
+    if backfill_def is None:
+        print(
+            f"Error: Job '{job_name}' has no backfill definition. "
+            f"catchup requires a backfill= on the @job decorator.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # 2. Enumerate all keys
+    all_keys = backfill_def.keys()
+
+    # 3. Get the deployed job ID from the bundle state
+    job_id = _get_job_id_from_bundle(job_name, target, profile)
+
+    # 4. Get already-launched keys (active + successful) from Databricks
+    launched_keys = _get_launched_backfill_keys(job_id, target, profile)
+
+    # 5. Compute missing
+    all_keys_set = set(all_keys)
+    missing_keys = [k for k in all_keys if k not in launched_keys]
+
+    print(f"Job: {job_name}")
+    print(f"All backfill keys: {len(all_keys)}")
+    print(f"Already launched: {len(all_keys_set & launched_keys)}")
+    print(f"Missing: {len(missing_keys)}")
+
+    if not missing_keys:
+        print("\nAll backfill keys have been completed!")
+        return
+
+    # Show a preview of the missing keys
+    preview = ", ".join(missing_keys[:10])
+    if len(missing_keys) > 10:
+        preview += f" ... and {len(missing_keys) - 10} more"
+    print(f"Missing keys: {preview}")
+
+    if dry_run:
+        print("\n[DRY RUN] No runs submitted.")
+        return
+
+    _submit_backfill_runs(
+        job_name=job_name,
+        key_list=missing_keys,
+        max_concurrent=max_concurrent,
+        wait=wait,
+        target=target,
+        profile=profile,
+    )
 
 
 # --- Typer commands --------------------------------------------------------
@@ -625,6 +847,53 @@ def backfill(
         start=start,
         end=end,
         keys=keys,
+        max_concurrent=max_concurrent,
+        dry_run=dry_run,
+        wait=wait,
+        target=target,
+        profile=profile,
+    )
+
+
+@app.command("catchup")
+def catchup(
+    job_name: Annotated[
+        str,
+        typer.Argument(help="Name of the @job to catch up"),
+    ],
+    max_concurrent: Annotated[
+        int | None,
+        typer.Option(help="Maximum number of concurrent run submissions"),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print missing keys without submitting runs"),
+    ] = False,
+    wait: Annotated[
+        bool,
+        typer.Option(help="Wait for all runs to complete and report success/failure"),
+    ] = False,
+    target: Annotated[
+        str | None,
+        typer.Option(
+            "--target",
+            "-t",
+            help="Databricks bundle target (e.g. dev, staging, prod)",
+        ),
+    ] = None,
+    profile: Annotated[
+        str | None,
+        typer.Option(help="Databricks CLI profile name"),
+    ] = None,
+) -> None:
+    """Submit missing backfill runs for a job.
+
+    Enumerates all keys from the job's backfill definition, checks
+    which runs are already active or completed, and submits only
+    the missing ones.
+    """
+    _cmd_backfill_catchup(
+        job_name=job_name,
         max_concurrent=max_concurrent,
         dry_run=dry_run,
         wait=wait,

@@ -260,6 +260,33 @@ When `--wait` is used, the CLI polls each run until completion,
 printing `SUCCESS` or the failure status for each key.  This is
 useful in CI/CD pipelines where you need to gate on backfill success.
 
+### Catchup
+
+The `dbxdec catchup` subcommand automatically determines which
+backfill keys are missing and submits only those.  It is useful for:
+
+- **First deploy** — trigger all backfill keys after deploying a job
+  for the first time.
+- **Partial recovery** — after a partial backfill, submit only the
+  remaining keys.
+
+```bash
+# Preview missing keys without submitting
+uv run dbxdec catchup my_pipeline --dry-run
+
+# Submit all missing keys
+uv run dbxdec catchup my_pipeline
+```
+
+The `catchup` command counts a key as **already launched** if it has a successful or
+still-active run.  Terminally failed runs (`FAILED`, `TIMED_OUT`,
+`CANCELED`) will be relaunched if they exist.
+
+!!! tip "Catchup requires a deployed bundle"
+    `catchup` resolves the job ID from the bundle state via
+    `databricks bundle summary`, so the bundle must have been
+    deployed at least once before running `catchup`.
+
 ## Cross-partition reads
 
 By default, each downstream task reads only the current partition from

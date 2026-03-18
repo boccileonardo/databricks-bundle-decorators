@@ -6,10 +6,12 @@ from pathlib import Path
 import pytest
 
 from databricks_bundle_decorators.cli import (
-    _cmd_init,
     _cmd_backfill,
+    _cmd_backfill_catchup,
+    _cmd_init,
     _detect_package_name,
     _detect_src_layout,
+    _get_launched_backfill_keys,
     _read_pyproject,
 )
 
@@ -529,3 +531,479 @@ class TestBackfillCmd:
                 job_name="test_pipeline",
                 keys="2024-01-01",
             )
+
+
+# ---------------------------------------------------------------------------
+# Catchup CLI tests
+# ---------------------------------------------------------------------------
+
+
+class TestBackfillCatchupCmd:
+    """Tests for the ``dbxdec catchup`` subcommand."""
+
+    def setup_method(self):
+        from databricks_bundle_decorators.registry import reset_registries
+
+        reset_registries()
+
+    def _make_job_with_backfill(self):
+        """Register a job with a daily backfill (5 days)."""
+        from databricks_bundle_decorators.backfill import DailyBackfill
+        from databricks_bundle_decorators.decorators import job, task
+
+        @job(backfill=DailyBackfill(start_date="2024-01-01", end_date="2024-01-05"))
+        def test_pipeline():
+            @task
+            def step():
+                pass
+
+    def _make_job_without_backfill(self):
+        from databricks_bundle_decorators.decorators import job, task
+
+        @job
+        def no_backfill_job():
+            @task
+            def step():
+                pass
+
+    @staticmethod
+    def _fake_bundle_summary(job_id: str = "12345"):
+        """Return a fake subprocess handler for ``databricks bundle summary``."""
+        import json
+        import subprocess
+
+        summary = {
+            "resources": {
+                "jobs": {
+                    "test_pipeline": {"id": job_id},
+                }
+            }
+        }
+
+        def handler(cmd, *, capture_output=False, text=False):
+            if "bundle" in cmd and "summary" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(summary))
+            raise AssertionError(f"Unexpected command: {cmd}")
+
+        return handler
+
+    @staticmethod
+    def _fake_list_runs(runs: list[dict]):
+        """Return a fake subprocess handler for ``databricks jobs list-runs``."""
+        import json
+        import subprocess
+
+        def handler(cmd, *, capture_output=False, text=False):
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps({"runs": runs, "has_more": False}),
+            )
+
+        return handler
+
+    @staticmethod
+    def _combined_handler(*handlers):
+        """Combine multiple fake subprocess handlers by dispatch."""
+
+        def handler(cmd, **kwargs):
+            if "bundle" in cmd and "summary" in cmd:
+                return handlers[0](cmd, **kwargs)
+            if "list-runs" in cmd:
+                return handlers[1](cmd, **kwargs)
+            if "bundle" in cmd and "run" in cmd:
+                return handlers[2](cmd, **kwargs) if len(handlers) > 2 else None
+            raise AssertionError(f"Unexpected command: {cmd}")
+
+        return handler
+
+    def test_dry_run_shows_missing_keys(self, monkeypatch, capsys):
+        """--dry-run shows missing keys without submitting."""
+        self._make_job_with_backfill()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+
+        # Simulate: 2024-01-01 and 2024-01-03 already succeeded
+        runs = [
+            {
+                "state": {"result_state": "SUCCESS"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-01"}],
+            },
+            {
+                "state": {"result_state": "SUCCESS"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-03"}],
+            },
+        ]
+
+        monkeypatch.setattr(
+            "subprocess.run",
+            self._combined_handler(
+                self._fake_bundle_summary(),
+                self._fake_list_runs(runs),
+            ),
+        )
+
+        _cmd_backfill_catchup(job_name="test_pipeline", dry_run=True)
+
+        out = capsys.readouterr().out
+        assert "All backfill keys: 5" in out
+        assert "Already launched: 2" in out
+        assert "Missing: 3" in out
+        assert "DRY RUN" in out
+
+    def test_active_runs_are_not_relaunched(self, monkeypatch, capsys):
+        """Active (in-flight) runs should count as launched."""
+        self._make_job_with_backfill()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+
+        # 2024-01-01 succeeded, 2024-01-02 is still running (no result_state)
+        runs = [
+            {
+                "state": {"result_state": "SUCCESS"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-01"}],
+            },
+            {
+                "state": {"life_cycle_state": "RUNNING"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-02"}],
+            },
+        ]
+
+        monkeypatch.setattr(
+            "subprocess.run",
+            self._combined_handler(
+                self._fake_bundle_summary(),
+                self._fake_list_runs(runs),
+            ),
+        )
+
+        _cmd_backfill_catchup(job_name="test_pipeline", dry_run=True)
+
+        out = capsys.readouterr().out
+        assert "Already launched: 2" in out
+        assert "Missing: 3" in out
+
+    def test_failed_runs_are_retried(self, monkeypatch, capsys):
+        """Terminally failed runs should NOT count as launched."""
+        self._make_job_with_backfill()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+
+        runs = [
+            {
+                "state": {"result_state": "SUCCESS"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-01"}],
+            },
+            {
+                "state": {"result_state": "FAILED"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-02"}],
+            },
+            {
+                "state": {"result_state": "CANCELED"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-03"}],
+            },
+        ]
+
+        monkeypatch.setattr(
+            "subprocess.run",
+            self._combined_handler(
+                self._fake_bundle_summary(),
+                self._fake_list_runs(runs),
+            ),
+        )
+
+        _cmd_backfill_catchup(job_name="test_pipeline", dry_run=True)
+
+        out = capsys.readouterr().out
+        # Only 2024-01-01 is launched; failed and canceled should be retried
+        assert "Already launched: 1" in out
+        assert "Missing: 4" in out
+
+    def test_all_complete_prints_done(self, monkeypatch, capsys):
+        """When all keys are launched, print completion message."""
+        self._make_job_with_backfill()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+
+        runs = [
+            {
+                "state": {"result_state": "SUCCESS"},
+                "job_parameters": [{"name": "backfill_key", "value": f"2024-01-0{i}"}],
+            }
+            for i in range(1, 6)
+        ]
+
+        monkeypatch.setattr(
+            "subprocess.run",
+            self._combined_handler(
+                self._fake_bundle_summary(),
+                self._fake_list_runs(runs),
+            ),
+        )
+
+        _cmd_backfill_catchup(job_name="test_pipeline")
+
+        out = capsys.readouterr().out
+        assert "All backfill keys have been completed" in out
+
+    def test_no_backfill_def_exits(self, monkeypatch):
+        """Exit when job has no backfill definition."""
+        self._make_job_without_backfill()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+
+        with pytest.raises(SystemExit):
+            _cmd_backfill_catchup(job_name="no_backfill_job")
+
+    def test_job_not_found_exits(self, monkeypatch):
+        """Exit when job name is not in the registry."""
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+
+        with pytest.raises(SystemExit):
+            _cmd_backfill_catchup(job_name="nonexistent")
+
+    def test_submits_missing_keys(self, monkeypatch, capsys):
+        """Non-dry-run submits only missing keys via ``databricks bundle run``."""
+        import subprocess
+
+        self._make_job_with_backfill()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+
+        # 2024-01-01, 2024-01-02 already done
+        runs = [
+            {
+                "state": {"result_state": "SUCCESS"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-01"}],
+            },
+            {
+                "state": {"result_state": "SUCCESS"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-02"}],
+            },
+        ]
+
+        submitted_keys: list[str] = []
+
+        def _combined(cmd, *, capture_output=False, text=False):
+            if "bundle" in cmd and "summary" in cmd:
+                return self._fake_bundle_summary()(
+                    cmd, capture_output=capture_output, text=text
+                )
+            if "list-runs" in cmd:
+                return self._fake_list_runs(runs)(
+                    cmd, capture_output=capture_output, text=text
+                )
+            if "bundle" in cmd and "run" in cmd:
+                # Extract the backfill_key from --params
+                for arg in cmd:
+                    if arg.startswith("backfill_key="):
+                        submitted_keys.append(arg.split("=", 1)[1])
+                return subprocess.CompletedProcess(cmd, 0, stdout="Run submitted\n")
+            raise AssertionError(f"Unexpected command: {cmd}")
+
+        monkeypatch.setattr("subprocess.run", _combined)
+
+        _cmd_backfill_catchup(job_name="test_pipeline")
+
+        out = capsys.readouterr().out
+        assert "Submitted 3/3" in out
+        assert sorted(submitted_keys) == ["2024-01-03", "2024-01-04", "2024-01-05"]
+
+    def test_target_and_profile_forwarded(self, monkeypatch, capsys):
+        """--target and --profile are passed to all CLI calls."""
+        self._make_job_with_backfill()
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.discovery.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+
+        all_cmds: list[list[str]] = []
+
+        # All keys already done
+        runs = [
+            {
+                "state": {"result_state": "SUCCESS"},
+                "job_parameters": [{"name": "backfill_key", "value": f"2024-01-0{i}"}],
+            }
+            for i in range(1, 6)
+        ]
+
+        def _spy(cmd, *, capture_output=False, text=False):
+            all_cmds.append(list(cmd))
+            if "bundle" in cmd and "summary" in cmd:
+                return self._fake_bundle_summary()(
+                    cmd, capture_output=capture_output, text=text
+                )
+            if "list-runs" in cmd:
+                return self._fake_list_runs(runs)(
+                    cmd, capture_output=capture_output, text=text
+                )
+            raise AssertionError(f"Unexpected command: {cmd}")
+
+        monkeypatch.setattr("subprocess.run", _spy)
+
+        _cmd_backfill_catchup(
+            job_name="test_pipeline",
+            target="prod",
+            profile="myprofile",
+        )
+
+        # bundle summary should have --target and --profile
+        summary_cmd = all_cmds[0]
+        assert "--target" in summary_cmd
+        assert summary_cmd[summary_cmd.index("--target") + 1] == "prod"
+        assert "--profile" in summary_cmd
+        assert summary_cmd[summary_cmd.index("--profile") + 1] == "myprofile"
+
+        # list-runs should have --profile
+        list_cmd = all_cmds[1]
+        assert "--profile" in list_cmd
+        assert list_cmd[list_cmd.index("--profile") + 1] == "myprofile"
+
+
+class TestGetLaunchedBackfillKeys:
+    """Unit tests for _get_launched_backfill_keys logic."""
+
+    def test_includes_active_runs(self, monkeypatch):
+        """Active runs (no result_state) are counted as launched."""
+        import json
+        import subprocess
+
+        runs = [
+            {
+                "state": {"life_cycle_state": "RUNNING"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-01"}],
+            },
+            {
+                "state": {"life_cycle_state": "PENDING"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-02"}],
+            },
+        ]
+
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda cmd, **kw: subprocess.CompletedProcess(
+                cmd, 0, stdout=json.dumps({"runs": runs, "has_more": False})
+            ),
+        )
+
+        result = _get_launched_backfill_keys("123", None, None)
+        assert result == {"2024-01-01", "2024-01-02"}
+
+    def test_excludes_failed_runs(self, monkeypatch):
+        """Failed/canceled runs are not counted as launched."""
+        import json
+        import subprocess
+
+        runs = [
+            {
+                "state": {"result_state": "SUCCESS"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-01"}],
+            },
+            {
+                "state": {"result_state": "FAILED"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-02"}],
+            },
+            {
+                "state": {"result_state": "CANCELED"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-03"}],
+            },
+            {
+                "state": {"result_state": "TIMED_OUT"},
+                "job_parameters": [{"name": "backfill_key", "value": "2024-01-04"}],
+            },
+        ]
+
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda cmd, **kw: subprocess.CompletedProcess(
+                cmd, 0, stdout=json.dumps({"runs": runs, "has_more": False})
+            ),
+        )
+
+        result = _get_launched_backfill_keys("123", None, None)
+        assert result == {"2024-01-01"}
+
+    def test_paginates(self, monkeypatch):
+        """Follows pagination via has_more / next_page_token."""
+        import json
+        import subprocess
+
+        call_count = 0
+
+        def _paginated(cmd, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "runs": [
+                                {
+                                    "state": {"result_state": "SUCCESS"},
+                                    "job_parameters": [
+                                        {"name": "backfill_key", "value": "key-1"}
+                                    ],
+                                }
+                            ],
+                            "has_more": True,
+                            "next_page_token": "page2",
+                        }
+                    ),
+                )
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps(
+                    {
+                        "runs": [
+                            {
+                                "state": {"result_state": "SUCCESS"},
+                                "job_parameters": [
+                                    {"name": "backfill_key", "value": "key-2"}
+                                ],
+                            }
+                        ],
+                        "has_more": False,
+                    }
+                ),
+            )
+
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+        monkeypatch.setattr("subprocess.run", _paginated)
+
+        result = _get_launched_backfill_keys("123", None, None)
+        assert result == {"key-1", "key-2"}
+        assert call_count == 2
