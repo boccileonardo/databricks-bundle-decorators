@@ -20,6 +20,7 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
+    _build_replace_where,
     _needs_backfill_key_col,
     _resolve_backfill_key,
     _spark_apply_partition_filter,
@@ -91,6 +92,12 @@ class _SparkDeltaBase(IoManager):
                 obj, partition_by
             )
             writer = writer.partitionBy(*partition_by)
+            # Scope overwrite to affected partitions only
+            if self._mode == "overwrite":
+                writer = writer.option(
+                    "replaceWhere",
+                    _build_replace_where(self._last_partition_values),
+                )
         for k, v in self._write_options.items():
             writer = writer.option(k, v)
         writer.save(uri)

@@ -18,6 +18,7 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
+    _build_replace_where,
     _needs_backfill_key_col,
     _resolve_backfill_key,
     _polars_apply_partition_filter,
@@ -185,6 +186,13 @@ class PolarsDeltaIoManager(IoManager):
         if partition_by:
             self._last_partition_values = _polars_extract_partition_values(
                 obj, partition_by
+            )
+
+        # Scope overwrite to affected partitions only
+        if self._mode == "overwrite" and partition_by and self._last_partition_values:
+            delta_opts = write_opts.setdefault("delta_write_options", {})
+            delta_opts.setdefault(
+                "predicate", _build_replace_where(self._last_partition_values)
             )
 
         if isinstance(obj, pl.LazyFrame):

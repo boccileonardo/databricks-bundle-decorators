@@ -25,6 +25,7 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
+    _build_replace_where,
     _needs_backfill_key_col,
     _resolve_backfill_key,
     _spark_apply_partition_filter,
@@ -146,6 +147,13 @@ class SparkUCTableIoManager(IoManager):
                 obj, partition_by
             )
             writer = writer.partitionBy(*partition_by)
+            # Scope overwrite to affected partitions only (skip on first write
+            # because saveAsTable + replaceWhere requires an existing table)
+            if self._mode == "overwrite" and self._spark.catalog.tableExists(table):
+                writer = writer.option(
+                    "replaceWhere",
+                    _build_replace_where(self._last_partition_values),
+                )
         for k, v in self._write_options.items():
             writer = writer.option(k, v)
         writer.saveAsTable(table)
@@ -289,6 +297,12 @@ class SparkUCVolumeDeltaIoManager(IoManager):
                 obj, partition_by
             )
             writer = writer.partitionBy(*partition_by)
+            # Scope overwrite to affected partitions only
+            if self._mode == "overwrite":
+                writer = writer.option(
+                    "replaceWhere",
+                    _build_replace_where(self._last_partition_values),
+                )
         for k, v in self._write_options.items():
             writer = writer.option(k, v)
         writer.save(uri)
@@ -412,6 +426,8 @@ class SparkUCVolumeParquetIoManager(IoManager):
                 obj, partition_by
             )
             writer = writer.partitionBy(*partition_by)
+            # Only overwrite partitions present in the data
+            writer = writer.option("partitionOverwriteMode", "dynamic")
         for k, v in self._write_options.items():
             writer = writer.option(k, v)
         writer.save(uri)

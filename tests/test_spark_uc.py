@@ -540,3 +540,167 @@ class TestPartitionValueExtraction:
         ctx2 = _output_ctx("seq2", partition_by=["region"])
         io.write(ctx2, df2)
         assert io._extract_partition_values(ctx2) == {"region": ["ap", "eu"]}
+
+
+# ===========================================================================
+# Partition-scoped overwrite (backfill safety) – UC Table
+# ===========================================================================
+
+
+class TestSparkUCTablePartitionScopedOverwrite:
+    """Verify replaceWhere is passed to the Spark writer.
+
+    The local Delta v2 catalog does not support ``saveAsTable`` +
+    ``replaceWhere``, so we intercept the DataFrameWriter calls and
+    assert the option is set with the correct predicate.
+    """
+
+    def test_sets_replace_where_when_table_exists(
+        self, spark: SparkSession, uc_schema: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        """When the table already exists, replaceWhere must be set."""
+        from pyspark.sql import DataFrameWriter
+
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="overwrite"
+        )
+        io.setup()
+
+        df = spark.createDataFrame([(1, "eu", "x")], ["id", "region", "val"])
+
+        captured_options: list[tuple[str, str]] = []
+        _real_option = DataFrameWriter.option
+
+        def _spy_option(self_w, key, value):
+            captured_options.append((key, value))
+            return _real_option(self_w, key, value)
+
+        monkeypatch.setattr(DataFrameWriter, "option", _spy_option)
+        monkeypatch.setattr(DataFrameWriter, "saveAsTable", lambda *_a, **_kw: None)
+        monkeypatch.setattr(io._spark.catalog, "tableExists", lambda _: True)
+
+        io.write(_output_ctx("uc_rw", partition_by=["region"]), df)
+
+        assert ("replaceWhere", "region = 'eu'") in captured_options
+
+    def test_skips_replace_where_on_first_write(
+        self, spark: SparkSession, uc_schema: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        """When the table does not exist yet, replaceWhere must NOT be set."""
+        from pyspark.sql import DataFrameWriter
+
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="overwrite"
+        )
+        io.setup()
+
+        df = spark.createDataFrame([(1, "eu", "x")], ["id", "region", "val"])
+
+        captured_options: list[tuple[str, str]] = []
+        _real_option = DataFrameWriter.option
+
+        def _spy_option(self_w, key, value):
+            captured_options.append((key, value))
+            return _real_option(self_w, key, value)
+
+        monkeypatch.setattr(DataFrameWriter, "option", _spy_option)
+        monkeypatch.setattr(DataFrameWriter, "saveAsTable", lambda *_a, **_kw: None)
+        monkeypatch.setattr(io._spark.catalog, "tableExists", lambda _: False)
+
+        io.write(_output_ctx("uc_new", partition_by=["region"]), df)
+
+        option_keys = [k for k, _v in captured_options]
+        assert "replaceWhere" not in option_keys
+
+    def test_replace_where_multi_value_partition(
+        self, spark: SparkSession, uc_schema: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Multiple partition values produce an IN clause."""
+        from pyspark.sql import DataFrameWriter
+
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="overwrite"
+        )
+        io.setup()
+
+        df = spark.createDataFrame(
+            [(1, "eu", "x"), (2, "us", "y")], ["id", "region", "val"]
+        )
+
+        captured_options: list[tuple[str, str]] = []
+        _real_option = DataFrameWriter.option
+
+        def _spy_option(self_w, key, value):
+            captured_options.append((key, value))
+            return _real_option(self_w, key, value)
+
+        monkeypatch.setattr(DataFrameWriter, "option", _spy_option)
+        monkeypatch.setattr(DataFrameWriter, "saveAsTable", lambda *_a, **_kw: None)
+        monkeypatch.setattr(io._spark.catalog, "tableExists", lambda _: True)
+
+        io.write(_output_ctx("uc_multi", partition_by=["region"]), df)
+
+        assert ("replaceWhere", "region IN ('eu', 'us')") in captured_options
+
+
+# ===========================================================================
+# Partition-scoped overwrite (backfill safety) – UC Volume Delta
+# ===========================================================================
+
+
+class TestSparkUCVolumeDeltaPartitionScopedOverwrite:
+    def test_overwrite_preserves_other_partitions(
+        self, spark: SparkSession, tmp_path, monkeypatch
+    ):
+        """Overwriting one partition must not destroy other partitions' data."""
+        io = SparkUCVolumeDeltaIoManager(
+            catalog="main",
+            schema="staging",
+            volume="raw_data",
+            mode="overwrite",
+        )
+        io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
+
+        df_us = spark.createDataFrame(
+            [(1, "us", "a"), (2, "us", "b")], ["id", "region", "val"]
+        )
+        io.write(_output_ctx("t", partition_by=["region"]), df_us)
+
+        df_eu = spark.createDataFrame([(3, "eu", "c")], ["id", "region", "val"])
+        io.write(_output_ctx("t", partition_by=["region"]), df_eu)
+
+        result = io.read(_input_ctx("t"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 3
+        assert [r["region"] for r in rows] == ["us", "us", "eu"]
+
+
+# ===========================================================================
+# Partition-scoped overwrite (backfill safety) – UC Volume Parquet
+# ===========================================================================
+
+
+class TestSparkUCVolumeParquetPartitionScopedOverwrite:
+    def test_overwrite_preserves_other_partitions(
+        self, spark: SparkSession, tmp_path, monkeypatch
+    ):
+        """Overwriting one partition must not destroy other partitions' data."""
+        io = SparkUCVolumeParquetIoManager(
+            catalog="main", schema="staging", volume="raw_data"
+        )
+        io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
+
+        df_us = spark.createDataFrame(
+            [(1, "us", "a"), (2, "us", "b")], ["id", "region", "val"]
+        )
+        io.write(_output_ctx("t", partition_by=["region"]), df_us)
+
+        df_eu = spark.createDataFrame([(3, "eu", "c")], ["id", "region", "val"])
+        io.write(_output_ctx("t", partition_by=["region"]), df_eu)
+
+        result = io.read(_input_ctx("t"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 3
+        assert [r["region"] for r in rows] == ["us", "us", "eu"]

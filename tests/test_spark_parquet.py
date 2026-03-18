@@ -295,3 +295,90 @@ class TestSparkParquetOptions:
 
         result = io.read(_input_ctx("read_opts"))
         assert result.count() == 1
+
+
+# ---------------------------------------------------------------------------
+# Partition-scoped overwrite (backfill safety)
+# ---------------------------------------------------------------------------
+
+
+class TestSparkParquetPartitionScopedOverwrite:
+    def test_overwrite_preserves_other_partitions(self, spark: SparkSession, tmp_path):
+        """Overwriting one partition must not destroy other partitions' data."""
+        io = SparkParquetIoManager(base_path=str(tmp_path))
+        io.setup()
+
+        df_us = spark.createDataFrame(
+            [(1, "us", "a"), (2, "us", "b")], ["id", "region", "val"]
+        )
+        io.write(_output_ctx("t", partition_by=["region"]), df_us)
+
+        df_eu = spark.createDataFrame([(3, "eu", "c")], ["id", "region", "val"])
+        io.write(_output_ctx("t", partition_by=["region"]), df_eu)
+
+        result = io.read(_input_ctx("t"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 3
+        assert [r["region"] for r in rows] == ["us", "us", "eu"]
+
+    def test_overwrite_replaces_same_partition(self, spark: SparkSession, tmp_path):
+        """Overwriting the same partition should replace its data."""
+        io = SparkParquetIoManager(base_path=str(tmp_path))
+        io.setup()
+
+        df_old = spark.createDataFrame([(1, "us", "old")], ["id", "region", "val"])
+        io.write(_output_ctx("t", partition_by=["region"]), df_old)
+
+        df_new = spark.createDataFrame([(2, "us", "new")], ["id", "region", "val"])
+        io.write(_output_ctx("t", partition_by=["region"]), df_new)
+
+        result = io.read(_input_ctx("t"))
+        rows = result.collect()
+        assert len(rows) == 1
+        assert rows[0]["val"] == "new"
+
+    def test_overwrite_with_backfill_key_preserves_other_keys(
+        self, spark: SparkSession, tmp_path
+    ):
+        """Backfill run for one date must not destroy other dates."""
+        io = SparkParquetIoManager(base_path=str(tmp_path))
+        io.setup()
+
+        df_day1 = spark.createDataFrame([(1, 10), (2, 20)], ["id", "val"])
+        io.write(
+            _output_ctx(
+                "t",
+                partition_by=["backfill_key"],
+                backfill_key="2024-01-01",
+            ),
+            df_day1,
+        )
+
+        df_day2 = spark.createDataFrame([(3, 30)], ["id", "val"])
+        io.write(
+            _output_ctx(
+                "t",
+                partition_by=["backfill_key"],
+                backfill_key="2024-01-02",
+            ),
+            df_day2,
+        )
+
+        result = io.read(_input_ctx("t"))
+        assert result.count() == 3
+
+    def test_serverless_overwrite_preserves_other_partitions(
+        self, spark: SparkSession, tmp_path
+    ):
+        """SparkServerlessParquetIoManager should also scope overwrites."""
+        io = SparkServerlessParquetIoManager(base_path=str(tmp_path))
+        io.setup()
+
+        df_us = spark.createDataFrame([(1, "us")], ["id", "region"])
+        io.write(_output_ctx("t", partition_by=["region"]), df_us)
+
+        df_eu = spark.createDataFrame([(2, "eu")], ["id", "region"])
+        io.write(_output_ctx("t", partition_by=["region"]), df_eu)
+
+        result = io.read(_input_ctx("t"))
+        assert result.count() == 2

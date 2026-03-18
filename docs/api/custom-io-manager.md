@@ -62,8 +62,13 @@ always be `None` and only the `backfill_key` fallback applies.
 
 ### Delta replaceWhere example
 
-To write partitioned data into a **single Delta table** using
-`replaceWhere` (partition-scoped overwrite):
+All built-in Delta IoManagers automatically apply `replaceWhere` (Spark)
+or `predicate` (delta-rs / Polars) when `mode="overwrite"` is combined
+with `partition_by` — see [Partition-scoped overwrite](../../partitioning.md#partition-scoped-overwrite).
+
+If you are writing a **custom** Delta IoManager, you should apply the
+same pattern to avoid destroying data in other partitions during
+backfill runs:
 
 ```python
 from databricks_bundle_decorators import IoManager, OutputContext, InputContext

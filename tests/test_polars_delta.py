@@ -8,7 +8,11 @@ import polars as pl
 import pytest
 from deltalake import DeltaTable
 
-from databricks_bundle_decorators.io_manager import InputContext, OutputContext
+from databricks_bundle_decorators.io_manager import (
+    InputContext,
+    OutputContext,
+    _build_replace_where,
+)
 from databricks_bundle_decorators.io_managers import PolarsDeltaIoManager
 
 
@@ -283,3 +287,150 @@ class TestPartitioning:
         df2 = pl.DataFrame({"region": ["eu"], "val": [2]})
         io.write(_output_ctx("t2", partition_by=["region"]), df2)
         assert io._last_partition_values == {"region": ["eu"]}
+
+
+# ---------------------------------------------------------------------------
+# _build_replace_where helper
+# ---------------------------------------------------------------------------
+
+
+class TestBuildReplaceWhere:
+    def test_single_column_single_value(self) -> None:
+        assert _build_replace_where({"region": ["us"]}) == "region = 'us'"
+
+    def test_single_column_multiple_values(self) -> None:
+        result = _build_replace_where({"region": ["eu", "us"]})
+        assert result == "region IN ('eu', 'us')"
+
+    def test_multiple_columns(self) -> None:
+        result = _build_replace_where(
+            {"region": ["us"], "backfill_key": ["2024-01-01"]}
+        )
+        assert "region = 'us'" in result
+        assert "backfill_key = '2024-01-01'" in result
+        assert " AND " in result
+
+    def test_escapes_single_quotes(self) -> None:
+        result = _build_replace_where({"col": ["it's"]})
+        assert result == "col = 'it''s'"
+
+
+# ---------------------------------------------------------------------------
+# Partition-scoped overwrite (backfill safety)
+# ---------------------------------------------------------------------------
+
+
+class TestPartitionScopedOverwrite:
+    def test_overwrite_preserves_other_partitions_dataframe(
+        self, tmp_path: Path
+    ) -> None:
+        """Overwriting one partition must not destroy other partitions' data."""
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        # Write partition region=us
+        df_us = pl.DataFrame({"region": ["us", "us"], "val": [1, 2]})
+        io.write(_output_ctx("t", partition_by=["region"]), df_us)
+
+        # Write partition region=eu (should NOT delete region=us)
+        df_eu = pl.DataFrame({"region": ["eu"], "val": [3]})
+        io.write(_output_ctx("t", partition_by=["region"]), df_eu)
+
+        # Read all partitions — both should be present
+        result = io.read(
+            _input_ctx("t", expected_type=pl.DataFrame, all_partitions=True)
+        )
+        assert sorted(result["region"].to_list()) == ["eu", "us", "us"]
+        assert sorted(result["val"].to_list()) == [1, 2, 3]
+
+    def test_overwrite_preserves_other_partitions_lazyframe(
+        self, tmp_path: Path
+    ) -> None:
+        """Same test with LazyFrame writes."""
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        df_us = pl.DataFrame({"region": ["us"], "val": [1]})
+        io.write(_output_ctx("t", partition_by=["region"]), df_us.lazy())
+
+        df_eu = pl.DataFrame({"region": ["eu"], "val": [2]})
+        io.write(_output_ctx("t", partition_by=["region"]), df_eu.lazy())
+
+        result = io.read(_input_ctx("t", all_partitions=True)).collect()
+        assert sorted(result["region"].to_list()) == ["eu", "us"]
+
+    def test_overwrite_replaces_same_partition(self, tmp_path: Path) -> None:
+        """Overwriting the same partition should replace its data."""
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        df_old = pl.DataFrame({"region": ["us"], "val": [1]})
+        io.write(_output_ctx("t", partition_by=["region"]), df_old)
+
+        df_new = pl.DataFrame({"region": ["us"], "val": [99]})
+        io.write(_output_ctx("t", partition_by=["region"]), df_new)
+
+        result = io.read(
+            _input_ctx("t", expected_type=pl.DataFrame, all_partitions=True)
+        )
+        assert result["val"].to_list() == [99]
+
+    def test_overwrite_with_backfill_key_preserves_other_keys(
+        self, tmp_path: Path
+    ) -> None:
+        """Backfill run for one date must not destroy other dates."""
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        df_day1 = pl.DataFrame({"val": [10, 20]})
+        io.write(
+            _output_ctx(
+                "t",
+                partition_by=["backfill_key"],
+                backfill_key="2024-01-01",
+            ),
+            df_day1,
+        )
+
+        df_day2 = pl.DataFrame({"val": [30]})
+        io.write(
+            _output_ctx(
+                "t",
+                partition_by=["backfill_key"],
+                backfill_key="2024-01-02",
+            ),
+            df_day2,
+        )
+
+        result = io.read(
+            _input_ctx("t", expected_type=pl.DataFrame, all_partitions=True)
+        )
+        assert len(result) == 3
+        assert sorted(result["backfill_key"].to_list()) == [
+            "2024-01-01",
+            "2024-01-01",
+            "2024-01-02",
+        ]
+
+    def test_overwrite_without_partition_by_replaces_whole_table(
+        self, tmp_path: Path
+    ) -> None:
+        """Without partition_by, overwrite should replace everything (no change)."""
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        io.write(_output_ctx("t"), pl.DataFrame({"val": [1, 2, 3]}))
+        io.write(_output_ctx("t"), pl.DataFrame({"val": [99]}))
+
+        result = io.read(_input_ctx("t", expected_type=pl.DataFrame))
+        assert result["val"].to_list() == [99]
+
+    def test_append_mode_not_affected(self, tmp_path: Path) -> None:
+        """Append mode should still append, not use replaceWhere."""
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="append")
+
+        df1 = pl.DataFrame({"region": ["us"], "val": [1]})
+        io.write(_output_ctx("t", partition_by=["region"]), df1)
+
+        df2 = pl.DataFrame({"region": ["us"], "val": [2]})
+        io.write(_output_ctx("t", partition_by=["region"]), df2)
+
+        result = io.read(
+            _input_ctx("t", expected_type=pl.DataFrame, all_partitions=True)
+        )
+        assert len(result) == 2
