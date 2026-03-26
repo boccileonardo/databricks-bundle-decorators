@@ -465,6 +465,13 @@ class TestFilterPastKeys:
         result = _filter_past_keys(past + future, "daily")
         assert result == past
 
+    def test_daily_includes_today(self) -> None:
+        from datetime import date
+
+        key = date.today().isoformat()
+        result = _filter_past_keys([key], "daily")
+        assert key in result
+
     def test_daily_invalid_key_kept(self) -> None:
         result = _filter_past_keys(["not-a-date", "2024-01-01"], "daily")
         assert "not-a-date" in result
@@ -499,6 +506,13 @@ class TestFilterPastKeys:
         result = _filter_past_keys(["2024-01-01T10", "2099-01-01T00"], "hourly")
         assert "2024-01-01T10" in result
         assert "2099-01-01T00" not in result
+
+    def test_hourly_includes_current_hour(self) -> None:
+        from datetime import datetime, timezone
+
+        key = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H")
+        result = _filter_past_keys([key], "hourly")
+        assert key in result
 
     def test_unknown_kind_returns_all(self) -> None:
         keys = ["a", "b"]

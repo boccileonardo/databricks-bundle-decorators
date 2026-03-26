@@ -127,7 +127,8 @@ def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
     today = whenever.ZonedDateTime.now("UTC").date()
 
     if kind == "daily":
-        cutoff = today.subtract(days=1)  # yesterday is the last complete day
+        # Include today — its data should be materializable.
+        cutoff = today
         result: list[str] = []
         for k in keys:
             try:
@@ -170,9 +171,10 @@ def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
         return result
 
     if kind == "hourly":
+        # Include the current hour — its data should be materializable.
         fmt = "%Y-%m-%dT%H"
         now_utc = whenever.ZonedDateTime.now("UTC")
-        cutoff_str = now_utc.subtract(hours=1).py_datetime().strftime(fmt)
+        cutoff_str = now_utc.py_datetime().strftime(fmt)
         result = []
         for k in keys:
             try:
