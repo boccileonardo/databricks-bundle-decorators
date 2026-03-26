@@ -427,6 +427,44 @@ class TestComputeBackfillCoverage:
         assert cov.missing_keys == []
         assert "2099-12-31" not in cov.missing_keys
 
+    def test_completed_key_runs_tracks_run_info(self) -> None:
+        """completed_key_runs maps keys to (run_id, start_time_ms)."""
+        runs = [
+            RunInfo(10, "SUCCESS", 1_700_000_000_000, 0, 0, backfill_key="k1"),
+        ]
+        cov = compute_backfill_coverage("j", runs, ["k1"])
+        assert cov.completed_key_runs is not None
+        assert "k1" in cov.completed_key_runs
+        run_id, start_ms = cov.completed_key_runs["k1"]
+        assert run_id == 10
+        assert start_ms == 1_700_000_000_000
+
+    def test_completed_key_runs_keeps_most_recent(self) -> None:
+        """When multiple runs target the same key, keep the most recent."""
+        runs = [
+            RunInfo(1, "SUCCESS", 1_000_000, 0, 0, backfill_key="k1"),
+            RunInfo(2, "SUCCESS", 2_000_000, 0, 0, backfill_key="k1"),
+            RunInfo(3, "SUCCESS", 1_500_000, 0, 0, backfill_key="k1"),
+        ]
+        cov = compute_backfill_coverage("j", runs, ["k1"])
+        assert cov.completed_key_runs is not None
+        assert cov.completed_key_runs["k1"] == (2, 2_000_000)
+
+    def test_completed_key_runs_excludes_out_of_scope_keys(self) -> None:
+        """Keys not in expected_keys are excluded from completed_key_runs."""
+        runs = [
+            RunInfo(1, "SUCCESS", 0, 0, 0, backfill_key="k1"),
+            RunInfo(2, "SUCCESS", 0, 0, 0, backfill_key="extra"),
+        ]
+        cov = compute_backfill_coverage("j", runs, ["k1"])
+        assert cov.completed_key_runs is not None
+        assert "k1" in cov.completed_key_runs
+        assert "extra" not in cov.completed_key_runs
+
+    def test_completed_key_runs_empty_when_no_runs(self) -> None:
+        cov = compute_backfill_coverage("j", [], ["k1"])
+        assert cov.completed_key_runs == {}
+
 
 # ---------------------------------------------------------------------------
 # _filter_past_keys
@@ -478,7 +516,7 @@ class TestFetchJobRuns:
     def test_basic(self, monkeypatch: pytest.MonkeyPatch) -> None:
         runs_json = json.dumps([_cli_run(run_id=10, result_state="SUCCESS")])
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=runs_json),
         )
         runs = fetch_job_runs(42)
@@ -489,7 +527,7 @@ class TestFetchJobRuns:
     def test_computes_duration(self, monkeypatch: pytest.MonkeyPatch) -> None:
         runs_json = json.dumps([_cli_run(start_time=1_000_000, end_time=1_060_000)])
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=runs_json),
         )
         runs = fetch_job_runs(1)
@@ -498,7 +536,7 @@ class TestFetchJobRuns:
     def test_extracts_backfill_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         runs_json = json.dumps([_cli_run(backfill_key="2024-01-15")])
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=runs_json),
         )
         runs = fetch_job_runs(1)
@@ -507,7 +545,7 @@ class TestFetchJobRuns:
     def test_handles_no_backfill_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         runs_json = json.dumps([_cli_run()])
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=runs_json),
         )
         runs = fetch_job_runs(1)
@@ -516,7 +554,7 @@ class TestFetchJobRuns:
     def test_handles_running_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
         runs_json = json.dumps([_cli_run(result_state=None, end_time=0)])
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=runs_json),
         )
         runs = fetch_job_runs(1)
@@ -524,7 +562,7 @@ class TestFetchJobRuns:
 
     def test_empty_runs(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout="[]"),
         )
         runs = fetch_job_runs(1)
@@ -532,7 +570,7 @@ class TestFetchJobRuns:
 
     def test_returns_empty_on_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(returncode=1, stderr="error"),
         )
         runs = fetch_job_runs(1)
@@ -546,7 +584,7 @@ class TestFetchJobRuns:
             return SimpleNamespace(returncode=0, stdout="[]", stderr="")
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             mock_run,
         )
         fetch_job_runs(42, profile="work")
@@ -566,7 +604,7 @@ class TestFetchJobRuns:
             ]
         )
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=runs_json),
         )
         runs = fetch_job_runs(1)
@@ -582,7 +620,7 @@ class TestFetchJobRuns:
             ]
         )
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=runs_json),
         )
         runs = fetch_job_runs(1)
@@ -600,7 +638,7 @@ class TestFetchTaskRuns:
             {"tasks": [_cli_task(task_key="extract", result_state="SUCCESS")]}
         )
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=run_json),
         )
         tasks = fetch_task_runs(1)
@@ -613,7 +651,7 @@ class TestFetchTaskRuns:
             {"tasks": [_cli_task(start_time=1_000_000, end_time=1_030_000)]}
         )
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=run_json),
         )
         tasks = fetch_task_runs(1)
@@ -622,7 +660,7 @@ class TestFetchTaskRuns:
     def test_empty_tasks(self, monkeypatch: pytest.MonkeyPatch) -> None:
         run_json = json.dumps({"tasks": []})
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=run_json),
         )
         tasks = fetch_task_runs(1)
@@ -631,7 +669,7 @@ class TestFetchTaskRuns:
     def test_no_tasks_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         run_json = json.dumps({})
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=run_json),
         )
         tasks = fetch_task_runs(1)
@@ -639,7 +677,7 @@ class TestFetchTaskRuns:
 
     def test_returns_empty_on_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(returncode=1, stderr="error"),
         )
         tasks = fetch_task_runs(1)
@@ -655,7 +693,7 @@ class TestFetchTaskRuns:
             )
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             mock_run,
         )
         fetch_task_runs(99, profile="work")
@@ -673,7 +711,7 @@ class TestFetchTaskRuns:
             }
         )
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=run_json),
         )
         tasks = fetch_task_runs(1)
@@ -683,7 +721,7 @@ class TestFetchTaskRuns:
     def test_no_depends_on_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         run_json = json.dumps({"tasks": [_cli_task(task_key="solo")]})
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=run_json),
         )
         tasks = fetch_task_runs(1)
@@ -703,7 +741,7 @@ class TestFetchTaskRuns:
             }
         )
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             _mock_subprocess(stdout=run_json),
         )
         tasks = fetch_task_runs(1)
@@ -728,7 +766,7 @@ class TestResolveJobIds:
         }
         monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             lambda cmd, **kw: SimpleNamespace(
                 returncode=0, stdout=json.dumps(summary), stderr=""
             ),
@@ -749,7 +787,7 @@ class TestResolveJobIds:
     ) -> None:
         monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             lambda cmd, **kw: SimpleNamespace(
                 returncode=1, stdout="", stderr="bundle not found"
             ),
@@ -771,7 +809,7 @@ class TestResolveJobIds:
 
         monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             mock_run,
         )
         resolve_job_ids(target="prod", profile="work")
@@ -791,7 +829,7 @@ class TestResolveJobIds:
         }
         monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
         monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard.subprocess.run",
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
             lambda cmd, **kw: SimpleNamespace(
                 returncode=0, stdout=json.dumps(summary), stderr=""
             ),
@@ -932,6 +970,18 @@ class TestBuildDailyCalendar:
     def test_seven_weekday_rows(self) -> None:
         fig = _build_daily_calendar({"2024-01-15"}, set())
         assert len(fig.data[0].z) == 7
+
+    def test_hover_shows_run_info(self) -> None:
+        key_run_info = {"2024-01-15": (42, 1_705_312_800_000)}
+        fig = _build_daily_calendar({"2024-01-15"}, {"2024-01-15"}, key_run_info)
+        hover = _flatten_hover(fig)
+        assert any("Run 42" in h for h in hover)
+        assert any("2024" in h for h in hover)
+
+    def test_hover_without_run_info_shows_completed(self) -> None:
+        fig = _build_daily_calendar({"2024-01-15"}, {"2024-01-15"})
+        hover = _flatten_hover(fig)
+        assert any(h == "2024-01-15: Completed" for h in hover)
 
 
 # ---------------------------------------------------------------------------
@@ -1084,6 +1134,13 @@ class TestBuildPartitionGrid:
         fig = _build_partition_grid(["us", "eu"], {"us"})
         hover = _flatten_hover(fig)
         assert any("Completed" in h for h in hover)
+        assert any("Not launched" in h for h in hover)
+
+    def test_hover_shows_run_info(self) -> None:
+        key_run_info = {"us": (99, 1_705_312_800_000)}
+        fig = _build_partition_grid(["us", "eu"], {"us"}, key_run_info)
+        hover = _flatten_hover(fig)
+        assert any("Run 99" in h for h in hover)
         assert any("Not launched" in h for h in hover)
 
 

@@ -615,6 +615,18 @@ wheels = [
 ]
 
 [[package]]
+name = "dash-ag-grid"
+version = "33.3.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dash" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3c/03/fa827ee5495d97245c043a248b2beecc0a45683051383138deba2492b61f/dash_ag_grid-33.3.3.tar.gz", hash = "sha256:7c646de0b19a1bc51ee09b8787bbba22293a6f2931bb31a47bb03d7194f6ace0", size = 4795838, upload-time = "2026-01-21T15:45:20.063Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/fc/121ccd949503b1db8ca8ab7c03ebf19497324928a153c89b2ec4ae3bb7b4/dash_ag_grid-33.3.3-py3-none-any.whl", hash = "sha256:987b5789441455bbfbff61dd6d839f2897f9e914e4fbb8e2d26eba5d92a4f8ef", size = 4825723, upload-time = "2026-01-21T15:45:18.018Z" },
+]
+
+[[package]]
 name = "dash-bootstrap-components"
 version = "2.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -651,6 +663,7 @@ gcp = [
 ]
 observability = [
     { name = "dash" },
+    { name = "dash-ag-grid" },
     { name = "dash-bootstrap-components" },
     { name = "plotly" },
     { name = "polars" },
@@ -666,6 +679,7 @@ polars-delta = [
 [package.dev-dependencies]
 dev = [
     { name = "dash" },
+    { name = "dash-ag-grid" },
     { name = "dash-bootstrap-components" },
     { name = "databricks-bundle-decorators" },
     { name = "delta-spark" },
@@ -691,6 +705,7 @@ docs = [
 requires-dist = [
     { name = "adlfs", marker = "extra == 'azure'" },
     { name = "dash", marker = "extra == 'observability'", specifier = ">=2.14" },
+    { name = "dash-ag-grid", marker = "extra == 'observability'", specifier = ">=31.0" },
     { name = "dash-bootstrap-components", marker = "extra == 'observability'", specifier = ">=1.5" },
     { name = "databricks-bundles", specifier = ">=0.275" },
     { name = "deltalake", marker = "extra == 'polars-delta'" },
@@ -711,6 +726,7 @@ provides-extras = ["aws", "azure", "gcp", "observability", "polars", "polars-del
 [package.metadata.requires-dev]
 dev = [
     { name = "dash", specifier = ">=2.14" },
+    { name = "dash-ag-grid", specifier = ">=31.0" },
     { name = "dash-bootstrap-components", specifier = ">=1.5" },
     { name = "databricks-bundle-decorators", editable = "." },
     { name = "delta-spark", specifier = ">=3.2,<4" },
