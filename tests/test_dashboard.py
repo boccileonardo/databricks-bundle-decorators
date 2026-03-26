@@ -20,7 +20,9 @@ from databricks_bundle_decorators.dashboard import (
     _build_partition_grid,
     _build_task_dag_figure,
     _build_weekly_calendar,
+    _effective_state,
     _filter_past_keys,
+    _is_terminal_failure,
     build_job_overview,
     compute_backfill_coverage,
     fetch_job_runs,
@@ -48,6 +50,8 @@ def _cli_run(
     *,
     run_id: int = 1,
     result_state: str | None = "SUCCESS",
+    life_cycle_state: str | None = None,
+    state_message: str | None = None,
     start_time: int = 1_000_000,
     end_time: int = 1_060_000,
     backfill_key: str | None = None,
@@ -55,6 +59,10 @@ def _cli_run(
     state: dict[str, Any] = {}
     if result_state is not None:
         state["result_state"] = result_state
+    if life_cycle_state is not None:
+        state["life_cycle_state"] = life_cycle_state
+    if state_message is not None:
+        state["state_message"] = state_message
     params: list[dict[str, str]] = []
     if backfill_key is not None:
         params.append({"name": "backfill_key", "value": backfill_key})
@@ -71,6 +79,8 @@ def _cli_task(
     *,
     task_key: str = "extract",
     result_state: str | None = "SUCCESS",
+    life_cycle_state: str | None = None,
+    state_message: str | None = None,
     start_time: int = 1_000_000,
     end_time: int = 1_030_000,
     depends_on: list[str] | None = None,
@@ -78,6 +88,10 @@ def _cli_task(
     state: dict[str, Any] = {}
     if result_state is not None:
         state["result_state"] = result_state
+    if life_cycle_state is not None:
+        state["life_cycle_state"] = life_cycle_state
+    if state_message is not None:
+        state["state_message"] = state_message
     task: dict[str, Any] = {
         "task_key": task_key,
         "state": state,
@@ -192,6 +206,48 @@ class TestBackfillCoverageKind:
 
 
 # ---------------------------------------------------------------------------
+# _effective_state / _is_terminal_failure
+# ---------------------------------------------------------------------------
+
+
+class TestEffectiveState:
+    def test_prefers_result_state(self) -> None:
+        assert _effective_state("SUCCESS", "TERMINATED") == "SUCCESS"
+
+    def test_falls_back_to_life_cycle_state(self) -> None:
+        assert _effective_state(None, "INTERNAL_ERROR") == "INTERNAL_ERROR"
+
+    def test_both_none(self) -> None:
+        assert _effective_state(None, None) == "UNKNOWN"
+
+    def test_running_lifecycle(self) -> None:
+        assert _effective_state(None, "RUNNING") == "RUNNING"
+
+
+class TestIsTerminalFailure:
+    def test_success_is_not_failure(self) -> None:
+        assert _is_terminal_failure("SUCCESS", None) is False
+
+    def test_failed_result_state(self) -> None:
+        assert _is_terminal_failure("FAILED", None) is True
+
+    def test_timed_out_result_state(self) -> None:
+        assert _is_terminal_failure("TIMED_OUT", None) is True
+
+    def test_internal_error_lifecycle(self) -> None:
+        assert _is_terminal_failure(None, "INTERNAL_ERROR") is True
+
+    def test_skipped_lifecycle(self) -> None:
+        assert _is_terminal_failure(None, "SKIPPED") is True
+
+    def test_running_lifecycle_not_failure(self) -> None:
+        assert _is_terminal_failure(None, "RUNNING") is False
+
+    def test_both_none_not_failure(self) -> None:
+        assert _is_terminal_failure(None, None) is False
+
+
+# ---------------------------------------------------------------------------
 # build_job_overview (pure function)
 # ---------------------------------------------------------------------------
 
@@ -240,6 +296,33 @@ class TestBuildJobOverview:
         assert o.total_runs == 2
         assert o.successes == 1
         assert o.failures == 0
+
+    def test_internal_error_counted_as_failure(self) -> None:
+        """An INTERNAL_ERROR run (no result_state) is counted as a failure."""
+        runs = [
+            RunInfo(
+                1,
+                None,
+                3000,
+                4000,
+                1.0,
+                life_cycle_state="INTERNAL_ERROR",
+                state_message="Cluster launch failed",
+            ),
+            RunInfo(2, "SUCCESS", 2000, 32000, 30.0),
+        ]
+        o = build_job_overview("j", job_id=1, runs=runs)
+        assert o.failures == 1
+        assert o.last_run_state == "INTERNAL_ERROR"
+
+    def test_skipped_run_counted_as_failure(self) -> None:
+        """A SKIPPED run (no result_state) is counted as a failure."""
+        runs = [
+            RunInfo(1, None, 3000, 4000, 1.0, life_cycle_state="SKIPPED"),
+        ]
+        o = build_job_overview("j", job_id=1, runs=runs)
+        assert o.failures == 1
+        assert o.last_run_state == "SKIPPED"
 
     def test_has_backfill_flag(self) -> None:
         o = build_job_overview("j", job_id=1, runs=[], has_backfill=True)
@@ -467,6 +550,39 @@ class TestFetchJobRuns:
         assert "--job-id" in captured_cmd
         assert "42" in captured_cmd
 
+    def test_parses_life_cycle_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        runs_json = json.dumps(
+            [
+                _cli_run(
+                    result_state=None,
+                    life_cycle_state="INTERNAL_ERROR",
+                    state_message="Cluster failed",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.dashboard.subprocess.run",
+            _mock_subprocess(stdout=runs_json),
+        )
+        runs = fetch_job_runs(1)
+        assert runs[0].life_cycle_state == "INTERNAL_ERROR"
+        assert runs[0].state_message == "Cluster failed"
+
+    def test_empty_state_message_becomes_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runs_json = json.dumps(
+            [
+                _cli_run(result_state="SUCCESS", state_message=""),
+            ]
+        )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.dashboard.subprocess.run",
+            _mock_subprocess(stdout=runs_json),
+        )
+        runs = fetch_job_runs(1)
+        assert runs[0].state_message is None
+
 
 # ---------------------------------------------------------------------------
 # fetch_task_runs (mocks subprocess — CLI-based)
@@ -540,7 +656,6 @@ class TestFetchTaskRuns:
         fetch_task_runs(99, profile="work")
         assert "--profile" in captured_cmd
         assert "work" in captured_cmd
-        assert "--run-id" in captured_cmd
         assert "99" in captured_cmd
 
     def test_parses_depends_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -568,6 +683,27 @@ class TestFetchTaskRuns:
         )
         tasks = fetch_task_runs(1)
         assert tasks[0].depends_on == ()
+
+    def test_parses_life_cycle_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        run_json = json.dumps(
+            {
+                "tasks": [
+                    _cli_task(
+                        task_key="t1",
+                        result_state=None,
+                        life_cycle_state="INTERNAL_ERROR",
+                        state_message="OOM killed",
+                    ),
+                ]
+            }
+        )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.dashboard.subprocess.run",
+            _mock_subprocess(stdout=run_json),
+        )
+        tasks = fetch_task_runs(1)
+        assert tasks[0].life_cycle_state == "INTERNAL_ERROR"
+        assert tasks[0].state_message == "OOM killed"
 
 
 # ---------------------------------------------------------------------------
@@ -786,7 +922,7 @@ class TestBuildDailyCalendar:
     def test_hover_shows_missing_status(self) -> None:
         fig = _build_daily_calendar({"2024-01-15"}, set())
         hover = _flatten_hover(fig)
-        assert any("Missing" in h for h in hover)
+        assert any("Not launched" in h for h in hover)
 
     def test_seven_weekday_rows(self) -> None:
         fig = _build_daily_calendar({"2024-01-15"}, set())
@@ -943,7 +1079,7 @@ class TestBuildPartitionGrid:
         fig = _build_partition_grid(["us", "eu"], {"us"})
         hover = _flatten_hover(fig)
         assert any("Completed" in h for h in hover)
-        assert any("Missing" in h for h in hover)
+        assert any("Not launched" in h for h in hover)
 
 
 # ---------------------------------------------------------------------------

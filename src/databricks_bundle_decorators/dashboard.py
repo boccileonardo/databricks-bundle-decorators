@@ -53,6 +53,8 @@ class RunInfo:
     end_time_ms: int | None
     duration_seconds: float | None
     backfill_key: str | None = None
+    life_cycle_state: str | None = None
+    state_message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,8 @@ class TaskRunInfo:
     end_time_ms: int | None
     duration_seconds: float | None
     depends_on: tuple[str, ...] = ()
+    life_cycle_state: str | None = None
+    state_message: str | None = None
 
 
 @dataclass
@@ -204,6 +208,8 @@ def fetch_job_runs(
     for run in runs_data:
         state = run.get("state", {})
         result_state = state.get("result_state")
+        life_cycle_state = state.get("life_cycle_state")
+        state_message = state.get("state_message") or None
 
         start_ms = run.get("start_time")
         end_ms = run.get("end_time")
@@ -225,6 +231,8 @@ def fetch_job_runs(
                 end_time_ms=end_ms,
                 duration_seconds=duration,
                 backfill_key=backfill_key,
+                life_cycle_state=life_cycle_state,
+                state_message=state_message,
             )
         )
     return runs
@@ -251,7 +259,6 @@ def fetch_task_runs(
         "databricks",
         "jobs",
         "get-run",
-        "--run-id",
         str(run_id),
         "--output",
         "json",
@@ -268,6 +275,8 @@ def fetch_task_runs(
     for task in run_data.get("tasks", []):
         state = task.get("state", {})
         result_state = state.get("result_state")
+        life_cycle_state = state.get("life_cycle_state")
+        state_message = state.get("state_message") or None
         start_ms = task.get("start_time")
         end_ms = task.get("end_time")
         duration = None
@@ -284,6 +293,8 @@ def fetch_task_runs(
                 end_time_ms=end_ms,
                 duration_seconds=duration,
                 depends_on=deps,
+                life_cycle_state=life_cycle_state,
+                state_message=state_message,
             )
         )
     return tasks
@@ -292,6 +303,54 @@ def fetch_task_runs(
 # ---------------------------------------------------------------------------
 # Pure computation (no I/O — easy to test)
 # ---------------------------------------------------------------------------
+
+#: Terminal ``life_cycle_state`` values that indicate an error when
+#: there is no ``result_state``.
+_ERROR_LIFECYCLE_STATES = frozenset(
+    {
+        "INTERNAL_ERROR",
+        "SKIPPED",
+    }
+)
+
+#: ``life_cycle_state`` values that indicate the run is still in progress.
+_ACTIVE_LIFECYCLE_STATES = frozenset(
+    {
+        "PENDING",
+        "RUNNING",
+        "TERMINATING",
+        "BLOCKED",
+        "WAITING_FOR_RETRY",
+    }
+)
+
+
+def _effective_state(
+    result_state: str | None,
+    life_cycle_state: str | None,
+) -> str:
+    """Return the best display state for a run or task.
+
+    Prefers ``result_state`` when set.  Falls back to
+    ``life_cycle_state`` which captures infrastructure errors
+    (``INTERNAL_ERROR``, ``SKIPPED``) that never produce a
+    ``result_state``.
+    """
+    if result_state is not None:
+        return result_state
+    if life_cycle_state is not None:
+        return life_cycle_state
+    return "UNKNOWN"
+
+
+def _is_terminal_failure(
+    result_state: str | None,
+    life_cycle_state: str | None,
+) -> bool:
+    """Return True if the run/task ended in a failure state."""
+    if result_state is not None:
+        return result_state != "SUCCESS"
+    return life_cycle_state in _ERROR_LIFECYCLE_STATES
 
 
 def build_job_overview(
@@ -309,8 +368,9 @@ def build_job_overview(
         return JobOverview(job_name=job_name, job_id=job_id, has_backfill=has_backfill)
 
     successes = sum(1 for r in runs if r.result_state == "SUCCESS")
-    non_running = [r for r in runs if r.result_state is not None]
-    failures = sum(1 for r in non_running if r.result_state != "SUCCESS")
+    failures = sum(
+        1 for r in runs if _is_terminal_failure(r.result_state, r.life_cycle_state)
+    )
     durations = [r.duration_seconds for r in runs if r.duration_seconds is not None]
 
     most_recent = runs[0]
@@ -322,7 +382,9 @@ def build_job_overview(
         successes=successes,
         failures=failures,
         last_run_time_ms=most_recent.start_time_ms,
-        last_run_state=most_recent.result_state,
+        last_run_state=_effective_state(
+            most_recent.result_state, most_recent.life_cycle_state
+        ),
         avg_duration_seconds=(
             round(sum(durations) / len(durations), 1) if durations else None
         ),
@@ -484,12 +546,12 @@ def _backfill_kind(backfill: Any) -> str:
 # Calendar & partition visualization (Plotly heatmaps)
 # ---------------------------------------------------------------------------
 
-#: Discrete 3-state colorscale: 0=not-in-range, 1=missing, 2=completed.
+#: Discrete 3-state colorscale: 0=not-in-range, 1=not-launched, 2=completed.
 _COVERAGE_COLORSCALE: list[list[object]] = [
     [0.0, "#f3f4f6"],
     [0.25, "#f3f4f6"],
-    [0.25, "#ef4444"],
-    [0.75, "#ef4444"],
+    [0.25, "#f59e0b"],
+    [0.75, "#f59e0b"],
     [0.75, "#22c55e"],
     [1.0, "#22c55e"],
 ]
@@ -501,7 +563,7 @@ def _add_coverage_legend(fig: Any) -> None:
 
     for label, color in [
         ("Completed", "#22c55e"),
-        ("Missing", "#ef4444"),
+        ("Not launched", "#f59e0b"),
         ("Not in range", "#f3f4f6"),
     ]:
         fig.add_trace(
@@ -568,7 +630,7 @@ def _build_daily_calendar(
                     hover[dow][week_idx] = f"{d.format_iso()}: Completed"
                 else:
                     z[dow][week_idx] = 1
-                    hover[dow][week_idx] = f"{d.format_iso()}: Missing"
+                    hover[dow][week_idx] = f"{d.format_iso()}: Not launched"
             else:
                 hover[dow][week_idx] = d.format_iso()
 
@@ -663,7 +725,7 @@ def _build_weekly_calendar(
                     row_h.append(f"{expected[(year, w)]}: Completed")
                 else:
                     row_z.append(1)
-                    row_h.append(f"{expected[(year, w)]}: Missing")
+                    row_h.append(f"{expected[(year, w)]}: Not launched")
             else:
                 row_z.append(0)
                 row_h.append(f"{year}-W{w:02d}")
@@ -743,7 +805,7 @@ def _build_monthly_calendar(
                     row_h.append(f"{expected[(year, m)]}: Completed")
                 else:
                     row_z.append(1)
-                    row_h.append(f"{expected[(year, m)]}: Missing")
+                    row_h.append(f"{expected[(year, m)]}: Not launched")
             else:
                 row_z.append(0)
                 row_h.append(f"{year}-{m:02d}")
@@ -821,7 +883,7 @@ def _build_hourly_calendar(
                     row_h.append(f"{expected[(day, h)]}: Completed")
                 else:
                     row_z.append(1)
-                    row_h.append(f"{expected[(day, h)]}: Missing")
+                    row_h.append(f"{expected[(day, h)]}: Not launched")
             else:
                 row_z.append(0)
                 row_h.append(f"{day.isoformat()}T{h:02d}")
@@ -868,7 +930,7 @@ def _build_partition_grid(
     z = [[2 if k in completed_keys else 1 for k in expected_keys]]
     hover = [
         [
-            f"{k}: {'Completed' if k in completed_keys else 'Missing'}"
+            f"{k}: {'Completed' if k in completed_keys else 'Not launched'}"
             for k in expected_keys
         ]
     ]
@@ -892,8 +954,8 @@ def _build_partition_grid(
         height=120,
         margin=dict(l=20, r=20, t=10, b=60),
     )
-    # Static grid only has completed/missing — no "not in range"
-    for label, color in [("Completed", "#22c55e"), ("Missing", "#ef4444")]:
+    # Static grid only has completed/not-launched — no "not in range"
+    for label, color in [("Completed", "#22c55e"), ("Not launched", "#f59e0b")]:
         fig.add_trace(
             go.Scatter(
                 x=[None],
@@ -1056,6 +1118,8 @@ def _build_task_dag_figure(task_runs: list[TaskRunInfo]) -> Any:
         "PENDING": "#a3a3a3",
         "CANCELED": "#f59e0b",
         "TIMED_OUT": "#f59e0b",
+        "INTERNAL_ERROR": "#ef4444",
+        "SKIPPED": "#a3a3a3",
     }
 
     # Draw edges
@@ -1085,10 +1149,13 @@ def _build_task_dag_figure(task_runs: list[TaskRunInfo]) -> Any:
     node_x = [positions[t.task_key][0] for t in task_runs]
     node_y = [positions[t.task_key][1] for t in task_runs]
     node_colors = [
-        _STATE_COLORS.get(t.result_state or "PENDING", "#a3a3a3") for t in task_runs
+        _STATE_COLORS.get(
+            _effective_state(t.result_state, t.life_cycle_state), "#a3a3a3"
+        )
+        for t in task_runs
     ]
     node_text = [
-        f"{t.task_key}<br>{t.result_state or 'PENDING'}<br>{t.duration_seconds or 0}s"
+        f"{t.task_key}<br>{_effective_state(t.result_state, t.life_cycle_state)}<br>{t.duration_seconds or 0}s"
         for t in task_runs
     ]
     node_labels = [t.task_key for t in task_runs]
@@ -1143,13 +1210,27 @@ def _render_run_history(
         rows.append(
             {
                 "Run ID": r.run_id,
-                "Status": r.result_state or "RUNNING",
+                "Status": _effective_state(r.result_state, r.life_cycle_state),
                 "Start": start,
                 "Duration (s)": r.duration_seconds or "\u2014",
                 "Backfill Key": r.backfill_key or "",
             }
         )
     st.dataframe(rows, width="stretch", hide_index=True)
+
+    # Show error message for the most recent failed run
+    errored = [
+        r
+        for r in runs
+        if _is_terminal_failure(r.result_state, r.life_cycle_state) and r.state_message
+    ]
+    if errored:
+        latest = errored[0]
+        st.error(
+            f"**Run {latest.run_id}** "
+            f"({_effective_state(latest.result_state, latest.life_cycle_state)}): "
+            f"{latest.state_message}"
+        )
 
     # --- Task details for selected run ---
     overview = next((o for o in overviews if o.job_name == selected), None)
@@ -1176,14 +1257,16 @@ def _render_run_history(
     if dag_fig is not None:
         st.plotly_chart(dag_fig, width="stretch")
 
-    task_rows = [
-        {
+    task_rows = []
+    for t in task_runs:
+        row: dict[str, object] = {
             "Task": t.task_key,
-            "Status": t.result_state or "RUNNING",
+            "Status": _effective_state(t.result_state, t.life_cycle_state),
             "Duration (s)": t.duration_seconds or "\u2014",
         }
-        for t in task_runs
-    ]
+        if t.state_message:
+            row["Error"] = t.state_message
+        task_rows.append(row)
     st.dataframe(task_rows, width="stretch", hide_index=True)
 
 
@@ -1248,6 +1331,9 @@ def _render_backfill(
                 fig = build_fn(cov)
                 if fig is not None:
                     st.plotly_chart(fig, width="stretch")
+                if cov.missing_keys:
+                    st.markdown(f"**{len(cov.missing_keys)} not launched:**")
+                    st.code("\n".join(cov.missing_keys))
         else:
             with st.expander(
                 f"{name} \u2014 {cov.coverage_pct}% coverage (partition grid)"
@@ -1255,10 +1341,9 @@ def _render_backfill(
                 fig = _build_partition_grid(cov.expected_keys, set(cov.completed_keys))
                 if fig is not None:
                     st.plotly_chart(fig, width="stretch")
-
-        if cov.missing_keys:
-            with st.expander(f"{name} \u2014 {len(cov.missing_keys)} missing keys"):
-                st.code("\n".join(cov.missing_keys))
+                if cov.missing_keys:
+                    st.markdown(f"**{len(cov.missing_keys)} not launched:**")
+                    st.code("\n".join(cov.missing_keys))
 
 
 # ---------------------------------------------------------------------------
