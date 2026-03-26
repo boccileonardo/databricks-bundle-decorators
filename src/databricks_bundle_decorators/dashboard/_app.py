@@ -265,7 +265,7 @@ def run_app(
     )
     def _display_page(
         pathname: str | None,
-        n_clicks: int | None,
+        _n_clicks: int | None,
         target: str | None,
     ) -> tuple[Any, Any]:
         target_val = target if target else None
