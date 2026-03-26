@@ -170,25 +170,41 @@ _FIGURE_BUILDERS: dict[str, tuple[str, Any]] = {
     "daily": (
         "calendar",
         lambda c, **kw: _build_daily_calendar(
-            set(c.expected_keys), set(c.completed_keys), c.completed_key_runs, **kw
+            set(c.expected_keys),
+            set(c.completed_keys),
+            c.completed_key_runs,
+            in_progress_keys=set(c.in_progress_keys or []),
+            **kw,
         ),
     ),
     "weekly": (
         "week calendar",
         lambda c, **kw: _build_weekly_calendar(
-            set(c.expected_keys), set(c.completed_keys), c.completed_key_runs, **kw
+            set(c.expected_keys),
+            set(c.completed_keys),
+            c.completed_key_runs,
+            in_progress_keys=set(c.in_progress_keys or []),
+            **kw,
         ),
     ),
     "monthly": (
         "month calendar",
         lambda c, **kw: _build_monthly_calendar(
-            set(c.expected_keys), set(c.completed_keys), c.completed_key_runs, **kw
+            set(c.expected_keys),
+            set(c.completed_keys),
+            c.completed_key_runs,
+            in_progress_keys=set(c.in_progress_keys or []),
+            **kw,
         ),
     ),
     "hourly": (
         "hour calendar",
         lambda c, **kw: _build_hourly_calendar(
-            set(c.expected_keys), set(c.completed_keys), c.completed_key_runs, **kw
+            set(c.expected_keys),
+            set(c.completed_keys),
+            c.completed_key_runs,
+            in_progress_keys=set(c.in_progress_keys or []),
+            **kw,
         ),
     ),
 }
@@ -220,13 +236,10 @@ def _page_overview(
     ]
     avg_dur_s = round(sum(all_durations) / len(all_durations)) if all_durations else 0
     avg_dur = _fmt_duration(avg_dur_s)
+    total_successes = sum(o.successes for o in overviews)
+    total_terminal = total_successes + total_failures
     success_rate = (
-        round(
-            sum(o.successes for o in overviews) / total_runs * 100,
-            1,
-        )
-        if total_runs
-        else 0
+        round(total_successes / total_terminal * 100, 1) if total_terminal else 0
     )
 
     kpi_row = dbc.Row(
@@ -247,7 +260,12 @@ def _page_overview(
     )
 
     column_defs = [
-        {"field": "Job", "cellRenderer": "markdown", "minWidth": 180},
+        {
+            "field": "Job",
+            "cellRenderer": "markdown",
+            "linkTarget": "_blank",
+            "minWidth": 180,
+        },
         {"field": "Status", "cellStyle": _STATUS_CELL_STYLE, "maxWidth": 140},
         {"field": "Runs", "minWidth": 160},
         {"field": "Success Rate", "maxWidth": 120},
@@ -430,6 +448,7 @@ def _page_backfill_detail(
             cov.expected_keys,
             set(cov.completed_keys),
             cov.completed_key_runs,
+            in_progress_keys=set(cov.in_progress_keys or []),
         )
         if fig is not None:
             backfill_section.append(dcc.Graph(figure=fig))

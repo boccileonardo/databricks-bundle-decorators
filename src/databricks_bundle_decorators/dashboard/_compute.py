@@ -66,6 +66,16 @@ def _is_terminal_failure(
     return life_cycle_state in _ERROR_LIFECYCLE_STATES
 
 
+def _is_active(
+    result_state: str | None,
+    life_cycle_state: str | None,
+) -> bool:
+    """Return True if the run is still in progress."""
+    if result_state is not None:
+        return False  # has a result → terminal
+    return life_cycle_state in _ACTIVE_LIFECYCLE_STATES
+
+
 def build_job_overview(
     job_name: str,
     job_id: int | None,
@@ -84,6 +94,7 @@ def build_job_overview(
     failures = sum(
         1 for r in runs if _is_terminal_failure(r.result_state, r.life_cycle_state)
     )
+    in_progress = sum(1 for r in runs if _is_active(r.result_state, r.life_cycle_state))
     durations = [r.duration_seconds for r in runs if r.duration_seconds is not None]
 
     most_recent = runs[0]
@@ -94,6 +105,7 @@ def build_job_overview(
         total_runs=len(runs),
         successes=successes,
         failures=failures,
+        in_progress=in_progress,
         last_run_time_ms=most_recent.start_time_ms,
         last_run_state=_effective_state(
             most_recent.result_state, most_recent.life_cycle_state
@@ -230,11 +242,22 @@ def compute_backfill_coverage(
     # Remove keys that also have a successful run
     errored -= set(key_runs)
 
+    # Track keys with an active (running/pending) run but no success yet
+    active: set[str] = set()
+    for r in runs:
+        if r.backfill_key is not None and _is_active(
+            r.result_state, r.life_cycle_state
+        ):
+            active.add(r.backfill_key)
+    # Remove keys that already have a successful run
+    active -= set(key_runs)
+
     completed = set(key_runs)
     due_set = set(due_keys)
     completed_list = sorted(due_set & completed)
-    missing = sorted(due_set - completed)
+    missing = sorted(due_set - completed - active)
     errored_list = sorted(due_set & errored)
+    in_progress_list = sorted(due_set & active)
     pct = round(len(completed_list) / len(due_keys) * 100, 1) if due_keys else 0.0
     # Only keep entries for keys in the due set
     due_key_runs = {k: v for k, v in key_runs.items() if k in due_set}
@@ -247,6 +270,7 @@ def compute_backfill_coverage(
         kind=kind,
         completed_key_runs=due_key_runs,
         errored_keys=errored_list,
+        in_progress_keys=in_progress_list,
     )
 
 

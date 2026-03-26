@@ -17,21 +17,24 @@ import whenever
 # Coverage heatmap colorscale & legend
 # ---------------------------------------------------------------------------
 
-#: Discrete 4-state colorscale:
-#:   0=not-in-range, 1=not launched (past), 2=completed, 3=scheduled (future).
+#: Discrete 5-state colorscale:
+#:   0=not-in-range, 1=not launched (past), 2=completed,
+#:   3=not started (future), 4=in progress.
 #:
-#: z values are integers 0–3 with zmin=0, zmax=3, so normalised positions
-#: are 0, 1/3, 2/3, 1.  Boundaries sit at the midpoints (1/6, 3/6, 5/6)
-#: so that each z value falls squarely inside its colour band.
+#: z values are integers 0–4 with zmin=0, zmax=4, so normalised positions
+#: are 0, 0.25, 0.5, 0.75, 1.  Boundaries sit at midpoints (0.125, 0.375,
+#: 0.625, 0.875) so each z value falls squarely inside its colour band.
 _COVERAGE_COLORSCALE: list[list[object]] = [
     [0.0, "#f0f1f4"],
-    [1 / 6, "#f0f1f4"],
-    [1 / 6, "#f2a20d"],
-    [3 / 6, "#f2a20d"],
-    [3 / 6, "#2fb380"],
-    [5 / 6, "#2fb380"],
-    [5 / 6, "#d0e8ff"],
-    [1.0, "#d0e8ff"],
+    [0.125, "#f0f1f4"],
+    [0.125, "#f2a20d"],
+    [0.375, "#f2a20d"],
+    [0.375, "#2fb380"],
+    [0.625, "#2fb380"],
+    [0.625, "#d0e8ff"],
+    [0.875, "#d0e8ff"],
+    [0.875, "#3459e6"],
+    [1.0, "#3459e6"],
 ]
 
 
@@ -39,8 +42,9 @@ def _add_coverage_legend(fig: Any) -> None:
     """Add a green/red/blue/gray legend to a coverage heatmap figure."""
     for label, color in [
         ("Completed", "#2fb380"),
+        ("In progress", "#3459e6"),
         ("Not launched", "#f2a20d"),
-        ("Scheduled", "#d0e8ff"),
+        ("Not started", "#d0e8ff"),
         ("Not in range", "#f0f1f4"),
     ]:
         fig.add_trace(
@@ -88,14 +92,14 @@ def _build_daily_calendar(
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
     *,
+    in_progress_keys: set[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> Any:
     """Build a Plotly heatmap calendar for daily backfill keys.
 
     Renders a GitHub-contribution-graph-style grid: rows are
-    weekdays (Mon\u2013Sun) and columns are weeks.  Past missing dates
-    are shown in red, future scheduled dates in light blue.
+    weekdays (Mon–Sun) and columns are weeks.
     """
     expected_dates: set[whenever.Date] = set()
     for key in expected_keys:
@@ -189,7 +193,7 @@ def _build_daily_calendar(
             hoverinfo="text",
             colorscale=_COVERAGE_COLORSCALE,
             zmin=0,
-            zmax=3,
+            zmax=4,
             showscale=False,
             xgap=2,
             ygap=2,
@@ -216,6 +220,7 @@ def _build_weekly_calendar(
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
     *,
+    in_progress_keys: set[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> Any:
@@ -281,6 +286,7 @@ def _build_weekly_calendar(
 
     today_iso = date.today().isocalendar()
     today_yw = (today_iso[0], today_iso[1])
+    _ip = in_progress_keys or set()
 
     for year in years:
         row_z: list[int] = []
@@ -291,9 +297,12 @@ def _build_weekly_calendar(
                 if (year, w) in completed_parsed:
                     row_z.append(2)
                     row_h.append(_hover_completed(key_str, key_run_info))
+                elif key_str in _ip:
+                    row_z.append(4)
+                    row_h.append(f"{key_str}: In progress")
                 elif (year, w) > today_yw:
                     row_z.append(3)
-                    row_h.append(f"{key_str}: Scheduled")
+                    row_h.append(f"{key_str}: Not started")
                 else:
                     row_z.append(1)
                     row_h.append(f"{key_str}: Not launched")
@@ -312,7 +321,7 @@ def _build_weekly_calendar(
             hoverinfo="text",
             colorscale=_COVERAGE_COLORSCALE,
             zmin=0,
-            zmax=3,
+            zmax=4,
             showscale=False,
             xgap=1,
             ygap=2,
@@ -332,6 +341,7 @@ def _build_monthly_calendar(
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
     *,
+    in_progress_keys: set[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> Any:
@@ -393,6 +403,7 @@ def _build_monthly_calendar(
 
     today = date.today()
     today_ym = (today.year, today.month)
+    _ip = in_progress_keys or set()
 
     for year in years:
         row_z: list[int] = []
@@ -403,9 +414,12 @@ def _build_monthly_calendar(
                 if (year, m) in completed_parsed:
                     row_z.append(2)
                     row_h.append(_hover_completed(key_str, key_run_info))
+                elif key_str in _ip:
+                    row_z.append(4)
+                    row_h.append(f"{key_str}: In progress")
                 elif (year, m) > today_ym:
                     row_z.append(3)
-                    row_h.append(f"{key_str}: Scheduled")
+                    row_h.append(f"{key_str}: Not started")
                 else:
                     row_z.append(1)
                     row_h.append(f"{key_str}: Not launched")
@@ -424,7 +438,7 @@ def _build_monthly_calendar(
             hoverinfo="text",
             colorscale=_COVERAGE_COLORSCALE,
             zmin=0,
-            zmax=3,
+            zmax=4,
             showscale=False,
             xgap=3,
             ygap=3,
@@ -443,6 +457,7 @@ def _build_hourly_calendar(
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
     *,
+    in_progress_keys: set[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> Any:
@@ -494,6 +509,7 @@ def _build_hourly_calendar(
     hover: list[list[str]] = []
 
     now_utc = datetime.now(tz=timezone.utc)
+    _ip = in_progress_keys or set()
 
     for day in all_days:
         row_z: list[int] = []
@@ -504,12 +520,15 @@ def _build_hourly_calendar(
                 if (day, h) in completed_parsed:
                     row_z.append(2)
                     row_h.append(_hover_completed(key_str, key_run_info))
+                elif key_str in _ip:
+                    row_z.append(4)
+                    row_h.append(f"{key_str}: In progress")
                 elif (
                     datetime(day.year, day.month, day.day, h, tzinfo=timezone.utc)
                     > now_utc
                 ):
                     row_z.append(3)
-                    row_h.append(f"{key_str}: Scheduled")
+                    row_h.append(f"{key_str}: Not started")
                 else:
                     row_z.append(1)
                     row_h.append(f"{key_str}: Not launched")
@@ -530,7 +549,7 @@ def _build_hourly_calendar(
             hoverinfo="text",
             colorscale=_COVERAGE_COLORSCALE,
             zmin=0,
-            zmax=3,
+            zmax=4,
             showscale=False,
             xgap=1,
             ygap=1,
@@ -549,6 +568,8 @@ def _build_partition_grid(
     expected_keys: list[str],
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
+    *,
+    in_progress_keys: set[str] | None = None,
 ) -> Any:
     """Build a Plotly heatmap for static backfill keys.
 
@@ -558,15 +579,24 @@ def _build_partition_grid(
     if not expected_keys:
         return None
 
-    z = [[2 if k in completed_keys else 1 for k in expected_keys]]
-    hover = [
-        [
-            _hover_completed(k, key_run_info)
-            if k in completed_keys
-            else f"{k}: Not launched"
-            for k in expected_keys
-        ]
-    ]
+    _ip = in_progress_keys or set()
+
+    def _cell_z(k: str) -> int:
+        if k in completed_keys:
+            return 2
+        if k in _ip:
+            return 4
+        return 1
+
+    def _cell_hover(k: str) -> str:
+        if k in completed_keys:
+            return _hover_completed(k, key_run_info)
+        if k in _ip:
+            return f"{k}: In progress"
+        return f"{k}: Not launched"
+
+    z = [[_cell_z(k) for k in expected_keys]]
+    hover = [[_cell_hover(k) for k in expected_keys]]
 
     fig = go.Figure(
         data=go.Heatmap(
@@ -577,7 +607,7 @@ def _build_partition_grid(
             hoverinfo="text",
             colorscale=_COVERAGE_COLORSCALE,
             zmin=0,
-            zmax=3,
+            zmax=4,
             showscale=False,
             xgap=3,
             ygap=3,
@@ -595,8 +625,12 @@ def _build_partition_grid(
         margin=dict(l=20, r=20, t=10, b=60),
         xaxis=xaxis_opts,
     )
-    # Static grid only has completed/not-launched — no "not in range"
-    for label, color in [("Completed", "#2fb380"), ("Not launched", "#f2a20d")]:
+    # Static grid only has completed/in-progress/not-launched
+    for label, color in [
+        ("Completed", "#2fb380"),
+        ("In progress", "#3459e6"),
+        ("Not launched", "#f2a20d"),
+    ]:
         fig.add_trace(
             go.Scatter(
                 x=[None],

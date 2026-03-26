@@ -31,6 +31,7 @@ class JobOverview:
     total_runs: int = 0
     successes: int = 0
     failures: int = 0
+    in_progress: int = 0
     last_run_time_ms: int | None = None
     last_run_state: str | None = None
     avg_duration_seconds: float | None = None
@@ -59,3 +60,6 @@ class BackfillCoverage:
     """Keys that were attempted but only have failed runs (no
     successful run yet).  ``None`` when error tracking is
     unavailable."""
+    in_progress_keys: list[str] | None = None
+    """Keys with an active (running/pending) run but no
+    successful run yet."""

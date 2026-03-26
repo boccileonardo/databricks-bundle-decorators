@@ -54,9 +54,10 @@ def _overviews_to_records(
         else:
             runs_cell = "\u2014"
 
-        # Success rate
-        if o.total_runs:
-            rate = round(o.successes / o.total_runs * 100)
+        # Success rate (over terminal runs only — excludes in-progress)
+        terminal = o.successes + o.failures
+        if terminal:
+            rate = round(o.successes / terminal * 100)
             rate_cell = f"{rate}%"
         else:
             rate_cell = "\u2014"
@@ -110,28 +111,38 @@ def _build_key_squares(cov: BackfillCoverage, max_squares: int) -> list[str]:
     failures sorted first (so problems are immediately visible).
 
     For **time-based** backfills, shows the last ``max_squares``
-    logical periods from the due keys (completed + missing), sorted
-    chronologically.
+    logical periods from the due keys (completed + missing + in-progress),
+    sorted chronologically.
     """
     completed_set = set(cov.completed_keys)
     errored_set = set(cov.errored_keys) if cov.errored_keys else set()
+    in_progress_set = set(cov.in_progress_keys) if cov.in_progress_keys else set()
 
-    # Due keys = completed + missing (future keys are excluded upstream)
-    due_keys = cov.completed_keys + cov.missing_keys
+    # Due keys = completed + missing + in-progress (future keys are excluded upstream)
+    due_keys = (
+        cov.completed_keys
+        + cov.missing_keys
+        + list(in_progress_set - set(cov.completed_keys) - set(cov.missing_keys))
+    )
 
     if cov.kind in _TIME_BASED_KINDS:
         # Chronological sort, take the most recent N
         selected = sorted(due_keys)[-max_squares:]
     else:
-        # Static: failed first, then success, capped at N
-        failed = [k for k in due_keys if k not in completed_set]
+        # Static: failed first, then in-progress, then success, capped at N
+        failed = [
+            k for k in due_keys if k not in completed_set and k not in in_progress_set
+        ]
+        running = [k for k in due_keys if k in in_progress_set]
         succeeded = [k for k in due_keys if k in completed_set]
-        selected = (failed + succeeded)[:max_squares]
+        selected = (failed + running + succeeded)[:max_squares]
 
     squares: list[str] = []
     for k in selected:
         if k in completed_set:
             squares.append("\U0001f7e9")  # green square
+        elif k in in_progress_set:
+            squares.append("\U0001f7e6")  # blue square
         elif k in errored_set:
             squares.append("\U0001f7e5")  # red square
         else:
