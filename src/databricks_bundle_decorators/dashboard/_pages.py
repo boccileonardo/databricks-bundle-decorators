@@ -248,11 +248,11 @@ def _page_overview(
             "field": "Job",
             "cellRenderer": "markdown",
             "linkTarget": "_blank",
-            "minWidth": 180,
+            "minWidth": 140,
         },
         {"field": "Status", "cellStyle": _STATUS_CELL_STYLE, "maxWidth": 140},
         {"field": "Runs", "maxWidth": 160},
-        {"field": "Success %", "maxWidth": 120},
+        {"field": "Success %", "maxWidth": 140},
         {"field": "Avg Duration", "maxWidth": 140},
         {"field": "Completeness", "cellRenderer": "markdown", "maxWidth": 160},
     ]
