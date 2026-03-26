@@ -18,7 +18,7 @@ import whenever
 # ---------------------------------------------------------------------------
 
 #: Discrete 5-state colorscale:
-#:   0=not-in-range, 1=not launched (past), 2=completed,
+#:   0=not-in-range, 1=missing (past due), 2=completed,
 #:   3=not started (future), 4=in progress.
 #:
 #: z values are integers 0–4 with zmin=0, zmax=4, so normalised positions
@@ -43,7 +43,7 @@ def _add_coverage_legend(fig: Any) -> None:
     for label, color in [
         ("Completed", "#2fb380"),
         ("In progress", "#3459e6"),
-        ("Not launched", "#f2a20d"),
+        ("Missing", "#f2a20d"),
         ("Not started", "#d0e8ff"),
         ("Not in range", "#f0f1f4"),
     ]:
@@ -58,7 +58,15 @@ def _add_coverage_legend(fig: Any) -> None:
             )
         )
     fig.update_layout(
-        legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="left", x=0),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.15,
+            xanchor="left",
+            x=0,
+            itemclick=False,
+            itemdoubleclick=False,
+        ),
     )
 
 
@@ -165,7 +173,7 @@ def _build_daily_calendar(
                     hover[dow][week_idx] = f"{key_str}: Scheduled"
                 else:
                     z[dow][week_idx] = 1
-                    hover[dow][week_idx] = f"{key_str}: Not launched"
+                    hover[dow][week_idx] = f"{key_str}: Missing"
             else:
                 hover[dow][week_idx] = d.format_iso()
 
@@ -305,7 +313,7 @@ def _build_weekly_calendar(
                     row_h.append(f"{key_str}: Not started")
                 else:
                     row_z.append(1)
-                    row_h.append(f"{key_str}: Not launched")
+                    row_h.append(f"{key_str}: Missing")
             else:
                 row_z.append(0)
                 row_h.append(f"{year}-W{w:02d}")
@@ -422,7 +430,7 @@ def _build_monthly_calendar(
                     row_h.append(f"{key_str}: Not started")
                 else:
                     row_z.append(1)
-                    row_h.append(f"{key_str}: Not launched")
+                    row_h.append(f"{key_str}: Missing")
             else:
                 row_z.append(0)
                 row_h.append(f"{year}-{m:02d}")
@@ -531,7 +539,7 @@ def _build_hourly_calendar(
                     row_h.append(f"{key_str}: Not started")
                 else:
                     row_z.append(1)
-                    row_h.append(f"{key_str}: Not launched")
+                    row_h.append(f"{key_str}: Missing")
             else:
                 row_z.append(0)
                 row_h.append(f"{day.isoformat()}T{h:02d}")
@@ -593,7 +601,7 @@ def _build_partition_grid(
             return _hover_completed(k, key_run_info)
         if k in _ip:
             return f"{k}: In progress"
-        return f"{k}: Not launched"
+        return f"{k}: Missing"
 
     z = [[_cell_z(k) for k in expected_keys]]
     hover = [[_cell_hover(k) for k in expected_keys]]
@@ -625,11 +633,11 @@ def _build_partition_grid(
         margin=dict(l=20, r=20, t=10, b=60),
         xaxis=xaxis_opts,
     )
-    # Static grid only has completed/in-progress/not-launched
+    # Static grid only has completed/in-progress/missing
     for label, color in [
         ("Completed", "#2fb380"),
         ("In progress", "#3459e6"),
-        ("Not launched", "#f2a20d"),
+        ("Missing", "#f2a20d"),
     ]:
         fig.add_trace(
             go.Scatter(
@@ -642,6 +650,14 @@ def _build_partition_grid(
             )
         )
     fig.update_layout(
-        legend=dict(orientation="h", yanchor="top", y=-0.3, xanchor="left", x=0),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.3,
+            xanchor="left",
+            x=0,
+            itemclick=False,
+            itemdoubleclick=False,
+        ),
     )
     return fig

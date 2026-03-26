@@ -146,7 +146,7 @@ def _build_key_squares(cov: BackfillCoverage, max_squares: int) -> list[str]:
         elif k in errored_set:
             squares.append("\U0001f7e5")  # red square
         else:
-            squares.append("\u2b1c")  # white square (not launched)
+            squares.append("\u2b1c")  # white square (missing)
     return squares
 
 

@@ -458,7 +458,7 @@ def _page_backfill_detail(
             html.Details(
                 [
                     html.Summary(
-                        f"{len(cov.missing_keys)} keys not launched",
+                        f"{len(cov.missing_keys)} missing keys",
                         className="text-warning mb-2",
                     ),
                     html.Pre(

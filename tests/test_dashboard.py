@@ -25,6 +25,7 @@ from databricks_bundle_decorators.dashboard._compute import (
     _backfill_kind,
     _effective_state,
     _filter_past_keys,
+    _is_active,
     _is_terminal_failure,
 )
 from databricks_bundle_decorators.dashboard._display import (
@@ -196,6 +197,29 @@ class TestIsTerminalFailure:
         assert _is_terminal_failure(None, None) is False
 
 
+class TestIsActive:
+    def test_running_is_active(self) -> None:
+        assert _is_active(None, "RUNNING") is True
+
+    def test_pending_is_active(self) -> None:
+        assert _is_active(None, "PENDING") is True
+
+    def test_terminating_is_active(self) -> None:
+        assert _is_active(None, "TERMINATING") is True
+
+    def test_success_is_not_active(self) -> None:
+        assert _is_active("SUCCESS", "TERMINATED") is False
+
+    def test_failed_is_not_active(self) -> None:
+        assert _is_active("FAILED", None) is False
+
+    def test_internal_error_is_not_active(self) -> None:
+        assert _is_active(None, "INTERNAL_ERROR") is False
+
+    def test_none_none_is_not_active(self) -> None:
+        assert _is_active(None, None) is False
+
+
 # ---------------------------------------------------------------------------
 # build_job_overview (pure function)
 # ---------------------------------------------------------------------------
@@ -238,13 +262,14 @@ class TestBuildJobOverview:
     def test_running_run_excluded_from_failures(self) -> None:
         """A run with result_state=None (still running) is not a failure."""
         runs = [
-            RunInfo(1, None, 3000, None, None),
+            RunInfo(1, None, 3000, None, None, life_cycle_state="RUNNING"),
             RunInfo(2, "SUCCESS", 2000, 32000, 30.0),
         ]
         o = build_job_overview("j", job_id=1, runs=runs)
         assert o.total_runs == 2
         assert o.successes == 1
         assert o.failures == 0
+        assert o.in_progress == 1
 
     def test_internal_error_counted_as_failure(self) -> None:
         """An INTERNAL_ERROR run (no result_state) is counted as a failure."""
@@ -891,7 +916,7 @@ class TestBuildDailyCalendar:
     def test_hover_shows_missing_status(self) -> None:
         fig = _build_daily_calendar({"2024-01-15"}, set())
         hover = _flatten_hover(fig)
-        assert any("Not launched" in h for h in hover)
+        assert any("Missing" in h for h in hover)
 
     def test_seven_weekday_rows(self) -> None:
         fig = _build_daily_calendar({"2024-01-15"}, set())
@@ -930,7 +955,7 @@ class TestBuildDailyCalendar:
         hover = _flatten_hover(fig)
         # Last date should be present, early dates should be filtered
         assert any("2023-07-19" in h for h in hover)  # day 200
-        assert not any("2023-01-01: Not launched" in h for h in hover)
+        assert not any("2023-01-01: Missing" in h for h in hover)
 
     def test_explicit_range_overrides_auto_clip(self) -> None:
         from datetime import date
@@ -999,18 +1024,18 @@ class TestBuildWeeklyCalendar:
             keys, set(), start_date=date(2024, 6, 1), end_date=date(2024, 9, 30)
         )
         hover = _flatten_hover(fig)
-        # W26 (late June) should be present as "Not launched"
-        assert any("2024-W26: Not launched" in h for h in hover)
-        # W01 (early January) should NOT appear as "Not launched" (it was filtered)
-        assert not any("2024-W01: Not launched" in h for h in hover)
+        # W26 (late June) should be present as "Missing"
+        assert any("2024-W26: Missing" in h for h in hover)
+        # W01 (early January) should NOT appear as "Missing" (it was filtered)
+        assert not any("2024-W01: Missing" in h for h in hover)
 
     def test_auto_clips_large_range(self) -> None:
         # >104 weeks triggers auto-clip to last 52
         keys = {f"{y}-W{w:02d}" for y in range(2020, 2024) for w in range(1, 53)}
         fig = _build_weekly_calendar(keys, set())
         hover = _flatten_hover(fig)
-        assert any("2023-W52: Not launched" in h for h in hover)
-        assert not any("2020-W01: Not launched" in h for h in hover)
+        assert any("2023-W52: Missing" in h for h in hover)
+        assert not any("2020-W01: Missing" in h for h in hover)
 
     def test_empty_range_returns_none(self) -> None:
         from datetime import date
@@ -1318,14 +1343,14 @@ class TestBuildPartitionGrid:
         fig = _build_partition_grid(["us", "eu"], {"us"})
         hover = _flatten_hover(fig)
         assert any("Completed" in h for h in hover)
-        assert any("Not launched" in h for h in hover)
+        assert any("Missing" in h for h in hover)
 
     def test_hover_shows_run_info(self) -> None:
         key_run_info = {"us": (99, 1_705_312_800_000)}
         fig = _build_partition_grid(["us", "eu"], {"us"}, key_run_info)
         hover = _flatten_hover(fig)
         assert any("Run 99" in h for h in hover)
-        assert any("Not launched" in h for h in hover)
+        assert any("Missing" in h for h in hover)
 
 
 # ---------------------------------------------------------------------------
@@ -1452,6 +1477,20 @@ class TestOverviewsToRecords:
         }
         assert set(records[0].keys()) == expected_cols
 
+    def test_success_rate_excludes_in_progress(self) -> None:
+        """In-progress runs should not affect the success rate."""
+        o = JobOverview(
+            job_name="etl",
+            job_id=42,
+            total_runs=8,
+            successes=7,
+            failures=0,
+            in_progress=1,
+        )
+        records = _overviews_to_records([o])
+        # 7 successes / 7 terminal = 100%, not 87.5% (7/8)
+        assert records[0]["Success Rate"] == "100%"
+
 
 class TestCoveragesToRecords:
     def test_empty(self) -> None:
@@ -1503,7 +1542,7 @@ class TestCoveragesToRecords:
         # Last 5 periods: days 6-10, so 3 green + 2 white
         squares = keys_cell.split()
         assert len(squares) == 5
-        # Last two should be white (not launched)
+        # Last two should be white (missing)
         assert squares[-1] == "\u2b1c"
         assert squares[-2] == "\u2b1c"
 

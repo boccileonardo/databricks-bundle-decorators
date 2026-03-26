@@ -69,7 +69,7 @@ Each backfill type gets a dedicated visualization:
 | `HourlyBackfill` | Date × hour grid (00–23) |
 | `StaticBackfill` | Single-row partition grid |
 
-Green = completed, amber = not launched, gray = not in range.
+Green = completed, amber = missing, gray = not in range.
 
 ## Navigation
 
