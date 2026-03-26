@@ -5,7 +5,8 @@ No I/O — easy to test.
 
 from __future__ import annotations
 
-from datetime import date
+import re
+from datetime import date, datetime
 from typing import Any
 
 import whenever
@@ -111,8 +112,6 @@ def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
     not yet completed are excluded.  Static backfills are returned
     unchanged.
     """
-    from datetime import datetime as _dt
-
     today = whenever.ZonedDateTime.now("UTC").date()
 
     if kind == "daily":
@@ -129,8 +128,6 @@ def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
         return result
 
     if kind == "weekly":
-        import re
-
         week_re = re.compile(r"^(\d{4})-W(\d{2})$")
         # Current ISO week: consider last week as the last complete one
         cur_iso = today.py_date().isocalendar()
@@ -170,7 +167,7 @@ def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
         result = []
         for k in keys:
             try:
-                _dt.strptime(k, fmt)  # validate format
+                datetime.strptime(k, fmt)  # validate format
             except ValueError:
                 result.append(k)
                 continue

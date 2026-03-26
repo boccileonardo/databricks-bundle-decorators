@@ -276,9 +276,7 @@ def run_app(
             try:
                 run_id = int(run_id_str)
             except ValueError:
-                import dash_bootstrap_components as _dbc
-
-                return _dbc.Alert(
+                return dbc.Alert(
                     f"Invalid run ID: {run_id_str}",
                     color="warning",
                 )
@@ -287,9 +285,7 @@ def run_app(
         if pathname == "/backfills":
             return _page_backfills(coverages)
 
-        import dash_bootstrap_components as _dbc
-
-        return _dbc.Alert(
+        return dbc.Alert(
             f"Page not found: {pathname}",
             color="warning",
         )

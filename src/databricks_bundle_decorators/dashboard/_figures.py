@@ -5,9 +5,12 @@ Calendar heatmaps, task DAG, and partition grid visualisations.
 
 from __future__ import annotations
 
-from datetime import date
+import calendar as _calendar
+import re
+from datetime import date, datetime, timezone
 from typing import Any
 
+import plotly.graph_objects as go
 import whenever
 
 from databricks_bundle_decorators.dashboard._compute import _effective_state
@@ -30,8 +33,6 @@ _COVERAGE_COLORSCALE: list[list[object]] = [
 
 def _add_coverage_legend(fig: Any) -> None:
     """Add a green/amber/gray legend to a coverage heatmap figure."""
-    import plotly.graph_objects as go
-
     for label, color in [
         ("Completed", "#22c55e"),
         ("Not launched", "#f59e0b"),
@@ -65,8 +66,6 @@ def _hover_completed(key: str, key_run_info: _KeyRunInfo | None) -> str:
     if key_run_info is not None and key in key_run_info:
         run_id, start_ms = key_run_info[key]
         if start_ms:
-            from datetime import datetime, timezone
-
             dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
             ts = dt.strftime("%Y-%m-%d %H:%M UTC")
             return f"{key}: Completed<br>Run {run_id} \u00b7 {ts}"
@@ -89,8 +88,6 @@ def _build_daily_calendar(
     Renders a GitHub-contribution-graph-style grid: rows are
     weekdays (Mon–Sun) and columns are weeks.
     """
-    import plotly.graph_objects as go
-
     expected_dates: set[whenever.Date] = set()
     for key in expected_keys:
         try:
@@ -192,10 +189,6 @@ def _build_weekly_calendar(
 
     Renders a year x week grid (rows=years, columns=W01-W53).
     """
-    import re
-
-    import plotly.graph_objects as go
-
     week_re = re.compile(r"^(\d{4})-W(\d{2})$")
 
     expected: dict[tuple[int, int], str] = {}
@@ -272,10 +265,6 @@ def _build_monthly_calendar(
 
     Renders a year x month grid (rows=years, columns=Jan-Dec).
     """
-    import calendar as _calendar
-
-    import plotly.graph_objects as go
-
     expected: dict[tuple[int, int], str] = {}
     for key in expected_keys:
         try:
@@ -353,16 +342,12 @@ def _build_hourly_calendar(
 
     Renders a date x hour grid (rows=dates, columns=00-23).
     """
-    from datetime import datetime as _dt
-
-    import plotly.graph_objects as go
-
     _FMT = "%Y-%m-%dT%H"
 
     expected: dict[tuple[date, int], str] = {}
     for key in expected_keys:
         try:
-            parsed = _dt.strptime(key, _FMT)
+            parsed = datetime.strptime(key, _FMT)
             expected[(parsed.date(), parsed.hour)] = key
         except ValueError:
             continue
@@ -373,7 +358,7 @@ def _build_hourly_calendar(
     completed_parsed: set[tuple[date, int]] = set()
     for key in completed_keys:
         try:
-            parsed = _dt.strptime(key, _FMT)
+            parsed = datetime.strptime(key, _FMT)
             completed_parsed.add((parsed.date(), parsed.hour))
         except ValueError:
             continue
@@ -447,8 +432,6 @@ def _build_partition_grid(
     Renders a single-row grid with one cell per partition key.
     Used for `StaticBackfill` and any unknown backfill types.
     """
-    import plotly.graph_objects as go
-
     if not expected_keys:
         return None
 
@@ -518,8 +501,6 @@ def _build_task_dag_figure(task_runs: list[TaskRunInfo]) -> Any:
     Renders a left-to-right layered graph using topological ordering.
     Nodes are colored by result state.
     """
-    import plotly.graph_objects as go
-
     if not task_runs:
         return None
 

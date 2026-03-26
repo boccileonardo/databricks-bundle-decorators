@@ -5,7 +5,12 @@ Each ``_page_*`` function returns a component tree — no side effects.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
+
+import dash_ag_grid as dag
+import dash_bootstrap_components as dbc
+from dash import dcc, html
 
 from databricks_bundle_decorators.dashboard._compute import (
     _effective_state,
@@ -51,8 +56,6 @@ _STATE_BADGE_COLORS: dict[str, str] = {
 
 def _state_badge(state: str) -> Any:
     """Return a Bootstrap badge component for a run/task state."""
-    import dash_bootstrap_components as dbc
-
     return dbc.Badge(
         state,
         color=_STATE_BADGE_COLORS.get(state, "light"),
@@ -67,9 +70,6 @@ def _state_badge(state: str) -> Any:
 
 def _kpi_card(title: str, value: str | int, color: str = "primary") -> Any:
     """Return a Bootstrap card showing a single KPI metric."""
-    import dash_bootstrap_components as dbc
-    from dash import html
-
     return dbc.Card(
         dbc.CardBody(
             [
@@ -165,10 +165,6 @@ def _page_overview(
     coverages: dict[str, BackfillCoverage],
 ) -> Any:
     """Build the Overview page — KPI cards + searchable/paginated job table."""
-    import dash_ag_grid as dag
-    import dash_bootstrap_components as dbc
-    from dash import html
-
     total_jobs = len(overviews)
     deployed = sum(1 for o in overviews if o.job_id)
     total_runs = sum(o.total_runs for o in overviews)
@@ -262,9 +258,6 @@ def _page_overview(
 
 def _page_jobs(overviews: list[JobOverview]) -> Any:
     """Build the Jobs page — AG Grid table with clickable job names."""
-    import dash_ag_grid as dag
-    from dash import html
-
     records = _overviews_to_records(overviews)
     if not records:
         return html.Div(
@@ -327,17 +320,11 @@ def _page_runs(
     job_names: list[str],
 ) -> Any:
     """Build the Runs page — all runs with clickable Run ID links."""
-    import dash_ag_grid as dag
-    import dash_bootstrap_components as dbc
-    from dash import html
-
     all_records: list[dict[str, Any]] = []
     for name in job_names:
         for r in all_runs.get(name, []):
             start = "\u2014"
             if r.start_time_ms:
-                from datetime import datetime, timezone
-
                 dt = datetime.fromtimestamp(r.start_time_ms / 1000, tz=timezone.utc)
                 start = dt.strftime("%Y-%m-%d %H:%M")
             all_records.append(
@@ -406,10 +393,6 @@ def _page_run_detail(
     profile: str | None,
 ) -> Any:
     """Build the Run Detail page — task DAG and task breakdown for a run."""
-    import dash_ag_grid as dag
-    import dash_bootstrap_components as dbc
-    from dash import dcc, html
-
     # Find which job this run belongs to
     job_name: str | None = None
     run_info: RunInfo | None = None
@@ -537,10 +520,6 @@ def _page_job_detail(
     profile: str | None,
 ) -> Any:
     """Build the Job Detail page — run history, task DAG, backfill coverage."""
-    import dash_ag_grid as dag
-    import dash_bootstrap_components as dbc
-    from dash import dcc, html
-
     overview = next((o for o in overviews if o.job_name == job_name), None)
     if overview is None:
         return dbc.Alert(f"Job '{job_name}' not found.", color="warning")
@@ -727,10 +706,6 @@ def _page_backfills(coverages: dict[str, BackfillCoverage]) -> Any:
     (``/jobs/<name>``), keeping this page fast even with hundreds
     of backfill jobs.
     """
-    import dash_ag_grid as dag
-    import dash_bootstrap_components as dbc
-    from dash import html
-
     if not coverages:
         return html.Div(
             [
