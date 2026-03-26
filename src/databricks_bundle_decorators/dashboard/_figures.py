@@ -6,12 +6,16 @@ Calendar heatmaps and partition grid visualisations.
 from __future__ import annotations
 
 import calendar as _calendar
-import re
 from datetime import date, datetime, timezone
 from typing import Any
 
 import plotly.graph_objects as go
 import whenever
+
+from databricks_bundle_decorators.dashboard._compute import (
+    _HOURLY_FMT,
+    _WEEK_KEY_RE,
+)
 
 # ---------------------------------------------------------------------------
 # Coverage heatmap colorscale & legend
@@ -107,6 +111,7 @@ def _build_daily_calendar(
     in_progress_keys: set[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
+    tz: str = "UTC",
 ) -> Any:
     """Build a Plotly heatmap calendar for daily backfill keys.
 
@@ -162,7 +167,7 @@ def _build_daily_calendar(
     z: list[list[int]] = [[0] * num_weeks for _ in range(7)]
     hover: list[list[str]] = [[""] * num_weeks for _ in range(7)]
 
-    today_wd = whenever.ZonedDateTime.now("UTC").date()
+    today_wd = whenever.ZonedDateTime.now(tz).date()
     _ip = in_progress_keys or set()
     _err = errored_keys or set()
 
@@ -180,7 +185,7 @@ def _build_daily_calendar(
                 elif key_str in _err:
                     z[dow][week_idx] = 5
                     hover[dow][week_idx] = f"{key_str}: Failed"
-                elif d.py_date() > today_wd.py_date():
+                elif d > today_wd:
                     z[dow][week_idx] = 3
                     hover[dow][week_idx] = f"{key_str}: Scheduled"
                 else:
@@ -244,6 +249,7 @@ def _build_weekly_calendar(
     in_progress_keys: set[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
+    tz: str = "UTC",
 ) -> Any:
     """Build a Plotly heatmap for weekly backfill keys.
 
@@ -253,11 +259,9 @@ def _build_weekly_calendar(
     Monday falls in that range are shown.  Defaults to the most
     recent 52 weeks when the total span exceeds 104 weeks.
     """
-    week_re = re.compile(r"^(\d{4})-W(\d{2})$")
-
     expected: dict[tuple[int, int], str] = {}
     for key in expected_keys:
-        m = week_re.match(key)
+        m = _WEEK_KEY_RE.match(key)
         if m:
             expected[(int(m.group(1)), int(m.group(2)))] = key
 
@@ -266,7 +270,7 @@ def _build_weekly_calendar(
 
     completed_parsed: set[tuple[int, int]] = set()
     for key in completed_keys:
-        m = week_re.match(key)
+        m = _WEEK_KEY_RE.match(key)
         if m:
             completed_parsed.add((int(m.group(1)), int(m.group(2))))
 
@@ -305,7 +309,7 @@ def _build_weekly_calendar(
     z: list[list[int]] = []
     hover: list[list[str]] = []
 
-    today_iso = date.today().isocalendar()
+    today_iso = whenever.ZonedDateTime.now(tz).date().py_date().isocalendar()
     today_yw = (today_iso[0], today_iso[1])
     _ip = in_progress_keys or set()
     _err = errored_keys or set()
@@ -370,6 +374,7 @@ def _build_monthly_calendar(
     in_progress_keys: set[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
+    tz: str = "UTC",
 ) -> Any:
     """Build a Plotly heatmap for monthly backfill keys.
 
@@ -427,7 +432,7 @@ def _build_monthly_calendar(
     z: list[list[int]] = []
     hover: list[list[str]] = []
 
-    today = date.today()
+    today = whenever.ZonedDateTime.now(tz).date().py_date()
     today_ym = (today.year, today.month)
     _ip = in_progress_keys or set()
     _err = errored_keys or set()
@@ -491,6 +496,7 @@ def _build_hourly_calendar(
     in_progress_keys: set[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
+    tz: str = "UTC",
 ) -> Any:
     """Build a Plotly heatmap for hourly backfill keys.
 
@@ -500,7 +506,7 @@ def _build_hourly_calendar(
     range are rendered.  Defaults to the most recent 7 days of data
     when the total span exceeds 14 days.
     """
-    _FMT = "%Y-%m-%dT%H"
+    _FMT = _HOURLY_FMT
 
     expected: dict[tuple[date, int], str] = {}
     for key in expected_keys:
@@ -539,7 +545,7 @@ def _build_hourly_calendar(
     z: list[list[int]] = []
     hover: list[list[str]] = []
 
-    now_utc = datetime.now(tz=timezone.utc)
+    now_zdt = whenever.ZonedDateTime.now(tz)
     _ip = in_progress_keys or set()
     _err = errored_keys or set()
 
@@ -559,8 +565,8 @@ def _build_hourly_calendar(
                     row_z.append(5)
                     row_h.append(f"{key_str}: Failed")
                 elif (
-                    datetime(day.year, day.month, day.day, h, tzinfo=timezone.utc)
-                    > now_utc
+                    whenever.ZonedDateTime(day.year, day.month, day.day, h, tz=tz)
+                    > now_zdt
                 ):
                     row_z.append(3)
                     row_h.append(f"{key_str}: Not started")

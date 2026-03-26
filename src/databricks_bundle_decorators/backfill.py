@@ -68,7 +68,7 @@ class DailyBackfill(BackfillDef):
     start_date:
         First key (inclusive), e.g. ``"2024-01-01"``.
     end_date:
-        Last key (inclusive).  Defaults to yesterday in *tz*.
+        Last key (inclusive).  Defaults to today in *tz*.
     tz:
         IANA timezone name (e.g. ``"UTC"``, ``"Europe/Berlin"``).
         Used to determine "yesterday" when *end_date* is omitted.
@@ -90,7 +90,7 @@ class DailyBackfill(BackfillDef):
         elif self.end_date is not None:
             e = self._parse(self.end_date)
         else:
-            e = whenever.ZonedDateTime.now(self.tz).date().subtract(days=1)
+            e = whenever.ZonedDateTime.now(self.tz).date()
 
         keys: list[str] = []
         while s <= e:
@@ -105,16 +105,15 @@ class WeeklyBackfill(BackfillDef):
 
     Keys are ISO week dates: ``YYYY-WNN`` (e.g. ``"2024-W03"``).
 
-    The default ``end_date`` is the Monday of the most recent **completed**
-    ISO week (i.e. the week whose Sunday has already passed).
+    The default ``end_date`` is the Monday of the current ISO week.
 
     Parameters
     ----------
     start_date:
         First key (inclusive), e.g. ``"2024-W01"``.
     end_date:
-        Last key (inclusive).  Defaults to the most recent
-        completed ISO week.
+        Last key (inclusive).  Defaults to the current
+        ISO week.
     tz:
         IANA timezone name.  Used to determine "today" when
         *end_date* is omitted.
@@ -140,10 +139,9 @@ class WeeklyBackfill(BackfillDef):
             e = self._parse_iso_week(self.end_date)
         else:
             today = whenever.ZonedDateTime.now(self.tz).date()
-            # Most recent completed week: Monday of current week minus 7 days
-            # day_of_week() returns Weekday enum (MONDAY=1..SUNDAY=7)
+            # Monday of the current ISO week
             weekday_offset = today.day_of_week().value - 1  # 0 for Monday
-            e = today.subtract(days=weekday_offset + 7)
+            e = today.subtract(days=weekday_offset)
 
         keys: list[str] = []
         while s <= e:
@@ -164,8 +162,7 @@ class MonthlyBackfill(BackfillDef):
     start_date:
         First key (inclusive), e.g. ``"2024-01-01"``.
     end_date:
-        Last key (inclusive).  Defaults to the previous
-        completed month.
+        Last key (inclusive).  Defaults to the current month.
     tz:
         IANA timezone name.  Used to determine "today" when
         *end_date* is omitted.
@@ -190,8 +187,8 @@ class MonthlyBackfill(BackfillDef):
             e = self._parse_month(self.end_date)
         else:
             today = whenever.ZonedDateTime.now(self.tz).date()
-            # Previous completed month
-            e = today.replace(day=1).subtract(days=1).replace(day=1)
+            # Current month
+            e = today.replace(day=1)
 
         keys: list[str] = []
         while s <= e:
@@ -216,8 +213,8 @@ class HourlyBackfill(BackfillDef):
     start_date:
         First key (inclusive), e.g. ``"2024-01-01T00"``.
     end_date:
-        Last key (inclusive).  Defaults to the previous
-        completed hour in *tz*.
+        Last key (inclusive).  Defaults to the current
+        hour in *tz*.
     tz:
         IANA timezone name (e.g. ``"UTC"``, ``"America/New_York"``).
         Defaults to ``"UTC"`` to sidestep daylight-saving issues.
@@ -248,8 +245,8 @@ class HourlyBackfill(BackfillDef):
             e = self._parse_hour(self.end_date)
         else:
             now = whenever.ZonedDateTime.now(self.tz)
-            # Previous completed hour
-            e = now.replace(minute=0, second=0, nanosecond=0).subtract(hours=1)
+            # Current hour
+            e = now.replace(minute=0, second=0, nanosecond=0)
 
         keys: list[str] = []
         seen: set[str] = set()

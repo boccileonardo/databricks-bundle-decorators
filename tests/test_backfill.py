@@ -46,9 +46,9 @@ class TestDailyBackfill:
         p = DailyBackfill(start_date="2024-06-15", end_date="2024-06-14")
         assert p.keys() == []
 
-    def test_default_end_is_yesterday(self):
-        yesterday = whenever.ZonedDateTime.now("UTC").date().subtract(days=1)
-        key = yesterday.py_date().strftime("%Y-%m-%d")
+    def test_default_end_is_today(self):
+        today = whenever.ZonedDateTime.now("UTC").date()
+        key = today.py_date().strftime("%Y-%m-%d")
         p = DailyBackfill(start_date=key)
         keys = p.keys()
         assert keys == [key]

@@ -27,6 +27,7 @@ from databricks_bundle_decorators.dashboard._fetch import (
 )
 from databricks_bundle_decorators.dashboard._pages import (
     _FIGURE_BUILDERS,
+    _build_coverage_figure,
     _page_backfill_detail,
     _page_backfills,
     _page_overview,
@@ -138,8 +139,9 @@ def run_app(
             if has_bf and meta.backfill is not None:
                 expected = meta.backfill.keys()
                 kind = _backfill_kind(meta.backfill)
+                tz = getattr(meta.backfill, "tz", "UTC")
                 coverages[name] = compute_backfill_coverage(
-                    name, runs, expected, kind=kind
+                    name, runs, expected, kind=kind, tz=tz
                 )
 
         _data["all_runs"] = all_runs
@@ -331,7 +333,7 @@ def run_app(
         sd = _date.fromisoformat(start_date_str) if start_date_str else None
         ed = _date.fromisoformat(end_date_str) if end_date_str else None
         _, build_fn = builder
-        fig = build_fn(cov, start_date=sd, end_date=ed)
+        fig = _build_coverage_figure(build_fn, cov, start_date=sd, end_date=ed)
         return fig or {}
 
     # Prefetch data so the first page load is instant

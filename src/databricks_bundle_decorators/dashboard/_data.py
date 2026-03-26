@@ -52,6 +52,7 @@ class BackfillCoverage:
     missing_keys: list[str]
     coverage_pct: float
     kind: str = "static"
+    tz: str = "UTC"
     completed_key_runs: dict[str, tuple[int, int | None]] | None = None
     """Mapping of completed backfill key to ``(run_id, start_time_ms)``
     for the most recent successful run targeting that key.

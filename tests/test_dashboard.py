@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import whenever
 
 from databricks_bundle_decorators.dashboard import (
     APP_TEMPLATE,
@@ -466,9 +467,8 @@ class TestFilterPastKeys:
         assert result == past
 
     def test_daily_includes_today(self) -> None:
-        from datetime import date
-
-        key = date.today().isoformat()
+        today = whenever.ZonedDateTime.now("UTC").date()
+        key = today.py_date().isoformat()
         result = _filter_past_keys([key], "daily")
         assert key in result
 
@@ -483,9 +483,8 @@ class TestFilterPastKeys:
         assert "2099-W50" not in result
 
     def test_weekly_includes_current_week(self) -> None:
-        from datetime import date
-
-        iso = date.today().isocalendar()
+        today = whenever.ZonedDateTime.now("UTC").date()
+        iso = today.py_date().isocalendar()
         key = f"{iso[0]}-W{iso[1]:02d}"
         result = _filter_past_keys([key], "weekly")
         assert key in result
@@ -496,9 +495,8 @@ class TestFilterPastKeys:
         assert "2099-12-01" not in result
 
     def test_monthly_includes_current_month(self) -> None:
-        from datetime import date
-
-        first = date.today().replace(day=1).isoformat()
+        today = whenever.ZonedDateTime.now("UTC").date()
+        first = today.replace(day=1).py_date().isoformat()
         result = _filter_past_keys([first], "monthly")
         assert first in result
 
@@ -508,9 +506,8 @@ class TestFilterPastKeys:
         assert "2099-01-01T00" not in result
 
     def test_hourly_includes_current_hour(self) -> None:
-        from datetime import datetime, timezone
-
-        key = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H")
+        now = whenever.ZonedDateTime.now("UTC")
+        key = now.py_datetime().strftime("%Y-%m-%dT%H")
         result = _filter_past_keys([key], "hourly")
         assert key in result
 
@@ -1331,14 +1328,21 @@ class TestBackfillDateBounds:
         assert start == min_d  # no clipping
 
     def test_hourly_large_range_clips_to_last_7(self) -> None:
-        from datetime import date
+        from datetime import date, timedelta
 
+        today = whenever.ZonedDateTime.now("UTC").date().py_date()
         keys = [f"2024-01-{d:02d}T10" for d in range(1, 31)]
         min_d, max_d, start, end = _backfill_date_bounds("hourly", keys)
+        assert min_d is not None
+        assert max_d is not None
         assert min_d == date(2024, 1, 1)
         assert max_d == date(2024, 1, 30)
-        assert start == date(2024, 1, 23)  # max_d - 7 days
-        assert end == max_d
+        assert start is not None
+        assert end is not None
+        # end is clamped to min(today, max_d); start is end - 7 days
+        expected_end = min(today, max_d)
+        assert start == max(min_d, expected_end - timedelta(days=7))
+        assert end == expected_end
 
     def test_hourly_bounds(self) -> None:
         from datetime import date
@@ -1355,9 +1359,9 @@ class TestBackfillDateBounds:
         assert _backfill_date_bounds("custom", ["a", "b"]) == (None, None, None, None)
 
     def test_init_end_anchored_to_today(self) -> None:
-        from datetime import date, timedelta
+        from datetime import timedelta
 
-        today = date.today()
+        today = whenever.ZonedDateTime.now("UTC").date().py_date()
         # Keys span from 1 year ago to 1 year from now
         start = today - timedelta(days=365)
         keys = [(start + timedelta(days=i)).isoformat() for i in range(730)]

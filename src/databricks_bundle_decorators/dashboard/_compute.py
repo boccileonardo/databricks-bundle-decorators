@@ -37,6 +37,12 @@ _ACTIVE_LIFECYCLE_STATES = frozenset(
     }
 )
 
+#: Pre-compiled regex for ISO week keys (``YYYY-WNN``).
+_WEEK_KEY_RE: re.Pattern[str] = re.compile(r"^(\d{4})-W(\d{2})$")
+
+#: ``strftime`` / ``strptime`` format for hourly backfill keys.
+_HOURLY_FMT: str = "%Y-%m-%dT%H"
+
 
 def _effective_state(
     result_state: str | None,
@@ -117,14 +123,14 @@ def build_job_overview(
     )
 
 
-def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
+def _filter_past_keys(keys: list[str], kind: str, tz: str = "UTC") -> list[str]:
     """Remove keys that represent future time periods.
 
     For time-based backfills, keys representing periods that have
     not yet completed are excluded.  Static backfills are returned
     unchanged.
     """
-    today = whenever.ZonedDateTime.now("UTC").date()
+    today = whenever.ZonedDateTime.now(tz).date()
 
     if kind == "daily":
         # Include today — its data should be materializable.
@@ -141,13 +147,12 @@ def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
         return result
 
     if kind == "weekly":
-        week_re = re.compile(r"^(\d{4})-W(\d{2})$")
         # Include the current ISO week — its data should be materializable.
         cur_iso = today.py_date().isocalendar()
         cutoff_year, cutoff_week = cur_iso[0], cur_iso[1]
         result = []
         for k in keys:
-            m = week_re.match(k)
+            m = _WEEK_KEY_RE.match(k)
             if not m:
                 result.append(k)
                 continue
@@ -158,7 +163,7 @@ def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
 
     if kind == "monthly":
         # Include the current month — its data should be materializable.
-        first_of_month = today.py_date().replace(day=1)
+        first_of_month = today.replace(day=1).py_date()
         result = []
         for k in keys:
             try:
@@ -172,13 +177,12 @@ def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
 
     if kind == "hourly":
         # Include the current hour — its data should be materializable.
-        fmt = "%Y-%m-%dT%H"
-        now_utc = whenever.ZonedDateTime.now("UTC")
-        cutoff_str = now_utc.py_datetime().strftime(fmt)
+        now_zdt = whenever.ZonedDateTime.now(tz)
+        cutoff_str = now_zdt.py_datetime().strftime(_HOURLY_FMT)
         result = []
         for k in keys:
             try:
-                datetime.strptime(k, fmt)  # validate format
+                datetime.strptime(k, _HOURLY_FMT)  # validate format
             except ValueError:
                 result.append(k)
                 continue
@@ -195,6 +199,7 @@ def compute_backfill_coverage(
     expected_keys: list[str],
     *,
     kind: str = "static",
+    tz: str = "UTC",
 ) -> BackfillCoverage:
     """Compute backfill coverage by matching run parameters to expected keys.
 
@@ -219,9 +224,11 @@ def compute_backfill_coverage(
     kind:
         Backfill type: ``"daily"``, ``"weekly"``, ``"monthly"``,
         ``"hourly"``, or ``"static"``.
+    tz:
+        IANA timezone name used by the backfill definition.
     """
     # Filter out future keys so they aren't counted as missing
-    due_keys = _filter_past_keys(expected_keys, kind)
+    due_keys = _filter_past_keys(expected_keys, kind, tz=tz)
 
     # Build mapping of key → most recent successful run (by start_time_ms)
     key_runs: dict[str, tuple[int, int | None]] = {}
@@ -267,6 +274,7 @@ def compute_backfill_coverage(
         missing_keys=missing,
         coverage_pct=pct,
         kind=kind,
+        tz=tz,
         completed_key_runs=due_key_runs,
         errored_keys=errored_list,
         in_progress_keys=in_progress_list,

@@ -10,8 +10,13 @@ from typing import Any
 
 import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
+import whenever
 from dash import dcc, html
 
+from databricks_bundle_decorators.dashboard._compute import (
+    _HOURLY_FMT,
+    _WEEK_KEY_RE,
+)
 from databricks_bundle_decorators.dashboard._data import (
     BackfillCoverage,
     JobOverview,
@@ -106,13 +111,13 @@ _DATE_FILTERABLE_KINDS = frozenset(_DATE_THRESHOLDS)
 def _backfill_date_bounds(
     kind: str,
     expected_keys: list[str],
+    tz: str = "UTC",
 ) -> tuple[date | None, date | None, date | None, date | None]:
     """Derive (min_date, max_date, initial_start, initial_end) from keys.
 
     Works for ``daily``, ``weekly``, ``monthly``, and ``hourly`` kinds.
     Returns four ``None`` values when no valid dates can be parsed.
     """
-    import re as _re
     from datetime import datetime
 
     dates: list[date] = []
@@ -123,9 +128,8 @@ def _backfill_date_bounds(
             except ValueError:
                 continue
     elif kind == "weekly":
-        _week_re = _re.compile(r"^(\d{4})-W(\d{2})$")
         for key in expected_keys:
-            m = _week_re.match(key)
+            m = _WEEK_KEY_RE.match(key)
             if m:
                 dates.append(date.fromisocalendar(int(m.group(1)), int(m.group(2)), 1))
     elif kind == "monthly":
@@ -138,7 +142,7 @@ def _backfill_date_bounds(
     elif kind == "hourly":
         for key in expected_keys:
             try:
-                dates.append(datetime.strptime(key, "%Y-%m-%dT%H").date())
+                dates.append(datetime.strptime(key, _HOURLY_FMT).date())
             except ValueError:
                 continue
 
@@ -148,7 +152,7 @@ def _backfill_date_bounds(
     unique = sorted(set(dates))
     min_d = unique[0]
     max_d = unique[-1]
-    today = date.today()
+    today = whenever.ZonedDateTime.now(tz).date().py_date()
     # Anchor the visible window to today (clamped to the data range)
     init_end = min(today, max_d) if today >= min_d else max_d
     span_days = (max_d - min_d).days
@@ -164,54 +168,30 @@ def _backfill_date_bounds(
 # Backfill figure builder dispatch
 # ---------------------------------------------------------------------------
 
-#: Maps backfill kind → (label, figure_builder_fn). The builder accepts
-#: a `BackfillCoverage` plus optional ``start_date`` / ``end_date``.
+#: Maps backfill kind → (label, figure_builder_fn).
 _FIGURE_BUILDERS: dict[str, tuple[str, Any]] = {
-    "daily": (
-        "calendar",
-        lambda c, **kw: _build_daily_calendar(
-            set(c.expected_keys),
-            set(c.completed_keys),
-            c.completed_key_runs,
-            errored_keys=set(c.errored_keys or []),
-            in_progress_keys=set(c.in_progress_keys or []),
-            **kw,
-        ),
-    ),
-    "weekly": (
-        "week calendar",
-        lambda c, **kw: _build_weekly_calendar(
-            set(c.expected_keys),
-            set(c.completed_keys),
-            c.completed_key_runs,
-            errored_keys=set(c.errored_keys or []),
-            in_progress_keys=set(c.in_progress_keys or []),
-            **kw,
-        ),
-    ),
-    "monthly": (
-        "month calendar",
-        lambda c, **kw: _build_monthly_calendar(
-            set(c.expected_keys),
-            set(c.completed_keys),
-            c.completed_key_runs,
-            errored_keys=set(c.errored_keys or []),
-            in_progress_keys=set(c.in_progress_keys or []),
-            **kw,
-        ),
-    ),
-    "hourly": (
-        "hour calendar",
-        lambda c, **kw: _build_hourly_calendar(
-            set(c.expected_keys),
-            set(c.completed_keys),
-            c.completed_key_runs,
-            errored_keys=set(c.errored_keys or []),
-            in_progress_keys=set(c.in_progress_keys or []),
-            **kw,
-        ),
-    ),
+    "daily": ("calendar", _build_daily_calendar),
+    "weekly": ("week calendar", _build_weekly_calendar),
+    "monthly": ("month calendar", _build_monthly_calendar),
+    "hourly": ("hour calendar", _build_hourly_calendar),
 }
+
+
+def _build_coverage_figure(
+    build_fn: Any,
+    cov: BackfillCoverage,
+    **kw: Any,
+) -> Any:
+    """Invoke a calendar figure builder with unpacked coverage data."""
+    return build_fn(
+        set(cov.expected_keys),
+        set(cov.completed_keys),
+        cov.completed_key_runs,
+        errored_keys=set(cov.errored_keys or []),
+        in_progress_keys=set(cov.in_progress_keys or []),
+        tz=cov.tz,
+        **kw,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -410,17 +390,16 @@ def _page_backfill_detail(
 
     backfill_section: list[Any] = []
 
-    if cov.kind in _DATE_FILTERABLE_KINDS:
+    if cov.kind in _FIGURE_BUILDERS:
+        _, build_fn = _FIGURE_BUILDERS[cov.kind]
         min_d, max_d, init_start, init_end = _backfill_date_bounds(
-            cov.kind, cov.expected_keys
+            cov.kind, cov.expected_keys, tz=cov.tz
         )
-        builder = _FIGURE_BUILDERS.get(cov.kind)
         if (
             min_d is not None
             and max_d is not None
             and init_start is not None
             and init_end is not None
-            and builder is not None
         ):
             backfill_section.append(dcc.Store(id="bf-job-name", data=job_name))
             backfill_section.append(dcc.Store(id="bf-kind", data=cov.kind))
@@ -439,15 +418,13 @@ def _page_backfill_detail(
                     ),
                 )
             )
-            _, build_fn = builder
-            fig = build_fn(cov, start_date=init_start, end_date=init_end)
-            if fig is not None:
-                backfill_section.append(dcc.Graph(id="bf-graph", figure=fig))
-    elif builder := _FIGURE_BUILDERS.get(cov.kind):
-        _, build_fn = builder
-        fig = build_fn(cov)
+            fig = _build_coverage_figure(
+                build_fn, cov, start_date=init_start, end_date=init_end
+            )
+        else:
+            fig = _build_coverage_figure(build_fn, cov)
         if fig is not None:
-            backfill_section.append(dcc.Graph(figure=fig))
+            backfill_section.append(dcc.Graph(id="bf-graph", figure=fig))
     else:
         fig = _build_partition_grid(
             cov.expected_keys,
