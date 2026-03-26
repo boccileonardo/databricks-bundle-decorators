@@ -475,10 +475,25 @@ class TestFilterPastKeys:
         assert "2024-W01" in result
         assert "2099-W50" not in result
 
+    def test_weekly_includes_current_week(self) -> None:
+        from datetime import date
+
+        iso = date.today().isocalendar()
+        key = f"{iso[0]}-W{iso[1]:02d}"
+        result = _filter_past_keys([key], "weekly")
+        assert key in result
+
     def test_monthly_excludes_future(self) -> None:
         result = _filter_past_keys(["2024-01-01", "2099-12-01"], "monthly")
         assert "2024-01-01" in result
         assert "2099-12-01" not in result
+
+    def test_monthly_includes_current_month(self) -> None:
+        from datetime import date
+
+        first = date.today().replace(day=1).isoformat()
+        result = _filter_past_keys([first], "monthly")
+        assert first in result
 
     def test_hourly_excludes_future(self) -> None:
         result = _filter_past_keys(["2024-01-01T10", "2099-01-01T00"], "hourly")

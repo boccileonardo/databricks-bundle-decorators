@@ -141,12 +141,9 @@ def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
 
     if kind == "weekly":
         week_re = re.compile(r"^(\d{4})-W(\d{2})$")
-        # Current ISO week: consider last week as the last complete one
+        # Include the current ISO week — its data should be materializable.
         cur_iso = today.py_date().isocalendar()
-        cutoff_year, cutoff_week = cur_iso[0], cur_iso[1] - 1
-        if cutoff_week < 1:
-            cutoff_year -= 1
-            cutoff_week = 52
+        cutoff_year, cutoff_week = cur_iso[0], cur_iso[1]
         result = []
         for k in keys:
             m = week_re.match(k)
@@ -159,7 +156,7 @@ def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
         return result
 
     if kind == "monthly":
-        # Last complete month
+        # Include the current month — its data should be materializable.
         first_of_month = today.py_date().replace(day=1)
         result = []
         for k in keys:
@@ -168,7 +165,7 @@ def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
             except ValueError:
                 result.append(k)
                 continue
-            if d < first_of_month:
+            if d <= first_of_month:
                 result.append(k)
         return result
 
