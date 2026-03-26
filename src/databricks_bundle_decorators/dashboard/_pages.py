@@ -68,6 +68,18 @@ def _state_badge(state: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def _fmt_duration(seconds: int | float) -> str:
+    """Format a duration as ``H:MM:SS``, ``M:SS``, or ``Ns``."""
+    total = int(seconds)
+    if total < 60:
+        return f"{total}s"
+    m, s = divmod(total, 60)
+    if m < 60:
+        return f"{m}:{s:02d}"
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{s:02d}"
+
+
 def _kpi_card(title: str, value: str | int, color: str = "primary") -> Any:
     """Return a Bootstrap card showing a single KPI metric."""
     return dbc.Card(
@@ -120,6 +132,7 @@ def _default_col_def() -> dict[str, Any]:
         "resizable": True,
         "sortable": True,
         "filter": True,
+        "flex": 1,
     }
 
 
@@ -256,7 +269,8 @@ def _page_overview(
     all_durations = [
         o.avg_duration_seconds for o in overviews if o.avg_duration_seconds is not None
     ]
-    avg_dur = round(sum(all_durations) / len(all_durations), 1) if all_durations else 0
+    avg_dur_s = round(sum(all_durations) / len(all_durations)) if all_durations else 0
+    avg_dur = _fmt_duration(avg_dur_s)
     success_rate = (
         round(
             sum(o.successes for o in overviews) / total_runs * 100,
@@ -273,7 +287,7 @@ def _page_overview(
             dbc.Col(_kpi_card("Total Runs", total_runs), md=2),
             dbc.Col(_kpi_card("Success Rate", f"{success_rate}%", "success"), md=2),
             dbc.Col(_kpi_card("Failures", total_failures, "danger"), md=2),
-            dbc.Col(_kpi_card("Avg Duration", f"{avg_dur}s"), md=2),
+            dbc.Col(_kpi_card("Avg Duration", avg_dur), md=2),
         ],
         className="mb-4 g-3",
     )

@@ -155,7 +155,7 @@ def run_app(
                 dbc.NavbarBrand(
                     [
                         html.Span(
-                            "\u26a1",
+                            "\U0001f9f1",
                             className="me-2",
                         ),
                         "Pipeline Observability",
@@ -197,7 +197,7 @@ def run_app(
                             dbc.Button(
                                 "\u21bb Refresh",
                                 id="btn-refresh",
-                                color="outline-light",
+                                color="light",
                                 size="sm",
                             )
                         ),
@@ -222,6 +222,7 @@ def run_app(
                         id="page-loading",
                         children=html.Div(id="page-content"),
                         type="default",
+                        color="#3459e6",
                     ),
                 ],
                 fluid=True,

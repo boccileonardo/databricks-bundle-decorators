@@ -53,6 +53,7 @@ from databricks_bundle_decorators.dashboard._polars_helpers import (
 # Page helpers
 from databricks_bundle_decorators.dashboard._pages import (
     _backfill_date_bounds as _backfill_date_bounds,
+    _fmt_duration as _fmt_duration,
     _hourly_date_bounds as _hourly_date_bounds,
 )
 
@@ -93,6 +94,7 @@ __all__ = [
     "_tasks_to_records",
     # Page helpers
     "_backfill_date_bounds",
+    "_fmt_duration",
     "_hourly_date_bounds",
     # App
     "APP_TEMPLATE",

@@ -25,6 +25,7 @@ from databricks_bundle_decorators.dashboard import (
     _coverages_to_records,
     _effective_state,
     _filter_past_keys,
+    _fmt_duration,
     _hourly_date_bounds,
     _is_terminal_failure,
     _overviews_to_records,
@@ -1409,6 +1410,31 @@ class TestBuildPartitionGrid:
         hover = _flatten_hover(fig)
         assert any("Run 99" in h for h in hover)
         assert any("Not launched" in h for h in hover)
+
+
+# ---------------------------------------------------------------------------
+# _fmt_duration
+# ---------------------------------------------------------------------------
+
+
+class TestFmtDuration:
+    def test_seconds_only(self) -> None:
+        assert _fmt_duration(45) == "45s"
+
+    def test_zero(self) -> None:
+        assert _fmt_duration(0) == "0s"
+
+    def test_minutes_and_seconds(self) -> None:
+        assert _fmt_duration(125) == "2:05"
+
+    def test_hours_minutes_seconds(self) -> None:
+        assert _fmt_duration(3661) == "1:01:01"
+
+    def test_exact_minute(self) -> None:
+        assert _fmt_duration(60) == "1:00"
+
+    def test_exact_hour(self) -> None:
+        assert _fmt_duration(3600) == "1:00:00"
 
 
 # ---------------------------------------------------------------------------
