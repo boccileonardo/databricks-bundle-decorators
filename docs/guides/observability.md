@@ -37,12 +37,10 @@ The landing page provides:
 
 - **KPI cards** — registered jobs, deployed count, total runs, success
   rate, failures, average duration.
-- **Job table** — all registered jobs with status, run counts, pass
-  rate, deployment status, and backfill indicator.  When the Databricks
+- **Job table** — all registered jobs with status, run counts, success
+  rate, average duration, and backfill completeness.  When the Databricks
   workspace URL is available, job names link directly to the workspace
-  job page.
-- **Backfill summary table** — quick completeness overview for all
-  backfill-enabled jobs, with links to per-job backfill detail.
+  job page.  The Completeness column links to per-job backfill detail.
 
 ### Backfills
 
@@ -69,13 +67,20 @@ Each backfill type gets a dedicated visualization:
 | `HourlyBackfill` | Date × hour grid (00–23) |
 | `StaticBackfill` | Single-row partition grid |
 
-Green = completed, amber = missing, gray = not in range.
+| Color | Meaning |
+|-------|----------|
+| 🟩 Green | Completed |
+| 🟦 Blue | In progress |
+| 🟥 Red | Failed |
+| 🟨 Amber | Missing |
+| Light blue | Not started (future) |
+| Gray | Not in range |
 
 ## Navigation
 
 The top navigation bar provides direct links to **Overview** and
-**Backfills** pages.  Target and CLI profile can be set inline in
-the navbar.  Click **Refresh** to re-fetch data.
+**Backfills** pages.  A **Target** dropdown lets you switch between
+bundle deployment targets.  Click **Refresh** to re-fetch data.
 
 ## Workspace links
 
