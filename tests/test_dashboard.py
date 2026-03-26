@@ -18,6 +18,7 @@ from databricks_bundle_decorators.dashboard import (
     _build_hourly_calendar,
     _build_monthly_calendar,
     _build_partition_grid,
+    _build_task_dag_figure,
     _build_weekly_calendar,
     build_job_overview,
     compute_backfill_coverage,
@@ -71,16 +72,20 @@ def _cli_task(
     result_state: str | None = "SUCCESS",
     start_time: int = 1_000_000,
     end_time: int = 1_030_000,
+    depends_on: list[str] | None = None,
 ) -> dict[str, Any]:
     state: dict[str, Any] = {}
     if result_state is not None:
         state["result_state"] = result_state
-    return {
+    task: dict[str, Any] = {
         "task_key": task_key,
         "state": state,
         "start_time": start_time,
         "end_time": end_time,
     }
+    if depends_on is not None:
+        task["depends_on"] = [{"task_key": d} for d in depends_on]
+    return task
 
 
 def _mock_subprocess(
@@ -139,6 +144,27 @@ class TestTaskRunInfo:
         )
         with pytest.raises(AttributeError):
             t.task_key = "b"  # type: ignore[misc]
+
+    def test_depends_on_default_empty(self) -> None:
+        t = TaskRunInfo(
+            task_key="a",
+            result_state="SUCCESS",
+            start_time_ms=1000,
+            end_time_ms=2000,
+            duration_seconds=1.0,
+        )
+        assert t.depends_on == ()
+
+    def test_depends_on_preserved(self) -> None:
+        t = TaskRunInfo(
+            task_key="b",
+            result_state="SUCCESS",
+            start_time_ms=1000,
+            end_time_ms=2000,
+            duration_seconds=1.0,
+            depends_on=("a",),
+        )
+        assert t.depends_on == ("a",)
 
 
 class TestBackfillCoverageKind:
@@ -463,6 +489,32 @@ class TestFetchTaskRuns:
         assert "--run-id" in captured_cmd
         assert "99" in captured_cmd
 
+    def test_parses_depends_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        run_json = json.dumps(
+            {
+                "tasks": [
+                    _cli_task(task_key="a"),
+                    _cli_task(task_key="b", depends_on=["a"]),
+                ]
+            }
+        )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.dashboard.subprocess.run",
+            _mock_subprocess(stdout=run_json),
+        )
+        tasks = fetch_task_runs(1)
+        assert tasks[0].depends_on == ()
+        assert tasks[1].depends_on == ("a",)
+
+    def test_no_depends_on_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        run_json = json.dumps({"tasks": [_cli_task(task_key="solo")]})
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.dashboard.subprocess.run",
+            _mock_subprocess(stdout=run_json),
+        )
+        tasks = fetch_task_runs(1)
+        assert tasks[0].depends_on == ()
+
 
 # ---------------------------------------------------------------------------
 # resolve_job_ids (mocks subprocess)
@@ -591,6 +643,55 @@ class TestBackfillKind:
 
     def test_unknown_returns_static(self) -> None:
         assert _backfill_kind("unknown") == "static"
+
+
+# ---------------------------------------------------------------------------
+# _build_task_dag_figure (Plotly figure)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildTaskDagFigure:
+    def test_empty_returns_none(self) -> None:
+        assert _build_task_dag_figure([]) is None
+
+    def test_single_task(self) -> None:
+        tasks = [TaskRunInfo("a", "SUCCESS", 0, 1000, 1.0)]
+        fig = _build_task_dag_figure(tasks)
+        assert fig is not None
+        # Should have at least the node trace
+        assert len(fig.data) >= 1
+
+    def test_linear_dag(self) -> None:
+        tasks = [
+            TaskRunInfo("a", "SUCCESS", 0, 1000, 1.0),
+            TaskRunInfo("b", "SUCCESS", 1000, 2000, 1.0, depends_on=("a",)),
+            TaskRunInfo("c", "FAILED", 2000, 3000, 1.0, depends_on=("b",)),
+        ]
+        fig = _build_task_dag_figure(tasks)
+        assert fig is not None
+        # Edge trace + node trace
+        assert len(fig.data) >= 2
+
+    def test_node_labels_present(self) -> None:
+        tasks = [
+            TaskRunInfo("extract", "SUCCESS", 0, 1000, 1.0),
+            TaskRunInfo(
+                "transform", "RUNNING", 1000, None, None, depends_on=("extract",)
+            ),
+        ]
+        fig = _build_task_dag_figure(tasks)
+        node_trace = fig.data[-1]  # nodes are added last
+        assert "extract" in node_trace.text
+        assert "transform" in node_trace.text
+
+    def test_fan_out_dag(self) -> None:
+        tasks = [
+            TaskRunInfo("root", "SUCCESS", 0, 1000, 1.0),
+            TaskRunInfo("b1", "SUCCESS", 1000, 2000, 1.0, depends_on=("root",)),
+            TaskRunInfo("b2", "SUCCESS", 1000, 2000, 1.0, depends_on=("root",)),
+        ]
+        fig = _build_task_dag_figure(tasks)
+        assert fig is not None
 
 
 # ---------------------------------------------------------------------------

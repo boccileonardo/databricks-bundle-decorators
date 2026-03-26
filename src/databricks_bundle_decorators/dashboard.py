@@ -64,6 +64,7 @@ class TaskRunInfo:
     start_time_ms: int | None
     end_time_ms: int | None
     duration_seconds: float | None
+    depends_on: tuple[str, ...] = ()
 
 
 @dataclass
@@ -272,6 +273,9 @@ def fetch_task_runs(
         duration = None
         if start_ms and end_ms:
             duration = round((end_ms - start_ms) / 1000.0, 1)
+        deps = tuple(
+            d["task_key"] for d in task.get("depends_on", []) if "task_key" in d
+        )
         tasks.append(
             TaskRunInfo(
                 task_key=task["task_key"],
@@ -279,6 +283,7 @@ def fetch_task_runs(
                 start_time_ms=start_ms,
                 end_time_ms=end_ms,
                 duration_seconds=duration,
+                depends_on=deps,
             )
         )
     return tasks
@@ -856,82 +861,182 @@ run_app()
 # ---------------------------------------------------------------------------
 
 
-def _render_overview(tab: Any, overviews: list[JobOverview]) -> None:
+def _render_overview(overviews: list[JobOverview]) -> None:
     import streamlit as st
 
-    with tab:
-        st.header("Job Overview")
-        st.caption("Recent runs per job (bundle-scoped)")
+    # --- KPI row ---
+    total_jobs = len(overviews)
+    deployed = sum(1 for o in overviews if o.job_id)
+    total_runs = sum(o.total_runs for o in overviews)
+    total_failures = sum(o.failures for o in overviews)
+    all_durations = [
+        o.avg_duration_seconds for o in overviews if o.avg_duration_seconds is not None
+    ]
+    avg_dur = round(sum(all_durations) / len(all_durations), 1) if all_durations else 0
 
-        from datetime import datetime, timezone
+    cols = st.columns(5)
+    cols[0].metric("Jobs", total_jobs)
+    cols[1].metric("Deployed", deployed)
+    cols[2].metric("Total Runs", total_runs)
+    cols[3].metric("Failures", total_failures, delta_color="inverse")
+    cols[4].metric("Avg Duration", f"{avg_dur}s")
 
-        rows = []
-        for o in overviews:
-            rate = (
-                f"{o.successes / o.total_runs * 100:.0f}%"
-                if o.total_runs > 0
-                else "\u2014"
+    st.markdown("---")
+
+    # --- Job table ---
+    from datetime import datetime, timezone
+
+    rows = []
+    for o in overviews:
+        rate = (
+            f"{o.successes / o.total_runs * 100:.0f}%" if o.total_runs > 0 else "\u2014"
+        )
+        last_run = "\u2014"
+        if o.last_run_time_ms:
+            dt = datetime.fromtimestamp(o.last_run_time_ms / 1000, tz=timezone.utc)
+            last_run = dt.strftime("%Y-%m-%d %H:%M UTC")
+
+        rows.append(
+            {
+                "Job": o.job_name,
+                "Deployed": "\u2713" if o.job_id else "\u2717",
+                "Runs": o.total_runs,
+                "Pass": o.successes,
+                "Fail": o.failures,
+                "Rate": rate,
+                "Last Run": last_run,
+                "Status": o.last_run_state or "\u2014",
+                "Avg (s)": o.avg_duration_seconds or "\u2014",
+                "Backfill": "\u2713" if o.has_backfill else "",
+            }
+        )
+    st.dataframe(rows, width="stretch", hide_index=True)
+
+
+def _build_task_dag_figure(task_runs: list[TaskRunInfo]) -> Any:
+    """Build a Plotly figure showing the task DAG for a single run.
+
+    Renders a left-to-right layered graph using topological ordering.
+    Nodes are colored by result state.
+    """
+    import plotly.graph_objects as go
+
+    if not task_runs:
+        return None
+
+    # Build adjacency and compute layers via topological sort
+    task_map = {t.task_key: t for t in task_runs}
+    children: dict[str, list[str]] = {t.task_key: [] for t in task_runs}
+    parents: dict[str, list[str]] = {t.task_key: list(t.depends_on) for t in task_runs}
+    for t in task_runs:
+        for dep in t.depends_on:
+            if dep in children:
+                children[dep].append(t.task_key)
+
+    # Assign layers (longest path from any root)
+    layers: dict[str, int] = {}
+    visited: set[str] = set()
+
+    def _assign_layer(key: str) -> int:
+        if key in layers:
+            return layers[key]
+        if key in visited:
+            return 0
+        visited.add(key)
+        if not parents[key]:
+            layers[key] = 0
+        else:
+            layers[key] = (
+                max(_assign_layer(p) for p in parents[key] if p in task_map) + 1
             )
-            last_run = "\u2014"
-            if o.last_run_time_ms:
-                dt = datetime.fromtimestamp(o.last_run_time_ms / 1000, tz=timezone.utc)
-                last_run = dt.strftime("%Y-%m-%d %H:%M UTC")
+        return layers[key]
 
-            rows.append(
-                {
-                    "Job": o.job_name,
-                    "Deployed": "\u2713" if o.job_id else "\u2717",
-                    "Runs": o.total_runs,
-                    "Pass": o.successes,
-                    "Fail": o.failures,
-                    "Rate": rate,
-                    "Last Run": last_run,
-                    "Status": o.last_run_state or "\u2014",
-                    "Avg (s)": o.avg_duration_seconds or "\u2014",
-                    "Backfill": "\u2713" if o.has_backfill else "",
-                }
-            )
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+    for t in task_runs:
+        _assign_layer(t.task_key)
+
+    # Position nodes: x by layer, y spread within layer
+    max_layer = max(layers.values()) if layers else 0
+    layer_groups: dict[int, list[str]] = {}
+    for key, layer in layers.items():
+        layer_groups.setdefault(layer, []).append(key)
+
+    positions: dict[str, tuple[float, float]] = {}
+    for layer, keys in layer_groups.items():
+        x = layer / max(max_layer, 1)
+        for i, key in enumerate(sorted(keys)):
+            y = (i + 1) / (len(keys) + 1)
+            positions[key] = (x, y)
+
+    # Color map
+    _STATE_COLORS = {
+        "SUCCESS": "#22c55e",
+        "FAILED": "#ef4444",
+        "RUNNING": "#3b82f6",
+        "PENDING": "#a3a3a3",
+        "CANCELED": "#f59e0b",
+        "TIMED_OUT": "#f59e0b",
+    }
+
+    # Draw edges
+    edge_x: list[float | None] = []
+    edge_y: list[float | None] = []
+    for t in task_runs:
+        x1, y1 = positions[t.task_key]
+        for dep in t.depends_on:
+            if dep in positions:
+                x0, y0 = positions[dep]
+                edge_x.extend([x0, x1, None])
+                edge_y.extend([y0, y1, None])
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=edge_x,
+            y=edge_y,
+            mode="lines",
+            line=dict(width=1, color="#d1d5db"),
+            hoverinfo="none",
+            showlegend=False,
+        )
+    )
+
+    # Draw nodes
+    node_x = [positions[t.task_key][0] for t in task_runs]
+    node_y = [positions[t.task_key][1] for t in task_runs]
+    node_colors = [
+        _STATE_COLORS.get(t.result_state or "PENDING", "#a3a3a3") for t in task_runs
+    ]
+    node_text = [
+        f"{t.task_key}<br>{t.result_state or 'PENDING'}<br>{t.duration_seconds or 0}s"
+        for t in task_runs
+    ]
+    node_labels = [t.task_key for t in task_runs]
+
+    fig.add_trace(
+        go.Scatter(
+            x=node_x,
+            y=node_y,
+            mode="markers+text",
+            marker=dict(size=24, color=node_colors, line=dict(width=1, color="white")),
+            text=node_labels,
+            textposition="top center",
+            hovertext=node_text,
+            hoverinfo="text",
+            showlegend=False,
+        )
+    )
+
+    fig.update_layout(
+        height=max(200, len(task_runs) * 40 + 80),
+        margin=dict(l=20, r=20, t=10, b=10),
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
 
 
 def _render_run_history(
-    tab: Any,
-    job_names: list[str],
-    all_runs: dict[str, list[RunInfo]],
-) -> None:
-    import streamlit as st
-
-    with tab:
-        st.header("Run History")
-        selected = st.selectbox("Job", job_names, key="rh_job")
-        runs = all_runs.get(selected, [])
-
-        if not runs:
-            st.info(f"No runs found for **{selected}**.")
-            return
-
-        from datetime import datetime, timezone
-
-        rows = []
-        for r in runs:
-            start = "\u2014"
-            if r.start_time_ms:
-                dt = datetime.fromtimestamp(r.start_time_ms / 1000, tz=timezone.utc)
-                start = dt.strftime("%Y-%m-%d %H:%M")
-            rows.append(
-                {
-                    "Run ID": r.run_id,
-                    "Status": r.result_state or "RUNNING",
-                    "Start": start,
-                    "Duration (s)": r.duration_seconds or "\u2014",
-                    "Backfill Key": r.backfill_key or "",
-                }
-            )
-        st.dataframe(rows, use_container_width=True, hide_index=True)
-
-
-def _render_tasks(
-    tab: Any,
     job_names: list[str],
     all_runs: dict[str, list[RunInfo]],
     overviews: list[JobOverview],
@@ -939,121 +1044,140 @@ def _render_tasks(
 ) -> None:
     import streamlit as st
 
-    with tab:
-        st.header("Task Performance")
-        selected = st.selectbox("Job", job_names, key="tp_job")
-        runs = all_runs.get(selected, [])
+    selected = st.selectbox("Job", job_names, key="rh_job")
+    runs = all_runs.get(selected, [])
 
-        if not runs:
-            st.info(f"No runs found for **{selected}**.")
-            return
+    if not runs:
+        st.info(f"No runs found for **{selected}**.")
+        return
 
-        overview = next(o for o in overviews if o.job_name == selected)
-        if not overview.job_id:
-            st.warning("Job not deployed \u2014 cannot fetch task details.")
-            return
+    from datetime import datetime, timezone
 
-        most_recent = runs[0]
+    rows = []
+    for r in runs:
+        start = "\u2014"
+        if r.start_time_ms:
+            dt = datetime.fromtimestamp(r.start_time_ms / 1000, tz=timezone.utc)
+            start = dt.strftime("%Y-%m-%d %H:%M")
+        rows.append(
+            {
+                "Run ID": r.run_id,
+                "Status": r.result_state or "RUNNING",
+                "Start": start,
+                "Duration (s)": r.duration_seconds or "\u2014",
+                "Backfill Key": r.backfill_key or "",
+            }
+        )
+    st.dataframe(rows, width="stretch", hide_index=True)
+
+    # --- Task details for selected run ---
+    overview = next((o for o in overviews if o.job_name == selected), None)
+    if not overview or not overview.job_id:
+        return
+
+    run_ids = [r.run_id for r in runs]
+    selected_run_id = st.selectbox("Inspect run", run_ids, key="rh_run_detail")
+    if selected_run_id is None:
+        return
+
+    with st.spinner("Fetching task details\u2026"):
         try:
-            task_runs = fetch_task_runs(most_recent.run_id, profile=profile)
+            task_runs = fetch_task_runs(selected_run_id, profile=profile)
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to fetch task details: {exc}")
             return
 
-        if not task_runs:
-            st.info("No task data for the most recent run.")
-            return
+    if not task_runs:
+        st.info("No task data for this run.")
+        return
 
-        rows = [
-            {
-                "Task": t.task_key,
-                "Status": t.result_state or "RUNNING",
-                "Duration (s)": t.duration_seconds or "\u2014",
-            }
-            for t in task_runs
-        ]
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+    dag_fig = _build_task_dag_figure(task_runs)
+    if dag_fig is not None:
+        st.plotly_chart(dag_fig, width="stretch")
+
+    task_rows = [
+        {
+            "Task": t.task_key,
+            "Status": t.result_state or "RUNNING",
+            "Duration (s)": t.duration_seconds or "\u2014",
+        }
+        for t in task_runs
+    ]
+    st.dataframe(task_rows, width="stretch", hide_index=True)
 
 
 def _render_backfill(
-    tab: Any,
     coverages: dict[str, BackfillCoverage],
 ) -> None:
     import streamlit as st
 
-    with tab:
-        st.header("Backfill Coverage")
-        st.caption(
-            "Expected keys from BackfillDef vs successful runs "
-            "with matching backfill_key parameter.  "
-            "For exact key-level catchup, use: dbxdec catchup"
-        )
+    st.caption(
+        "Expected keys from BackfillDef vs successful runs "
+        "with matching backfill_key parameter.  "
+        "For exact key-level catchup, use: dbxdec catchup"
+    )
 
-        # Summary table
-        rows = [
-            {
-                "Job": c.job_name,
-                "Type": c.kind.title(),
-                "Expected": len(c.expected_keys),
-                "Completed": len(c.completed_keys),
-                "Missing": len(c.missing_keys),
-                "Coverage": f"{c.coverage_pct}%",
-            }
-            for c in sorted(coverages.values(), key=lambda c: c.coverage_pct)
-        ]
-        st.dataframe(rows, use_container_width=True, hide_index=True)
-
-        # Per-job visualizations
-        _FIGURE_BUILDERS = {
-            "daily": (
-                "calendar",
-                lambda c: _build_daily_calendar(
-                    set(c.expected_keys), set(c.completed_keys)
-                ),
-            ),
-            "weekly": (
-                "week calendar",
-                lambda c: _build_weekly_calendar(
-                    set(c.expected_keys), set(c.completed_keys)
-                ),
-            ),
-            "monthly": (
-                "month calendar",
-                lambda c: _build_monthly_calendar(
-                    set(c.expected_keys), set(c.completed_keys)
-                ),
-            ),
-            "hourly": (
-                "hour calendar",
-                lambda c: _build_hourly_calendar(
-                    set(c.expected_keys), set(c.completed_keys)
-                ),
-            ),
+    # Summary table
+    rows = [
+        {
+            "Job": c.job_name,
+            "Type": c.kind.title(),
+            "Expected": len(c.expected_keys),
+            "Completed": len(c.completed_keys),
+            "Missing": len(c.missing_keys),
+            "Coverage": f"{c.coverage_pct}%",
         }
+        for c in sorted(coverages.values(), key=lambda c: c.coverage_pct)
+    ]
+    st.dataframe(rows, width="stretch", hide_index=True)
 
-        for name, cov in sorted(coverages.items()):
-            builder = _FIGURE_BUILDERS.get(cov.kind)
-            if builder:
-                label, build_fn = builder
-                with st.expander(
-                    f"{name} \u2014 {cov.coverage_pct}% coverage ({label})"
-                ):
-                    fig = build_fn(cov)
-                    if fig is not None:
-                        st.plotly_chart(fig, use_container_width=True)
-            else:
-                with st.expander(
-                    f"{name} \u2014 {cov.coverage_pct}% coverage (partition grid)"
-                ):
-                    fig = _build_partition_grid(
-                        cov.expected_keys, set(cov.completed_keys)
-                    )
-                    if fig is not None:
-                        st.plotly_chart(fig, use_container_width=True)
+    # Per-job visualizations
+    _FIGURE_BUILDERS = {
+        "daily": (
+            "calendar",
+            lambda c: _build_daily_calendar(
+                set(c.expected_keys), set(c.completed_keys)
+            ),
+        ),
+        "weekly": (
+            "week calendar",
+            lambda c: _build_weekly_calendar(
+                set(c.expected_keys), set(c.completed_keys)
+            ),
+        ),
+        "monthly": (
+            "month calendar",
+            lambda c: _build_monthly_calendar(
+                set(c.expected_keys), set(c.completed_keys)
+            ),
+        ),
+        "hourly": (
+            "hour calendar",
+            lambda c: _build_hourly_calendar(
+                set(c.expected_keys), set(c.completed_keys)
+            ),
+        ),
+    }
 
-            if cov.missing_keys:
-                with st.expander(f"{name} \u2014 {len(cov.missing_keys)} missing keys"):
-                    st.code("\n".join(cov.missing_keys))
+    for name, cov in sorted(coverages.items()):
+        builder = _FIGURE_BUILDERS.get(cov.kind)
+        if builder:
+            label, build_fn = builder
+            with st.expander(f"{name} \u2014 {cov.coverage_pct}% coverage ({label})"):
+                fig = build_fn(cov)
+                if fig is not None:
+                    st.plotly_chart(fig, width="stretch")
+        else:
+            with st.expander(
+                f"{name} \u2014 {cov.coverage_pct}% coverage (partition grid)"
+            ):
+                fig = _build_partition_grid(cov.expected_keys, set(cov.completed_keys))
+                if fig is not None:
+                    st.plotly_chart(fig, width="stretch")
+
+        if cov.missing_keys:
+            with st.expander(f"{name} \u2014 {len(cov.missing_keys)} missing keys"):
+                st.code("\n".join(cov.missing_keys))
 
 
 # ---------------------------------------------------------------------------
@@ -1096,16 +1220,25 @@ def run_app() -> None:
     # --- Sidebar ---
     st.sidebar.title("Pipeline Observability")
     st.sidebar.markdown(f"**{len(job_names)}** registered jobs")
-    target = st.sidebar.text_input("Bundle target", value="", help="e.g. dev, prod")
-    profile = st.sidebar.text_input(
-        "CLI profile", value="", help="Databricks CLI profile"
-    )
+
+    with st.sidebar.expander("Settings", expanded=False):
+        target = st.text_input("Bundle target", value="", help="e.g. dev, prod")
+        profile = st.text_input("CLI profile", value="", help="Databricks CLI profile")
 
     profile_val = profile or None
     target_val = target or None
 
-    # --- Resolve job IDs from bundle (scoped to this bundle only) ---
-    job_id_map = resolve_job_ids(target=target_val, profile=profile_val)
+    # --- Resolve job IDs & fetch data with caching + spinner ---
+    @st.cache_data(ttl=120, show_spinner=False)
+    def _cached_resolve(target: str | None, profile: str | None) -> dict[str, int]:
+        return resolve_job_ids(target=target, profile=profile)
+
+    @st.cache_data(ttl=60, show_spinner=False)
+    def _cached_job_runs(job_id: int, profile: str | None) -> list[RunInfo]:
+        return fetch_job_runs(job_id, profile=profile)
+
+    with st.spinner("Resolving bundle jobs\u2026"):
+        job_id_map = _cached_resolve(target_val, profile_val)
 
     if not job_id_map:
         st.warning(
@@ -1114,33 +1247,52 @@ def run_app() -> None:
             "from the project root."
         )
 
-    # --- Fetch data via CLI ---
-    all_runs: dict[str, list[RunInfo]] = {}
-    overviews: list[JobOverview] = []
-    coverages: dict[str, BackfillCoverage] = {}
+    with st.spinner("Fetching run data\u2026"):
+        all_runs: dict[str, list[RunInfo]] = {}
+        overviews: list[JobOverview] = []
+        coverages: dict[str, BackfillCoverage] = {}
 
-    for name in job_names:
-        meta = _JOB_REGISTRY[name]
-        job_id = job_id_map.get(name)
-        runs = fetch_job_runs(job_id, profile=profile_val) if job_id else []
-        all_runs[name] = runs
+        for name in job_names:
+            meta = _JOB_REGISTRY[name]
+            job_id = job_id_map.get(name)
+            runs = _cached_job_runs(job_id, profile_val) if job_id else []
+            all_runs[name] = runs
 
-        has_bf = meta.backfill is not None
-        overviews.append(build_job_overview(name, job_id, runs, has_backfill=has_bf))
+            has_bf = meta.backfill is not None
+            overviews.append(
+                build_job_overview(name, job_id, runs, has_backfill=has_bf)
+            )
 
-        if has_bf and meta.backfill is not None:
-            expected = meta.backfill.keys()
-            kind = _backfill_kind(meta.backfill)
-            coverages[name] = compute_backfill_coverage(name, runs, expected, kind=kind)
+            if has_bf and meta.backfill is not None:
+                expected = meta.backfill.keys()
+                kind = _backfill_kind(meta.backfill)
+                coverages[name] = compute_backfill_coverage(
+                    name, runs, expected, kind=kind
+                )
 
-    # --- Tabs ---
-    tab_labels = ["Overview", "Run History", "Tasks"]
+    # --- Tab navigation (persisted via query params) ---
+    tab_labels = ["Overview", "Run History"]
     if coverages:
         tab_labels.append("Backfill Coverage")
+
+    params = st.query_params
+    saved_tab = params.get("tab", "Overview")
+    default_idx = tab_labels.index(saved_tab) if saved_tab in tab_labels else 0
+
     tabs = st.tabs(tab_labels)
 
-    _render_overview(tabs[0], overviews)
-    _render_run_history(tabs[1], job_names, all_runs)
-    _render_tasks(tabs[2], job_names, all_runs, overviews, profile_val)
+    with tabs[0]:
+        if default_idx == 0:
+            params["tab"] = "Overview"
+        _render_overview(overviews)
+
+    with tabs[1]:
+        if default_idx == 1:
+            params["tab"] = "Run History"
+        _render_run_history(job_names, all_runs, overviews, profile_val)
+
     if coverages:
-        _render_backfill(tabs[3], coverages)
+        with tabs[2]:
+            if default_idx == 2:
+                params["tab"] = "Backfill Coverage"
+            _render_backfill(coverages)
