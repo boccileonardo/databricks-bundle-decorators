@@ -12,108 +12,187 @@ from databricks_bundle_decorators.dashboard._data import (
 
 def _overviews_to_records(
     overviews: list[JobOverview],
+    coverages: dict[str, BackfillCoverage] | None = None,
     workspace_url: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Convert job overviews to display-ready table records via polars.
+    """Convert job overviews to display-ready table records.
 
-    When ``workspace_url`` is provided, the Job column is rendered as
-    a Markdown link to the Databricks workspace job page.
+    Produces a unified table with optional workspace links and
+    backfill coverage columns merged in.
+
+    Parameters
+    ----------
+    overviews:
+        Job overview objects.
+    coverages:
+        Optional backfill coverages, keyed by job name.
+        When provided, a *Coverage* column is added with a
+        clickable link to ``/backfills/<name>``.
+    workspace_url:
+        Databricks workspace base URL.  When provided, job
+        names become clickable links to the workspace job page.
     """
-    import polars as pl
-
     if not overviews:
         return []
 
-    df = pl.DataFrame(
-        {
-            "Job": [o.job_name for o in overviews],
-            "Job ID": [o.job_id for o in overviews],
-            "Deployed": [o.job_id is not None for o in overviews],
-            "Runs": [o.total_runs for o in overviews],
-            "Pass": [o.successes for o in overviews],
-            "Fail": [o.failures for o in overviews],
-            "Last Run": [o.last_run_time_ms for o in overviews],
-            "Status": [o.last_run_state for o in overviews],
-            "Avg Duration (s)": [o.avg_duration_seconds for o in overviews],
-            "Backfill": [o.has_backfill for o in overviews],
-        }
-    )
-    df = df.with_columns(
-        pl.when(pl.col("Runs") > 0)
-        .then((pl.col("Pass") / pl.col("Runs") * 100).round(0).cast(pl.Utf8) + "%")
-        .otherwise(pl.lit("\u2014"))
-        .alias("Rate"),
-        pl.when(pl.col("Last Run").is_not_null())
-        .then(
-            pl.from_epoch(pl.col("Last Run"), time_unit="ms").dt.to_string(
-                "%Y-%m-%d %H:%M UTC"
-            )
+    cov_map = coverages or {}
+    records: list[dict[str, Any]] = []
+
+    for o in overviews:
+        # Job name — link to workspace when available
+        if workspace_url and o.job_id is not None:
+            job_cell = f"[{o.job_name}]({workspace_url}/jobs/{o.job_id})"
+        else:
+            job_cell = o.job_name
+
+        # Status
+        status = o.last_run_state or "\u2014"
+
+        # Runs summary  (e.g. "10  (8 \u2713 / 2 \u2717)")
+        if o.total_runs:
+            runs_cell = f"{o.total_runs}  ({o.successes} \u2713 / {o.failures} \u2717)"
+        else:
+            runs_cell = "\u2014"
+
+        # Success rate
+        if o.total_runs:
+            rate = round(o.successes / o.total_runs * 100)
+            rate_cell = f"{rate}%"
+        else:
+            rate_cell = "\u2014"
+
+        # Avg duration
+        if o.avg_duration_seconds is not None:
+            avg_dur = _fmt_duration(o.avg_duration_seconds)
+        else:
+            avg_dur = "\u2014"
+
+        # Coverage — link to backfill detail when available
+        cov = cov_map.get(o.job_name)
+        if cov is not None:
+            cov_cell = f"[{cov.coverage_pct}%](/backfills/{o.job_name})"
+        else:
+            cov_cell = ""
+
+        records.append(
+            {
+                "Job": job_cell,
+                "Status": status,
+                "Runs": runs_cell,
+                "Success Rate": rate_cell,
+                "Avg Duration": avg_dur,
+                "Coverage": cov_cell,
+            }
         )
-        .otherwise(pl.lit("\u2014"))
-        .alias("Last Run"),
-        pl.when(pl.col("Avg Duration (s)").is_not_null())
-        .then(pl.col("Avg Duration (s)").cast(pl.Utf8))
-        .otherwise(pl.lit("\u2014"))
-        .alias("Avg Duration (s)"),
-        pl.when(pl.col("Status").is_not_null())
-        .then(pl.col("Status"))
-        .otherwise(pl.lit("\u2014"))
-        .alias("Status"),
-        pl.when(pl.col("Deployed"))
-        .then(pl.lit("\u2713"))
-        .otherwise(pl.lit("\u2717"))
-        .alias("Deployed"),
-        pl.when(pl.col("Backfill"))
-        .then(pl.lit("\u2713"))
-        .otherwise(pl.lit(""))
-        .alias("Backfill"),
-    )
-    records = df.select(
-        "Job",
-        "Job ID",
-        "Deployed",
-        "Runs",
-        "Pass",
-        "Fail",
-        "Rate",
-        "Last Run",
-        "Status",
-        "Avg Duration (s)",
-        "Backfill",
-    ).to_dicts()
-
-    # Add workspace links when URL is available
-    if workspace_url:
-        for r in records:
-            job_id = r.get("Job ID")
-            if job_id is not None:
-                r["Job"] = f"[{r['Job']}]({workspace_url}/jobs/{job_id})"
-
-    # Drop internal Job ID column from output
-    for r in records:
-        r.pop("Job ID", None)
 
     return records
 
 
+def _fmt_duration(seconds: float) -> str:
+    """Format seconds as a compact human-readable string."""
+    total = int(seconds)
+    if total < 60:
+        return f"{total}s"
+    m, s = divmod(total, 60)
+    if m < 60:
+        return f"{m}m {s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h {m:02d}m {s:02d}s"
+
+
+_TIME_BASED_KINDS = frozenset({"daily", "weekly", "monthly", "hourly"})
+
+
+def _build_key_squares(cov: BackfillCoverage, max_squares: int) -> list[str]:
+    """Build colored-square strings from backfill coverage keys.
+
+    For **static** backfills, shows up to ``max_squares`` keys with
+    failures sorted first (so problems are immediately visible).
+
+    For **time-based** backfills, shows the last ``max_squares``
+    logical periods from the due keys (completed + missing), sorted
+    chronologically.
+    """
+    completed_set = set(cov.completed_keys)
+    errored_set = set(cov.errored_keys) if cov.errored_keys else set()
+
+    # Due keys = completed + missing (future keys are excluded upstream)
+    due_keys = cov.completed_keys + cov.missing_keys
+
+    if cov.kind in _TIME_BASED_KINDS:
+        # Chronological sort, take the most recent N
+        selected = sorted(due_keys)[-max_squares:]
+    else:
+        # Static: failed first, then success, capped at N
+        failed = [k for k in due_keys if k not in completed_set]
+        succeeded = [k for k in due_keys if k in completed_set]
+        selected = (failed + succeeded)[:max_squares]
+
+    squares: list[str] = []
+    for k in selected:
+        if k in completed_set:
+            squares.append("\U0001f7e9")  # green square
+        elif k in errored_set:
+            squares.append("\U0001f7e5")  # red square
+        else:
+            squares.append("\u2b1c")  # white square (not launched)
+    return squares
+
+
 def _coverages_to_records(
     coverages: dict[str, BackfillCoverage],
+    *,
+    max_squares: int = 5,
 ) -> list[dict[str, Any]]:
-    """Convert backfill coverages to display-ready table records via polars."""
-    import polars as pl
+    """Convert backfill coverages to display-ready table records.
 
+    The *Keys* column shows colored squares derived from backfill
+    keys (not raw chronological runs):
+
+    - **Static** backfills: up to ``max_squares`` keys, sorted
+      with failures first then successes — giving immediate
+      visibility to what still needs attention.
+    - **Time-based** backfills (daily, weekly, monthly, hourly):
+      the most recent ``max_squares`` logical periods from the
+      backfill definition, regardless of which runs exist.
+
+    Parameters
+    ----------
+    coverages:
+        Backfill coverages keyed by job name.
+    max_squares:
+        Maximum number of key status squares to show.
+    """
     if not coverages:
         return []
 
     sorted_covs = sorted(coverages.values(), key=lambda c: c.coverage_pct)
-    df = pl.DataFrame(
-        {
-            "Job": [c.job_name for c in sorted_covs],
-            "Type": [c.kind.title() for c in sorted_covs],
-            "Expected": [len(c.expected_keys) for c in sorted_covs],
-            "Completed": [len(c.completed_keys) for c in sorted_covs],
-            "Missing": [len(c.missing_keys) for c in sorted_covs],
-            "Coverage": [f"{c.coverage_pct}%" for c in sorted_covs],
+
+    records: list[dict[str, Any]] = []
+    for c in sorted_covs:
+        done = len(c.completed_keys)
+        # "due" = expected minus future (missing + completed represent the due set)
+        due = done + len(c.missing_keys)
+        errored = len(c.errored_keys) if c.errored_keys else 0
+
+        # Coverage column: "45 / 90  (50%)"
+        cov_cell = f"{done} / {due}  ({c.coverage_pct}%)"
+
+        # Key status squares
+        squares = _build_key_squares(c, max_squares)
+        keys_cell = " ".join(squares) if squares else "\u2014"
+
+        rec: dict[str, Any] = {
+            "Job": c.job_name,
+            "Type": c.kind.title(),
+            "Coverage": cov_cell,
+            "Keys": keys_cell,
         }
-    )
-    return df.to_dicts()
+        if errored:
+            rec["Errors"] = errored
+        else:
+            rec["Errors"] = ""
+
+        records.append(rec)
+
+    return records

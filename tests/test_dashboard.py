@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -30,6 +31,7 @@ from databricks_bundle_decorators.dashboard import (
     build_job_overview,
     compute_backfill_coverage,
     fetch_job_runs,
+    resolve_bundle_targets,
     resolve_job_ids,
     resolve_workspace_url,
 )
@@ -322,6 +324,17 @@ class TestComputeBackfillCoverage:
         cov = compute_backfill_coverage("j", runs, ["2024-01-01"])
         assert cov.coverage_pct == 0.0
         assert cov.missing_keys == ["2024-01-01"]
+        assert cov.errored_keys == ["2024-01-01"]
+
+    def test_errored_keys_not_in_successful(self) -> None:
+        """A key with both a failed and successful run is not errored."""
+        runs = [
+            RunInfo(1, "FAILED", 0, 0, 0, backfill_key="2024-01-01"),
+            RunInfo(2, "SUCCESS", 1000, 2000, 1.0, backfill_key="2024-01-01"),
+        ]
+        cov = compute_backfill_coverage("j", runs, ["2024-01-01"])
+        assert cov.coverage_pct == 100.0
+        assert cov.errored_keys == []
 
     def test_ignores_runs_without_key(self) -> None:
         runs = [
@@ -562,6 +575,54 @@ class TestFetchJobRuns:
         )
         runs = fetch_job_runs(1)
         assert runs[0].state_message is None
+
+
+# ---------------------------------------------------------------------------
+# resolve_bundle_targets (reads databricks.yaml)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveBundleTargets:
+    def test_parses_targets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        yaml_content = """bundle:\n  name: my_project\n\ntargets:\n  dev:\n    mode: development\n  staging:\n    mode: development\n  prod:\n    mode: production\n"""
+        (tmp_path / "databricks.yaml").write_text(yaml_content)
+        monkeypatch.chdir(tmp_path)
+        assert resolve_bundle_targets() == ["dev", "staging", "prod"]
+
+    def test_no_yaml_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        assert resolve_bundle_targets() == []
+
+    def test_no_targets_section(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "databricks.yaml").write_text("bundle:\n  name: x\n")
+        monkeypatch.chdir(tmp_path)
+        assert resolve_bundle_targets() == []
+
+    def test_yml_extension(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        yaml_content = "bundle:\n  name: x\n\ntargets:\n  dev:\n    mode: development\n"
+        (tmp_path / "databricks.yml").write_text(yaml_content)
+        monkeypatch.chdir(tmp_path)
+        assert resolve_bundle_targets() == ["dev"]
+
+    def test_prefers_yaml_over_yml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "databricks.yaml").write_text(
+            "bundle:\n  name: x\ntargets:\n  alpha:\n    mode: dev\n"
+        )
+        (tmp_path / "databricks.yml").write_text(
+            "bundle:\n  name: x\ntargets:\n  beta:\n    mode: dev\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        assert resolve_bundle_targets() == ["alpha"]
 
 
 # ---------------------------------------------------------------------------
@@ -810,7 +871,7 @@ class TestBuildDailyCalendar:
     def test_hover_shows_missing_status(self) -> None:
         fig = _build_daily_calendar({"2024-01-15"}, set())
         hover = _flatten_hover(fig)
-        assert any("Not launched" in h for h in hover)
+        assert any("Missing" in h for h in hover)
 
     def test_seven_weekday_rows(self) -> None:
         fig = _build_daily_calendar({"2024-01-15"}, set())
@@ -849,7 +910,7 @@ class TestBuildDailyCalendar:
         hover = _flatten_hover(fig)
         # Last date should be present, early dates should be filtered
         assert any("2023-07-19" in h for h in hover)  # day 200
-        assert not any("2023-01-01: Not launched" in h for h in hover)
+        assert not any("2023-01-01: Missing" in h for h in hover)
 
     def test_explicit_range_overrides_auto_clip(self) -> None:
         from datetime import date
@@ -918,18 +979,18 @@ class TestBuildWeeklyCalendar:
             keys, set(), start_date=date(2024, 6, 1), end_date=date(2024, 9, 30)
         )
         hover = _flatten_hover(fig)
-        # W26 (late June) should be present as "Not launched"
-        assert any("2024-W26: Not launched" in h for h in hover)
-        # W01 (early January) should NOT appear as "Not launched" (it was filtered)
-        assert not any("2024-W01: Not launched" in h for h in hover)
+        # W26 (late June) should be present as "Missing"
+        assert any("2024-W26: Missing" in h for h in hover)
+        # W01 (early January) should NOT appear as "Missing" (it was filtered)
+        assert not any("2024-W01: Missing" in h for h in hover)
 
     def test_auto_clips_large_range(self) -> None:
         # >104 weeks triggers auto-clip to last 52
         keys = {f"{y}-W{w:02d}" for y in range(2020, 2024) for w in range(1, 53)}
         fig = _build_weekly_calendar(keys, set())
         hover = _flatten_hover(fig)
-        assert any("2023-W52: Not launched" in h for h in hover)
-        assert not any("2020-W01: Not launched" in h for h in hover)
+        assert any("2023-W52: Missing" in h for h in hover)
+        assert not any("2020-W01: Missing" in h for h in hover)
 
     def test_empty_range_returns_none(self) -> None:
         from datetime import date
@@ -1244,14 +1305,14 @@ class TestBuildPartitionGrid:
         fig = _build_partition_grid(["us", "eu"], {"us"})
         hover = _flatten_hover(fig)
         assert any("Completed" in h for h in hover)
-        assert any("Not launched" in h for h in hover)
+        assert any("Missing" in h for h in hover)
 
     def test_hover_shows_run_info(self) -> None:
         key_run_info = {"us": (99, 1_705_312_800_000)}
         fig = _build_partition_grid(["us", "eu"], {"us"}, key_run_info)
         hover = _flatten_hover(fig)
         assert any("Run 99" in h for h in hover)
-        assert any("Not launched" in h for h in hover)
+        assert any("Missing" in h for h in hover)
 
 
 # ---------------------------------------------------------------------------
@@ -1322,21 +1383,20 @@ class TestOverviewsToRecords:
         assert len(records) == 1
         r = records[0]
         assert r["Job"] == "etl"
-        assert r["Deployed"] == "\u2713"
-        assert r["Runs"] == 10
-        assert r["Pass"] == 8
-        assert r["Fail"] == 2
-        assert "80" in r["Rate"]
-        assert r["Backfill"] == "\u2713"
+        assert r["Status"] == "SUCCESS"
+        assert r["Runs"] == "10  (8 \u2713 / 2 \u2717)"
+        assert r["Success Rate"] == "80%"
+        assert r["Avg Duration"] == "45s"
+        assert r["Coverage"] == ""
 
     def test_no_runs_shows_dash(self) -> None:
         o = JobOverview(job_name="j", job_id=None)
         records = _overviews_to_records([o])
         r = records[0]
-        assert r["Rate"] == "\u2014"
-        assert r["Deployed"] == "\u2717"
+        assert r["Success Rate"] == "\u2014"
         assert r["Status"] == "\u2014"
-        assert r["Avg Duration (s)"] == "\u2014"
+        assert r["Avg Duration"] == "\u2014"
+        assert r["Runs"] == "\u2014"
 
     def test_workspace_url_adds_links(self) -> None:
         o = JobOverview(job_name="etl", job_id=42)
@@ -1353,10 +1413,31 @@ class TestOverviewsToRecords:
         records = _overviews_to_records([o])
         assert records[0]["Job"] == "etl"
 
-    def test_job_id_column_not_in_output(self) -> None:
+    def test_coverage_with_coverages(self) -> None:
+        o = JobOverview(job_name="etl", job_id=42, has_backfill=True)
+        cov = BackfillCoverage(
+            job_name="etl",
+            expected_keys=["a", "b"],
+            completed_keys=["a"],
+            missing_keys=["b"],
+            coverage_pct=50.0,
+            kind="static",
+        )
+        records = _overviews_to_records([o], coverages={"etl": cov})
+        assert records[0]["Coverage"] == "[50.0%](/backfills/etl)"
+
+    def test_only_expected_columns(self) -> None:
         o = JobOverview(job_name="etl", job_id=42)
         records = _overviews_to_records([o])
-        assert "Job ID" not in records[0]
+        expected_cols = {
+            "Job",
+            "Status",
+            "Runs",
+            "Success Rate",
+            "Avg Duration",
+            "Coverage",
+        }
+        assert set(records[0].keys()) == expected_cols
 
 
 class TestCoveragesToRecords:
@@ -1375,5 +1456,66 @@ class TestCoveragesToRecords:
         records = _coverages_to_records({"j": cov})
         assert len(records) == 1
         assert records[0]["Job"] == "j"
-        assert records[0]["Coverage"] == "50.0%"
-        assert records[0]["Missing"] == 1
+        assert "50.0%" in records[0]["Coverage"]
+        assert "1 / 2" in records[0]["Coverage"]
+
+    def test_static_squares_failed_first(self) -> None:
+        cov = BackfillCoverage(
+            job_name="j",
+            expected_keys=["a", "b", "c"],
+            completed_keys=["a", "c"],
+            missing_keys=["b"],
+            coverage_pct=66.7,
+            kind="static",
+            errored_keys=["b"],
+        )
+        records = _coverages_to_records({"j": cov})
+        keys_cell = records[0]["Keys"]
+        # Failed (red) should come before success (green)
+        red_pos = keys_cell.index("\U0001f7e5")
+        green_pos = keys_cell.index("\U0001f7e9")
+        assert red_pos < green_pos
+
+    def test_time_based_last_n_periods(self) -> None:
+        cov = BackfillCoverage(
+            job_name="j",
+            expected_keys=[f"2024-01-{d:02d}" for d in range(1, 11)],
+            completed_keys=[f"2024-01-{d:02d}" for d in range(1, 9)],
+            missing_keys=["2024-01-09", "2024-01-10"],
+            coverage_pct=80.0,
+            kind="daily",
+        )
+        records = _coverages_to_records({"j": cov})
+        keys_cell = records[0]["Keys"]
+        # Last 5 periods: days 6-10, so 3 green + 2 white
+        squares = keys_cell.split()
+        assert len(squares) == 5
+        # Last two should be white (not launched)
+        assert squares[-1] == "\u2b1c"
+        assert squares[-2] == "\u2b1c"
+
+    def test_static_caps_at_max(self) -> None:
+        cov = BackfillCoverage(
+            job_name="j",
+            expected_keys=[f"k{i}" for i in range(20)],
+            completed_keys=[f"k{i}" for i in range(20)],
+            missing_keys=[],
+            coverage_pct=100.0,
+            kind="static",
+        )
+        records = _coverages_to_records({"j": cov})
+        squares = records[0]["Keys"].split()
+        assert len(squares) == 5
+
+    def test_errored_keys_column(self) -> None:
+        cov = BackfillCoverage(
+            job_name="j",
+            expected_keys=["a", "b"],
+            completed_keys=["a"],
+            missing_keys=["b"],
+            coverage_pct=50.0,
+            kind="static",
+            errored_keys=["b"],
+        )
+        records = _coverages_to_records({"j": cov})
+        assert records[0]["Errors"] == 1

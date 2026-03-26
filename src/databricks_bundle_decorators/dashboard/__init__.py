@@ -17,6 +17,7 @@ from databricks_bundle_decorators.dashboard._data import (
 # CLI data fetching
 from databricks_bundle_decorators.dashboard._fetch import (
     fetch_job_runs as fetch_job_runs,
+    resolve_bundle_targets as resolve_bundle_targets,
     resolve_job_ids as resolve_job_ids,
     resolve_workspace_url as resolve_workspace_url,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "RunInfo",
     # Fetch
     "fetch_job_runs",
+    "resolve_bundle_targets",
     "resolve_job_ids",
     "resolve_workspace_url",
     # Compute

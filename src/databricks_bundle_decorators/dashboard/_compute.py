@@ -220,10 +220,21 @@ def compute_backfill_coverage(
             if prev is None or (r.start_time_ms or 0) > (prev[1] or 0):
                 key_runs[r.backfill_key] = (r.run_id, r.start_time_ms)
 
+    # Track keys that were attempted but only have failures
+    errored: set[str] = set()
+    for r in runs:
+        if r.backfill_key is not None and _is_terminal_failure(
+            r.result_state, r.life_cycle_state
+        ):
+            errored.add(r.backfill_key)
+    # Remove keys that also have a successful run
+    errored -= set(key_runs)
+
     completed = set(key_runs)
     due_set = set(due_keys)
     completed_list = sorted(due_set & completed)
     missing = sorted(due_set - completed)
+    errored_list = sorted(due_set & errored)
     pct = round(len(completed_list) / len(due_keys) * 100, 1) if due_keys else 0.0
     # Only keep entries for keys in the due set
     due_key_runs = {k: v for k, v in key_runs.items() if k in due_set}
@@ -235,6 +246,7 @@ def compute_backfill_coverage(
         coverage_pct=pct,
         kind=kind,
         completed_key_runs=due_key_runs,
+        errored_keys=errored_list,
     )
 
 

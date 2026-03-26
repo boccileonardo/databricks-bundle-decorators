@@ -55,3 +55,7 @@ class BackfillCoverage:
     """Mapping of completed backfill key to ``(run_id, start_time_ms)``
     for the most recent successful run targeting that key.
     ``None`` when run info is unavailable."""
+    errored_keys: list[str] | None = None
+    """Keys that were attempted but only have failed runs (no
+    successful run yet).  ``None`` when error tracking is
+    unavailable."""

@@ -6,12 +6,48 @@ Uses the Databricks CLI — same credentials as ``databricks bundle deploy``.
 from __future__ import annotations
 
 import json
+import re as _re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 from databricks_bundle_decorators.dashboard._data import RunInfo
+
+
+def resolve_bundle_targets() -> list[str]:
+    """Read target names from ``databricks.yaml`` in the working directory.
+
+    Parses the YAML file with a lightweight regex — no PyYAML
+    dependency required.  Returns an empty list when the file is
+    missing or contains no targets section.
+    """
+    for name in ("databricks.yaml", "databricks.yml"):
+        path = Path.cwd() / name
+        if path.is_file():
+            break
+    else:
+        return []
+
+    text = path.read_text(encoding="utf-8")
+
+    # Find the ``targets:`` top-level key and collect indented child keys.
+    targets: list[str] = []
+    in_targets = False
+    for line in text.splitlines():
+        stripped = line.rstrip()
+        if stripped == "targets:" or stripped == "targets: ":
+            in_targets = True
+            continue
+        if in_targets:
+            # A non-indented, non-blank line ends the targets block.
+            if stripped and not stripped.startswith((" ", "\t", "#")):
+                break
+            m = _re.match(r"^  (\w[\w-]*):", line)
+            if m:
+                targets.append(m.group(1))
+    return targets
 
 
 def resolve_job_ids(

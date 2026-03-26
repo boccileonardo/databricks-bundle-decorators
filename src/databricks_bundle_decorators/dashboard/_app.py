@@ -21,6 +21,7 @@ from databricks_bundle_decorators.dashboard._data import (
 )
 from databricks_bundle_decorators.dashboard._fetch import (
     fetch_job_runs,
+    resolve_bundle_targets,
     resolve_job_ids,
     resolve_workspace_url,
 )
@@ -100,6 +101,8 @@ def run_app(
         )
         sys.exit(1)
 
+    bundle_targets = resolve_bundle_targets()
+
     # --- Mutable data store ---
     _data: dict[str, Any] = {
         "job_names": job_names,
@@ -108,12 +111,14 @@ def run_app(
         "overviews": [],
         "coverages": {},
         "workspace_url": None,
+        "active_target": bundle_targets[0] if bundle_targets else None,
     }
 
-    def _refresh_data(target: str | None, profile: str | None) -> None:
-        job_id_map = resolve_job_ids(target=target, profile=profile)
+    def _refresh_data(target: str | None) -> None:
+        job_id_map = resolve_job_ids(target=target)
         _data["job_id_map"] = job_id_map
-        _data["workspace_url"] = resolve_workspace_url(profile=profile)
+        _data["workspace_url"] = resolve_workspace_url()
+        _data["active_target"] = target
 
         all_runs: dict[str, list[RunInfo]] = {}
         overviews: list[JobOverview] = []
@@ -122,7 +127,7 @@ def run_app(
         for name in job_names:
             meta = _JOB_REGISTRY[name]
             job_id = job_id_map.get(name)
-            runs = fetch_job_runs(job_id, profile=profile) if job_id else []
+            runs = fetch_job_runs(job_id) if job_id else []
             all_runs[name] = runs
 
             has_bf = meta.backfill is not None
@@ -149,6 +154,10 @@ def run_app(
     )
     app.title = "Pipeline Observability"
 
+    # Build target dropdown options
+    target_options = [{"label": t, "value": t} for t in bundle_targets]
+    default_target = bundle_targets[0] if bundle_targets else None
+
     navbar = dbc.Navbar(
         dbc.Container(
             [
@@ -174,22 +183,25 @@ def run_app(
                 dbc.Nav(
                     [
                         dbc.NavItem(
-                            dbc.Input(
+                            dcc.Dropdown(
                                 id="input-target",
-                                placeholder="Target (e.g. dev)",
-                                size="sm",
-                                className="me-2",
-                                style={"width": "140px"},
-                            )
+                                options=target_options,
+                                value=default_target,
+                                placeholder="Target",
+                                clearable=False,
+                                searchable=False,
+                                style={
+                                    "width": "160px",
+                                    "color": "#333",
+                                },
+                            ),
+                            className="me-2 d-flex align-items-center",
                         ),
                         dbc.NavItem(
-                            dbc.Input(
-                                id="input-profile",
-                                placeholder="CLI profile",
-                                size="sm",
-                                className="me-2",
-                                style={"width": "140px"},
-                            )
+                            html.Span(
+                                id="workspace-link",
+                            ),
+                            className="me-3 d-flex align-items-center",
                         ),
                         dbc.NavItem(
                             dbc.Button(
@@ -233,52 +245,64 @@ def run_app(
 
     @app.callback(
         Output("page-content", "children"),
+        Output("workspace-link", "children"),
         [
             Input("url", "pathname"),
             Input("btn-refresh", "n_clicks"),
-        ],
-        [
-            dash.State("input-target", "value"),
-            dash.State("input-profile", "value"),
+            Input("input-target", "value"),
         ],
     )
     def _display_page(
         pathname: str | None,
         n_clicks: int | None,
         target: str | None,
-        profile: str | None,
-    ) -> Any:
+    ) -> tuple[Any, Any]:
         target_val = target if target else None
-        profile_val = profile if profile else None
 
-        # Only re-fetch data when the refresh button is clicked,
-        # not on every page navigation.
+        # Re-fetch when refresh is clicked, target changes, or first load.
         triggered = dash.ctx.triggered_id
-        if triggered == "btn-refresh" or not _data["overviews"]:
-            _refresh_data(target_val, profile_val)
+        if triggered in ("btn-refresh", "input-target") or not _data["overviews"]:
+            _refresh_data(target_val)
 
         overviews = _data["overviews"]
         coverages = _data["coverages"]
         workspace_url = _data["workspace_url"]
         job_id_map = _data["job_id_map"]
 
-        if pathname is None or pathname == "/":
-            return _page_overview(overviews, coverages, workspace_url=workspace_url)
-
-        if pathname == "/backfills":
-            return _page_backfills(coverages)
-
-        if pathname.startswith("/backfills/"):
-            name = pathname[len("/backfills/") :]
-            job_id = job_id_map.get(name)
-            return _page_backfill_detail(
-                name, coverages, workspace_url=workspace_url, job_id=job_id
+        # Workspace link for the navbar
+        if workspace_url:
+            # Extract short hostname for display
+            ws_label = workspace_url.split("//", 1)[-1].split(".", 1)[0]
+            ws_link = html.A(
+                f"{ws_label} \u2197",
+                href=workspace_url,
+                target="_blank",
+                rel="noopener noreferrer",
+                className="text-light text-decoration-none small",
+            )
+        else:
+            ws_link = html.Span(
+                "No workspace",
+                className="text-light opacity-50 small",
             )
 
-        return dbc.Alert(
-            f"Page not found: {pathname}",
-            color="warning",
-        )
+        if pathname is None or pathname == "/":
+            page = _page_overview(overviews, coverages, workspace_url=workspace_url)
+        elif pathname == "/backfills":
+            page = _page_backfills(coverages)
+        elif pathname.startswith("/backfills/"):
+            name = pathname[len("/backfills/") :]
+            job_id = job_id_map.get(name)
+            page = _page_backfill_detail(
+                name, coverages, workspace_url=workspace_url, job_id=job_id
+            )
+        else:
+            page = dbc.Alert(
+                f"Page not found: {pathname}",
+                color="warning",
+            )
+
+        return page, ws_link
 
     # --- Backfill date-range callback ---
 
@@ -317,6 +341,6 @@ def run_app(
         return fig or {}
 
     # Prefetch data so the first page load is instant
-    _refresh_data(None, None)
+    _refresh_data(default_target)
 
     app.run(host=host, port=port, debug=debug)

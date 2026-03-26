@@ -27,22 +27,16 @@ from databricks_bundle_decorators.dashboard._polars_helpers import (
     _coverages_to_records,
     _overviews_to_records,
 )
+from databricks_bundle_decorators.dashboard._polars_helpers import (
+    _fmt_duration as _fmt_duration_compat,
+)
 
 # ---------------------------------------------------------------------------
 # KPI card helper
 # ---------------------------------------------------------------------------
 
-
-def _fmt_duration(seconds: int | float) -> str:
-    """Format a duration as ``Hh MMm SSs``, ``Mm SSs``, or ``Ns``."""
-    total = int(seconds)
-    if total < 60:
-        return f"{total}s"
-    m, s = divmod(total, 60)
-    if m < 60:
-        return f"{m}m {s:02d}s"
-    h, m = divmod(m, 60)
-    return f"{h}h {m:02d}m {s:02d}s"
+# _fmt_duration is now in _polars_helpers.py; re-export for API compat
+_fmt_duration = _fmt_duration_compat
 
 
 def _kpi_card(title: str, value: str | int, color: str = "primary") -> Any:
@@ -223,10 +217,12 @@ def _page_overview(
     coverages: dict[str, BackfillCoverage],
     workspace_url: str | None = None,
 ) -> Any:
-    """Build the Overview page — KPI cards + job table + backfill summary.
+    """Build the Overview page — KPI cards + unified job table.
 
-    When ``workspace_url`` is provided, job names link to the
-    Databricks workspace job page.
+    The table merges job stats and backfill coverage into a single
+    view.  Job names link to the Databricks workspace when
+    ``workspace_url`` is available; the Coverage column links to
+    the backfill detail page.
     """
     total_jobs = len(overviews)
     deployed = sum(1 for o in overviews if o.job_id)
@@ -258,25 +254,18 @@ def _page_overview(
         className="mb-4 g-3",
     )
 
-    # Job overview table — with workspace links when URL is available
-    records = _overviews_to_records(overviews, workspace_url=workspace_url)
-
-    # Use markdown renderer for Job column when workspace links are present
-    job_col: dict[str, Any] = {"field": "Job"}
-    if workspace_url:
-        job_col["cellRenderer"] = "markdown"
+    # Unified job table with workspace links and backfill coverage
+    records = _overviews_to_records(
+        overviews, coverages=coverages, workspace_url=workspace_url
+    )
 
     column_defs = [
-        job_col,
-        {"field": "Deployed", "maxWidth": 100},
-        {"field": "Runs", "maxWidth": 80},
-        {"field": "Pass", "maxWidth": 80},
-        {"field": "Fail", "maxWidth": 80},
-        {"field": "Rate", "maxWidth": 80},
-        {"field": "Last Run"},
+        {"field": "Job", "cellRenderer": "markdown", "minWidth": 180},
         {"field": "Status", "cellStyle": _STATUS_CELL_STYLE, "maxWidth": 140},
-        {"field": "Avg Duration (s)", "maxWidth": 140},
-        {"field": "Backfill", "maxWidth": 80},
+        {"field": "Runs", "minWidth": 160},
+        {"field": "Success Rate", "maxWidth": 120},
+        {"field": "Avg Duration", "maxWidth": 120},
+        {"field": "Coverage", "cellRenderer": "markdown", "maxWidth": 120},
     ]
 
     job_grid = dag.AgGrid(
@@ -294,41 +283,12 @@ def _page_overview(
         style={"height": "600px"},
     )
 
-    # Backfill summary (if any)
-    backfill_section: list[Any] = []
-    if coverages:
-        cov_records = _coverages_to_records(coverages)
-
-        # Add clickable job links to backfill detail pages
-        for r in cov_records:
-            r["Job"] = f"[{r['Job']}](/backfills/{r['Job']})"
-
-        cov_cols = [
-            {"field": "Job", "cellRenderer": "markdown"},
-            {"field": "Type", "maxWidth": 120},
-            {"field": "Expected", "maxWidth": 100},
-            {"field": "Completed", "maxWidth": 110},
-            {"field": "Missing", "maxWidth": 100},
-            {"field": "Coverage", "maxWidth": 100},
-        ]
-        backfill_section = [
-            html.H5("Backfill Coverage", className="mt-4 mb-3"),
-            dag.AgGrid(
-                rowData=cov_records,
-                columnDefs=cov_cols,
-                defaultColDef=_default_col_def(),
-                className=_DEFAULT_GRID_CLASSNAME,
-                style={"height": "300px"},
-            ),
-        ]
-
     return html.Div(
         [
             html.H4("Overview", className="mb-3"),
             kpi_row,
             html.H5("Jobs", className="mt-4 mb-3"),
             job_grid,
-            *backfill_section,
         ]
     )
 
@@ -338,7 +298,9 @@ def _page_overview(
 # ---------------------------------------------------------------------------
 
 
-def _page_backfills(coverages: dict[str, BackfillCoverage]) -> Any:
+def _page_backfills(
+    coverages: dict[str, BackfillCoverage],
+) -> Any:
     """Build the Backfills page — AG Grid summary with clickable job links."""
     if not coverages:
         return html.Div(
@@ -351,28 +313,26 @@ def _page_backfills(coverages: dict[str, BackfillCoverage]) -> Any:
             ]
         )
 
-    # Build records with clickable Job column
+    # Build records with clickable Job column and key status squares
     cov_records = _coverages_to_records(coverages)
     for r in cov_records:
         r["Job"] = f"[{r['Job']}](/backfills/{r['Job']})"
 
     cov_cols = [
-        {"field": "Job", "cellRenderer": "markdown"},
-        {"field": "Type", "maxWidth": 120},
-        {"field": "Expected", "maxWidth": 100},
-        {"field": "Completed", "maxWidth": 110},
-        {"field": "Missing", "maxWidth": 100},
-        {"field": "Coverage", "maxWidth": 100},
+        {"field": "Job", "cellRenderer": "markdown", "minWidth": 160},
+        {"field": "Type", "maxWidth": 100},
+        {"field": "Coverage", "minWidth": 140},
+        {"field": "Errors", "maxWidth": 80},
+        {"field": "Keys", "minWidth": 120},
     ]
 
     return html.Div(
         [
             html.H4("Backfill Coverage", className="mb-3"),
             html.P(
-                "Expected keys from BackfillDef vs successful runs "
-                "with matching backfill_key parameter. "
-                "Click a job name for the coverage heatmap. "
-                "For exact key-level catchup, use: dbxdec catchup",
+                "Coverage shows completed / due keys. "
+                "Errors are keys with only failed runs. "
+                "Click a job name for the coverage heatmap.",
                 className="text-muted",
             ),
             dag.AgGrid(
