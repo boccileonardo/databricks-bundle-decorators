@@ -17,24 +17,26 @@ import whenever
 # Coverage heatmap colorscale & legend
 # ---------------------------------------------------------------------------
 
-#: Discrete 5-state colorscale:
-#:   0=not-in-range, 1=missing (past due), 2=completed,
-#:   3=not started (future), 4=in progress.
+#: Discrete 6-state colorscale:
+#:   0=not-in-range, 1=missing, 2=completed,
+#:   3=not started (future), 4=in progress, 5=failed.
 #:
-#: z values are integers 0–4 with zmin=0, zmax=4, so normalised positions
-#: are 0, 0.25, 0.5, 0.75, 1.  Boundaries sit at midpoints (0.125, 0.375,
-#: 0.625, 0.875) so each z value falls squarely inside its colour band.
+#: z values are integers 0–5 with zmin=0, zmax=5, so normalised positions
+#: are 0, 0.2, 0.4, 0.6, 0.8, 1.  Boundaries sit at midpoints (0.1, 0.3,
+#: 0.5, 0.7, 0.9) so each z value falls squarely inside its colour band.
 _COVERAGE_COLORSCALE: list[list[object]] = [
     [0.0, "#f0f1f4"],
-    [0.125, "#f0f1f4"],
-    [0.125, "#f2a20d"],
-    [0.375, "#f2a20d"],
-    [0.375, "#2fb380"],
-    [0.625, "#2fb380"],
-    [0.625, "#d0e8ff"],
-    [0.875, "#d0e8ff"],
-    [0.875, "#3459e6"],
-    [1.0, "#3459e6"],
+    [0.1, "#f0f1f4"],
+    [0.1, "#f2a20d"],
+    [0.3, "#f2a20d"],
+    [0.3, "#2fb380"],
+    [0.5, "#2fb380"],
+    [0.5, "#d0e8ff"],
+    [0.7, "#d0e8ff"],
+    [0.7, "#3459e6"],
+    [0.9, "#3459e6"],
+    [0.9, "#e5484d"],
+    [1.0, "#e5484d"],
 ]
 
 
@@ -43,6 +45,7 @@ def _add_coverage_legend(fig: Any) -> None:
     for label, color in [
         ("Completed", "#2fb380"),
         ("In progress", "#3459e6"),
+        ("Failed", "#e5484d"),
         ("Missing", "#f2a20d"),
         ("Not started", "#d0e8ff"),
         ("Not in range", "#f0f1f4"),
@@ -100,6 +103,7 @@ def _build_daily_calendar(
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
     *,
+    errored_keys: set[str] | None = None,
     in_progress_keys: set[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
@@ -159,6 +163,8 @@ def _build_daily_calendar(
     hover: list[list[str]] = [[""] * num_weeks for _ in range(7)]
 
     today_wd = whenever.ZonedDateTime.now("UTC").date()
+    _ip = in_progress_keys or set()
+    _err = errored_keys or set()
 
     for week_idx in range(num_weeks):
         for dow in range(7):
@@ -168,6 +174,12 @@ def _build_daily_calendar(
                 if d in completed_dates:
                     z[dow][week_idx] = 2
                     hover[dow][week_idx] = _hover_completed(key_str, key_run_info)
+                elif key_str in _ip:
+                    z[dow][week_idx] = 4
+                    hover[dow][week_idx] = f"{key_str}: In progress"
+                elif key_str in _err:
+                    z[dow][week_idx] = 5
+                    hover[dow][week_idx] = f"{key_str}: Failed"
                 elif d.py_date() > today_wd.py_date():
                     z[dow][week_idx] = 3
                     hover[dow][week_idx] = f"{key_str}: Scheduled"
@@ -201,7 +213,7 @@ def _build_daily_calendar(
             hoverinfo="text",
             colorscale=_COVERAGE_COLORSCALE,
             zmin=0,
-            zmax=4,
+            zmax=5,
             showscale=False,
             xgap=2,
             ygap=2,
@@ -228,6 +240,7 @@ def _build_weekly_calendar(
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
     *,
+    errored_keys: set[str] | None = None,
     in_progress_keys: set[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
@@ -295,6 +308,7 @@ def _build_weekly_calendar(
     today_iso = date.today().isocalendar()
     today_yw = (today_iso[0], today_iso[1])
     _ip = in_progress_keys or set()
+    _err = errored_keys or set()
 
     for year in years:
         row_z: list[int] = []
@@ -308,6 +322,9 @@ def _build_weekly_calendar(
                 elif key_str in _ip:
                     row_z.append(4)
                     row_h.append(f"{key_str}: In progress")
+                elif key_str in _err:
+                    row_z.append(5)
+                    row_h.append(f"{key_str}: Failed")
                 elif (year, w) > today_yw:
                     row_z.append(3)
                     row_h.append(f"{key_str}: Not started")
@@ -329,7 +346,7 @@ def _build_weekly_calendar(
             hoverinfo="text",
             colorscale=_COVERAGE_COLORSCALE,
             zmin=0,
-            zmax=4,
+            zmax=5,
             showscale=False,
             xgap=1,
             ygap=2,
@@ -349,6 +366,7 @@ def _build_monthly_calendar(
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
     *,
+    errored_keys: set[str] | None = None,
     in_progress_keys: set[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
@@ -412,6 +430,7 @@ def _build_monthly_calendar(
     today = date.today()
     today_ym = (today.year, today.month)
     _ip = in_progress_keys or set()
+    _err = errored_keys or set()
 
     for year in years:
         row_z: list[int] = []
@@ -425,6 +444,9 @@ def _build_monthly_calendar(
                 elif key_str in _ip:
                     row_z.append(4)
                     row_h.append(f"{key_str}: In progress")
+                elif key_str in _err:
+                    row_z.append(5)
+                    row_h.append(f"{key_str}: Failed")
                 elif (year, m) > today_ym:
                     row_z.append(3)
                     row_h.append(f"{key_str}: Not started")
@@ -446,7 +468,7 @@ def _build_monthly_calendar(
             hoverinfo="text",
             colorscale=_COVERAGE_COLORSCALE,
             zmin=0,
-            zmax=4,
+            zmax=5,
             showscale=False,
             xgap=3,
             ygap=3,
@@ -465,6 +487,7 @@ def _build_hourly_calendar(
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
     *,
+    errored_keys: set[str] | None = None,
     in_progress_keys: set[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
@@ -518,6 +541,7 @@ def _build_hourly_calendar(
 
     now_utc = datetime.now(tz=timezone.utc)
     _ip = in_progress_keys or set()
+    _err = errored_keys or set()
 
     for day in all_days:
         row_z: list[int] = []
@@ -531,6 +555,9 @@ def _build_hourly_calendar(
                 elif key_str in _ip:
                     row_z.append(4)
                     row_h.append(f"{key_str}: In progress")
+                elif key_str in _err:
+                    row_z.append(5)
+                    row_h.append(f"{key_str}: Failed")
                 elif (
                     datetime(day.year, day.month, day.day, h, tzinfo=timezone.utc)
                     > now_utc
@@ -557,7 +584,7 @@ def _build_hourly_calendar(
             hoverinfo="text",
             colorscale=_COVERAGE_COLORSCALE,
             zmin=0,
-            zmax=4,
+            zmax=5,
             showscale=False,
             xgap=1,
             ygap=1,
@@ -577,6 +604,7 @@ def _build_partition_grid(
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
     *,
+    errored_keys: set[str] | None = None,
     in_progress_keys: set[str] | None = None,
 ) -> Any:
     """Build a Plotly heatmap for static backfill keys.
@@ -588,12 +616,15 @@ def _build_partition_grid(
         return None
 
     _ip = in_progress_keys or set()
+    _err = errored_keys or set()
 
     def _cell_z(k: str) -> int:
         if k in completed_keys:
             return 2
         if k in _ip:
             return 4
+        if k in _err:
+            return 5
         return 1
 
     def _cell_hover(k: str) -> str:
@@ -601,6 +632,8 @@ def _build_partition_grid(
             return _hover_completed(k, key_run_info)
         if k in _ip:
             return f"{k}: In progress"
+        if k in _err:
+            return f"{k}: Failed"
         return f"{k}: Missing"
 
     z = [[_cell_z(k) for k in expected_keys]]
@@ -615,7 +648,7 @@ def _build_partition_grid(
             hoverinfo="text",
             colorscale=_COVERAGE_COLORSCALE,
             zmin=0,
-            zmax=4,
+            zmax=5,
             showscale=False,
             xgap=3,
             ygap=3,
@@ -633,10 +666,11 @@ def _build_partition_grid(
         margin=dict(l=20, r=20, t=10, b=60),
         xaxis=xaxis_opts,
     )
-    # Static grid only has completed/in-progress/missing
+    # Static grid only has completed/in-progress/failed/missing
     for label, color in [
         ("Completed", "#2fb380"),
         ("In progress", "#3459e6"),
+        ("Failed", "#e5484d"),
         ("Missing", "#f2a20d"),
     ]:
         fig.add_trace(

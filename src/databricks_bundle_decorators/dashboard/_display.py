@@ -118,12 +118,20 @@ def _build_key_squares(cov: BackfillCoverage, max_squares: int) -> list[str]:
     errored_set = set(cov.errored_keys) if cov.errored_keys else set()
     in_progress_set = set(cov.in_progress_keys) if cov.in_progress_keys else set()
 
-    # Due keys = completed + missing + in-progress (future keys are excluded upstream)
-    due_keys = (
+    # Due keys = union of completed, missing, in-progress, errored (deduplicated).
+    # Errored keys are normally a subset of missing, but we include them
+    # explicitly for robustness.
+    seen: set[str] = set()
+    due_keys: list[str] = []
+    for k in (
         cov.completed_keys
         + cov.missing_keys
-        + list(in_progress_set - set(cov.completed_keys) - set(cov.missing_keys))
-    )
+        + list(in_progress_set)
+        + list(errored_set)
+    ):
+        if k not in seen:
+            seen.add(k)
+            due_keys.append(k)
 
     if cov.kind in _TIME_BASED_KINDS:
         # Chronological sort, take the most recent N
@@ -182,8 +190,10 @@ def _coverages_to_records(
     records: list[dict[str, Any]] = []
     for c in sorted_covs:
         done = len(c.completed_keys)
-        # "due" = expected minus future (missing + completed represent the due set)
-        due = done + len(c.missing_keys)
+        # "due" = all non-future keys (completed + missing + in-progress)
+        due = len(
+            set(c.completed_keys) | set(c.missing_keys) | set(c.in_progress_keys or [])
+        )
         errored = len(c.errored_keys) if c.errored_keys else 0
 
         # Coverage column: "45 / 90  (50%)"

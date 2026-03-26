@@ -979,6 +979,28 @@ class TestBuildDailyCalendar:
         )
         assert fig is None
 
+    def test_errored_day_in_z(self) -> None:
+        fig = _build_daily_calendar({"2024-01-15"}, set(), errored_keys={"2024-01-15"})
+        assert 5 in _flatten_z(fig)  # 5 = failed
+
+    def test_errored_hover_shows_failed(self) -> None:
+        fig = _build_daily_calendar({"2024-01-15"}, set(), errored_keys={"2024-01-15"})
+        hover = _flatten_hover(fig)
+        assert any("Failed" in h for h in hover)
+
+    def test_in_progress_day_in_z(self) -> None:
+        fig = _build_daily_calendar(
+            {"2024-01-15"}, set(), in_progress_keys={"2024-01-15"}
+        )
+        assert 4 in _flatten_z(fig)  # 4 = in progress
+
+    def test_in_progress_hover(self) -> None:
+        fig = _build_daily_calendar(
+            {"2024-01-15"}, set(), in_progress_keys={"2024-01-15"}
+        )
+        hover = _flatten_hover(fig)
+        assert any("In progress" in h for h in hover)
+
 
 # ---------------------------------------------------------------------------
 # _build_weekly_calendar (Plotly figure)
@@ -1047,6 +1069,15 @@ class TestBuildWeeklyCalendar:
             end_date=date(2025, 12, 31),
         )
         assert fig is None
+
+    def test_errored_week_in_z(self) -> None:
+        fig = _build_weekly_calendar({"2024-W03"}, set(), errored_keys={"2024-W03"})
+        assert 5 in _flatten_z(fig)
+
+    def test_errored_hover_shows_failed(self) -> None:
+        fig = _build_weekly_calendar({"2024-W03"}, set(), errored_keys={"2024-W03"})
+        hover = _flatten_hover(fig)
+        assert any("Failed" in h for h in hover)
 
 
 # ---------------------------------------------------------------------------
@@ -1351,6 +1382,16 @@ class TestBuildPartitionGrid:
         hover = _flatten_hover(fig)
         assert any("Run 99" in h for h in hover)
         assert any("Missing" in h for h in hover)
+
+    def test_errored_key_in_z(self) -> None:
+        fig = _build_partition_grid(["us", "eu"], set(), errored_keys={"eu"})
+        assert 5 in _flatten_z(fig)
+
+    def test_errored_hover_shows_failed(self) -> None:
+        fig = _build_partition_grid(["us", "eu"], {"us"}, errored_keys={"eu"})
+        hover = _flatten_hover(fig)
+        assert any("Failed" in h for h in hover)
+        assert any("Completed" in h for h in hover)
 
 
 # ---------------------------------------------------------------------------
