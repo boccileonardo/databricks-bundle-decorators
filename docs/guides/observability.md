@@ -1,6 +1,6 @@
 # Observability Dashboard
 
-A Streamlit-based dashboard that shows job execution status, run history,
+A Dash-based dashboard that shows job execution status, run history,
 task performance, and backfill coverage for all jobs deployed from the
 current bundle.
 
@@ -23,26 +23,45 @@ dbxdec dashboard
 ```
 
 On first run this scaffolds `observability/app.py` (a lightweight entry
-point that imports your pipeline package) and then launches Streamlit.
+point that imports your pipeline package) and then launches the Dash
+server at `http://127.0.0.1:8050`.
 
-## Dashboard tabs
+## Dashboard pages
 
 ### Overview
 
-A summary table of all registered jobs showing run counts, success rate,
-last run time, and whether the job has a backfill definition.
+The landing page ("factory floor") provides:
 
-### Run History
+- **KPI cards** — registered jobs, deployed count, total runs, success
+  rate, failures, average duration.
+- **Job status grid** — one card per job showing latest state, run
+  counts, pass rate, deployment status, and backfill indicator.
+- **Backfill summary table** — quick coverage overview for all
+  backfill-enabled jobs.
 
-Detailed run-by-run listing for a selected job, including start time,
-duration, and backfill key (if applicable).
+### Jobs
 
-### Task Performance
+A sortable, filterable table of all registered jobs with columns for
+deployment status, run count, pass/fail, success rate, last run time,
+status, average duration, and backfill flag.
 
-Task-level breakdown of the most recent run for a selected job —
-useful for spotting slow or failing tasks.
+### Runs
 
-### Backfill Coverage
+All runs across all jobs in a single filterable table with run ID, job
+name, status, start time, duration, and backfill key.
+
+### Job Detail (`/jobs/<name>`)
+
+Drill-down view for a specific job:
+
+- Run history table with per-run details.
+- Error alerts for recent failures.
+- **Task DAG** visualisation from the latest run (topological layout
+  with colour-coded nodes by result state).
+- Task breakdown table.
+- Backfill coverage chart (if the job has a `BackfillDef`).
+
+### Backfills
 
 Visual comparison of expected backfill keys (from `BackfillDef`)
 against successful runs.  Each backfill type gets a dedicated
@@ -56,11 +75,17 @@ visualization:
 | `HourlyBackfill` | Date × hour grid (00–23) |
 | `StaticBackfill` | Single-row partition grid |
 
-Green = completed, red = missing, gray = not in range.
+Green = completed, amber = not launched, gray = not in range.
+
+## Navigation
+
+The top navigation bar provides direct links to **Overview**, **Jobs**,
+**Runs**, and **Backfills** pages.  Target and CLI profile can be set
+inline in the navbar.  Click **Refresh** to re-fetch data.
 
 ## Programmatic usage
 
-The data functions can be used independently of the Streamlit UI:
+The data functions can be used independently of the Dash UI:
 
 ```python
 from databricks_bundle_decorators.dashboard import (

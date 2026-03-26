@@ -1,4 +1,4 @@
-"""Tests for the observability dashboard (CLI + Streamlit approach)."""
+"""Tests for the observability dashboard (CLI + Dash approach)."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import pytest
 from databricks_bundle_decorators.dashboard import (
     APP_TEMPLATE,
     BackfillCoverage,
+    JobOverview,
     RunInfo,
     TaskRunInfo,
     _backfill_kind,
@@ -20,9 +21,13 @@ from databricks_bundle_decorators.dashboard import (
     _build_partition_grid,
     _build_task_dag_figure,
     _build_weekly_calendar,
+    _coverages_to_records,
     _effective_state,
     _filter_past_keys,
     _is_terminal_failure,
+    _overviews_to_records,
+    _runs_to_records,
+    _tasks_to_records,
     build_job_overview,
     compute_backfill_coverage,
     fetch_job_runs,
@@ -1097,4 +1102,98 @@ class TestAppTemplate:
 
     def test_renders_app_path(self) -> None:
         result = APP_TEMPLATE.format(package_name="pkg", app_path="custom/dashboard.py")
-        assert "streamlit run custom/dashboard.py" in result
+        assert "python custom/dashboard.py" in result
+
+
+# ---------------------------------------------------------------------------
+# Polars data helpers
+# ---------------------------------------------------------------------------
+
+
+class TestOverviewsToRecords:
+    def test_empty(self) -> None:
+        assert _overviews_to_records([]) == []
+
+    def test_single_overview(self) -> None:
+        o = JobOverview(
+            job_name="etl",
+            job_id=42,
+            total_runs=10,
+            successes=8,
+            failures=2,
+            last_run_time_ms=1_700_000_000_000,
+            last_run_state="SUCCESS",
+            avg_duration_seconds=45.0,
+            has_backfill=True,
+        )
+        records = _overviews_to_records([o])
+        assert len(records) == 1
+        r = records[0]
+        assert r["Job"] == "etl"
+        assert r["Deployed"] == "\u2713"
+        assert r["Runs"] == 10
+        assert r["Pass"] == 8
+        assert r["Fail"] == 2
+        assert "80" in r["Rate"]
+        assert r["Backfill"] == "\u2713"
+
+    def test_no_runs_shows_dash(self) -> None:
+        o = JobOverview(job_name="j", job_id=None)
+        records = _overviews_to_records([o])
+        r = records[0]
+        assert r["Rate"] == "\u2014"
+        assert r["Deployed"] == "\u2717"
+        assert r["Status"] == "\u2014"
+        assert r["Avg Duration (s)"] == "\u2014"
+
+
+class TestRunsToRecords:
+    def test_empty(self) -> None:
+        assert _runs_to_records([]) == []
+
+    def test_basic(self) -> None:
+        runs = [
+            RunInfo(1, "SUCCESS", 1_700_000_000_000, 1_700_000_060_000, 60.0),
+        ]
+        records = _runs_to_records(runs)
+        assert len(records) == 1
+        assert records[0]["Run ID"] == 1
+        assert records[0]["Status"] == "SUCCESS"
+
+    def test_null_duration(self) -> None:
+        runs = [RunInfo(1, None, None, None, None)]
+        records = _runs_to_records(runs)
+        assert records[0]["Duration (s)"] == "\u2014"
+        assert records[0]["Start"] == "\u2014"
+
+
+class TestTasksToRecords:
+    def test_empty(self) -> None:
+        assert _tasks_to_records([]) == []
+
+    def test_basic(self) -> None:
+        tasks = [TaskRunInfo("a", "SUCCESS", 0, 1000, 1.0)]
+        records = _tasks_to_records(tasks)
+        assert len(records) == 1
+        assert records[0]["Task"] == "a"
+        assert records[0]["Status"] == "SUCCESS"
+
+
+class TestCoveragesToRecords:
+    def test_empty(self) -> None:
+        assert _coverages_to_records({}) == []
+
+    def test_basic(self) -> None:
+        cov = BackfillCoverage(
+            job_name="j",
+            expected_keys=["a", "b"],
+            completed_keys=["a"],
+            missing_keys=["b"],
+            coverage_pct=50.0,
+            kind="static",
+        )
+        records = _coverages_to_records({"j": cov})
+        assert len(records) == 1
+        assert records[0]["Job"] == "j"
+        assert records[0]["Coverage"] == "50.0%"
+        assert records[0]["Missing"] == 1

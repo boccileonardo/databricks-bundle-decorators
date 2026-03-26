@@ -915,7 +915,7 @@ def dashboard() -> None:
     """Launch the observability dashboard for all registered jobs.
 
     Scaffolds ``observability/app.py`` on first run, then launches
-    Streamlit.  The dashboard uses the Databricks CLI for data
+    the Dash server.  The dashboard uses the Databricks CLI for data
     access — same credentials as bundle deploy, no additional auth
     needed.
 
@@ -926,10 +926,10 @@ def dashboard() -> None:
     try:
         import importlib
 
-        importlib.import_module("streamlit")
+        importlib.import_module("dash")
     except ImportError:
         print(
-            "Error: streamlit is not installed. "
+            "Error: dash is not installed. "
             "Install the observability extras:\n\n"
             "    uv add databricks-bundle-decorators[observability]",
             file=sys.stderr,
@@ -950,7 +950,7 @@ def dashboard() -> None:
         )
         print(f"Created: {app_path}")
 
-    sys.exit(subprocess.call([sys.executable, "-m", "streamlit", "run", str(app_path)]))
+    sys.exit(subprocess.call([sys.executable, str(app_path)]))
 
 
 # --- Main ------------------------------------------------------------------

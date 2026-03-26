@@ -972,90 +972,6 @@ def _build_partition_grid(
     return fig
 
 
-# ---------------------------------------------------------------------------
-# App template (scaffolded by ``dbxdec dashboard``)
-# ---------------------------------------------------------------------------
-
-
-APP_TEMPLATE = '''\
-"""Pipeline observability dashboard.
-
-Launch with::
-
-    streamlit run {app_path}
-
-Requires::
-
-    uv add databricks-bundle-decorators[observability]
-"""
-
-import {package_name}.pipelines  # noqa: F401 — populate the job registry
-
-from databricks_bundle_decorators.dashboard import run_app
-
-run_app()
-'''
-
-
-# ---------------------------------------------------------------------------
-# Streamlit app — rendering helpers
-# ---------------------------------------------------------------------------
-
-
-def _render_overview(overviews: list[JobOverview]) -> None:
-    import streamlit as st
-
-    # --- KPI row ---
-    total_jobs = len(overviews)
-    deployed = sum(1 for o in overviews if o.job_id)
-    total_runs = sum(o.total_runs for o in overviews)
-    total_failures = sum(o.failures for o in overviews)
-    all_durations = [
-        o.avg_duration_seconds for o in overviews if o.avg_duration_seconds is not None
-    ]
-    avg_dur = round(sum(all_durations) / len(all_durations), 1) if all_durations else 0
-
-    cols = st.columns(5)
-    cols[0].metric("Jobs", total_jobs)
-    cols[1].metric("Deployed", deployed)
-    cols[2].metric("Total Runs", total_runs)
-    cols[3].metric("Failures", total_failures, delta_color="inverse")
-    cols[4].metric("Avg Duration", f"{avg_dur}s")
-
-    st.markdown("---")
-
-    # --- Job table ---
-    from datetime import datetime, timezone
-
-    rows = []
-    for o in overviews:
-        rate = (
-            f"{o.successes / o.total_runs * 100:.0f}%" if o.total_runs > 0 else "\u2014"
-        )
-        last_run = "\u2014"
-        if o.last_run_time_ms:
-            dt = datetime.fromtimestamp(o.last_run_time_ms / 1000, tz=timezone.utc)
-            last_run = dt.strftime("%Y-%m-%d %H:%M UTC")
-
-        rows.append(
-            {
-                "Job": o.job_name,
-                "Deployed": "\u2713" if o.job_id else "\u2717",
-                "Runs": o.total_runs,
-                "Pass": o.successes,
-                "Fail": o.failures,
-                "Rate": rate,
-                "Last Run": last_run,
-                "Status": o.last_run_state or "\u2014",
-                "Avg (s)": str(o.avg_duration_seconds)
-                if o.avg_duration_seconds
-                else "\u2014",
-                "Backfill": "\u2713" if o.has_backfill else "",
-            }
-        )
-    st.dataframe(rows, width="stretch", hide_index=True)
-
-
 def _build_task_dag_figure(task_runs: list[TaskRunInfo]) -> Any:
     """Build a Plotly figure showing the task DAG for a single run.
 
@@ -1184,166 +1100,824 @@ def _build_task_dag_figure(task_runs: list[TaskRunInfo]) -> Any:
     return fig
 
 
-def _render_run_history(
-    job_names: list[str],
-    all_runs: dict[str, list[RunInfo]],
-    overviews: list[JobOverview],
-    profile: str | None,
-) -> None:
-    import streamlit as st
+# ---------------------------------------------------------------------------
+# Polars data helpers — convert dataclasses to DataFrames for display
+# ---------------------------------------------------------------------------
 
-    selected = st.selectbox("Job", job_names, key="rh_job")
-    runs = all_runs.get(selected, [])
+
+def _overviews_to_records(overviews: list[JobOverview]) -> list[dict[str, Any]]:
+    """Convert job overviews to display-ready table records via polars."""
+    import polars as pl
+
+    if not overviews:
+        return []
+
+    df = pl.DataFrame(
+        {
+            "Job": [o.job_name for o in overviews],
+            "Deployed": [o.job_id is not None for o in overviews],
+            "Runs": [o.total_runs for o in overviews],
+            "Pass": [o.successes for o in overviews],
+            "Fail": [o.failures for o in overviews],
+            "Last Run": [o.last_run_time_ms for o in overviews],
+            "Status": [o.last_run_state for o in overviews],
+            "Avg Duration (s)": [o.avg_duration_seconds for o in overviews],
+            "Backfill": [o.has_backfill for o in overviews],
+        }
+    )
+    df = df.with_columns(
+        pl.when(pl.col("Runs") > 0)
+        .then((pl.col("Pass") / pl.col("Runs") * 100).round(0).cast(pl.Utf8) + "%")
+        .otherwise(pl.lit("\u2014"))
+        .alias("Rate"),
+        pl.when(pl.col("Last Run").is_not_null())
+        .then(
+            pl.from_epoch(pl.col("Last Run"), time_unit="ms").dt.to_string(
+                "%Y-%m-%d %H:%M UTC"
+            )
+        )
+        .otherwise(pl.lit("\u2014"))
+        .alias("Last Run"),
+        pl.when(pl.col("Avg Duration (s)").is_not_null())
+        .then(pl.col("Avg Duration (s)").cast(pl.Utf8))
+        .otherwise(pl.lit("\u2014"))
+        .alias("Avg Duration (s)"),
+        pl.when(pl.col("Status").is_not_null())
+        .then(pl.col("Status"))
+        .otherwise(pl.lit("\u2014"))
+        .alias("Status"),
+        pl.when(pl.col("Deployed"))
+        .then(pl.lit("\u2713"))
+        .otherwise(pl.lit("\u2717"))
+        .alias("Deployed"),
+        pl.when(pl.col("Backfill"))
+        .then(pl.lit("\u2713"))
+        .otherwise(pl.lit(""))
+        .alias("Backfill"),
+    )
+    return df.select(
+        "Job",
+        "Deployed",
+        "Runs",
+        "Pass",
+        "Fail",
+        "Rate",
+        "Last Run",
+        "Status",
+        "Avg Duration (s)",
+        "Backfill",
+    ).to_dicts()
+
+
+def _runs_to_records(runs: list[RunInfo]) -> list[dict[str, Any]]:
+    """Convert run info list to display-ready table records via polars."""
+    import polars as pl
 
     if not runs:
-        st.info(f"No runs found for **{selected}**.")
-        return
+        return []
 
-    from datetime import datetime, timezone
-
-    rows = []
-    for r in runs:
-        start = "\u2014"
-        if r.start_time_ms:
-            dt = datetime.fromtimestamp(r.start_time_ms / 1000, tz=timezone.utc)
-            start = dt.strftime("%Y-%m-%d %H:%M")
-        rows.append(
-            {
-                "Run ID": r.run_id,
-                "Status": _effective_state(r.result_state, r.life_cycle_state),
-                "Start": start,
-                "Duration (s)": r.duration_seconds or "\u2014",
-                "Backfill Key": r.backfill_key or "",
-            }
+    df = pl.DataFrame(
+        {
+            "Run ID": [r.run_id for r in runs],
+            "Status": [
+                _effective_state(r.result_state, r.life_cycle_state) for r in runs
+            ],
+            "Start": [r.start_time_ms for r in runs],
+            "Duration (s)": [r.duration_seconds for r in runs],
+            "Backfill Key": [r.backfill_key or "" for r in runs],
+        }
+    )
+    df = df.with_columns(
+        pl.when(pl.col("Start").is_not_null())
+        .then(
+            pl.from_epoch(pl.col("Start"), time_unit="ms").dt.to_string(
+                "%Y-%m-%d %H:%M"
+            )
         )
-    st.dataframe(rows, width="stretch", hide_index=True)
+        .otherwise(pl.lit("\u2014"))
+        .alias("Start"),
+        pl.when(pl.col("Duration (s)").is_not_null())
+        .then(pl.col("Duration (s)").cast(pl.Utf8))
+        .otherwise(pl.lit("\u2014"))
+        .alias("Duration (s)"),
+    )
+    return df.to_dicts()
 
-    # Show error message for the most recent failed run
+
+def _tasks_to_records(task_runs: list[TaskRunInfo]) -> list[dict[str, Any]]:
+    """Convert task run info list to display-ready table records via polars."""
+    import polars as pl
+
+    if not task_runs:
+        return []
+
+    df = pl.DataFrame(
+        {
+            "Task": [t.task_key for t in task_runs],
+            "Status": [
+                _effective_state(t.result_state, t.life_cycle_state) for t in task_runs
+            ],
+            "Duration (s)": [t.duration_seconds for t in task_runs],
+            "Error": [t.state_message or "" for t in task_runs],
+        }
+    )
+    df = df.with_columns(
+        pl.when(pl.col("Duration (s)").is_not_null())
+        .then(pl.col("Duration (s)").cast(pl.Utf8))
+        .otherwise(pl.lit("\u2014"))
+        .alias("Duration (s)"),
+    )
+    return df.to_dicts()
+
+
+def _coverages_to_records(
+    coverages: dict[str, BackfillCoverage],
+) -> list[dict[str, Any]]:
+    """Convert backfill coverages to display-ready table records via polars."""
+    import polars as pl
+
+    if not coverages:
+        return []
+
+    sorted_covs = sorted(coverages.values(), key=lambda c: c.coverage_pct)
+    df = pl.DataFrame(
+        {
+            "Job": [c.job_name for c in sorted_covs],
+            "Type": [c.kind.title() for c in sorted_covs],
+            "Expected": [len(c.expected_keys) for c in sorted_covs],
+            "Completed": [len(c.completed_keys) for c in sorted_covs],
+            "Missing": [len(c.missing_keys) for c in sorted_covs],
+            "Coverage": [f"{c.coverage_pct}%" for c in sorted_covs],
+        }
+    )
+    return df.to_dicts()
+
+
+# ---------------------------------------------------------------------------
+# App template (scaffolded by ``dbxdec dashboard``)
+# ---------------------------------------------------------------------------
+
+
+APP_TEMPLATE = '''\
+"""Pipeline observability dashboard.
+
+Launch with::
+
+    python {app_path}
+
+Requires::
+
+    uv add databricks-bundle-decorators[observability]
+"""
+
+import {package_name}.pipelines  # noqa: F401 — populate the job registry
+
+from databricks_bundle_decorators.dashboard import run_app
+
+run_app()
+'''
+
+
+# ---------------------------------------------------------------------------
+# Status badge colours
+# ---------------------------------------------------------------------------
+
+_STATE_BADGE_COLORS: dict[str, str] = {
+    "SUCCESS": "success",
+    "FAILED": "danger",
+    "RUNNING": "primary",
+    "PENDING": "secondary",
+    "CANCELED": "warning",
+    "TIMED_OUT": "warning",
+    "INTERNAL_ERROR": "danger",
+    "SKIPPED": "secondary",
+    "UNKNOWN": "light",
+}
+
+
+def _state_badge(state: str) -> Any:
+    """Return a Bootstrap badge component for a run/task state."""
+    import dash_bootstrap_components as dbc
+
+    return dbc.Badge(
+        state,
+        color=_STATE_BADGE_COLORS.get(state, "light"),
+        className="me-1",
+    )
+
+
+# ---------------------------------------------------------------------------
+# KPI card helper
+# ---------------------------------------------------------------------------
+
+
+def _kpi_card(title: str, value: str | int, color: str = "primary") -> Any:
+    """Return a Bootstrap card showing a single KPI metric."""
+    import dash_bootstrap_components as dbc
+    from dash import html
+
+    return dbc.Card(
+        dbc.CardBody(
+            [
+                html.H6(title, className="card-subtitle mb-1 text-muted"),
+                html.H3(str(value), className=f"card-title text-{color} mb-0"),
+            ],
+            className="text-center py-3",
+        ),
+        className="shadow-sm",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dash app — layout builders (pure functions returning component trees)
+# ---------------------------------------------------------------------------
+
+_FIGURE_BUILDERS: dict[str, tuple[str, Any]] = {
+    "daily": (
+        "calendar",
+        lambda c: _build_daily_calendar(set(c.expected_keys), set(c.completed_keys)),
+    ),
+    "weekly": (
+        "week calendar",
+        lambda c: _build_weekly_calendar(set(c.expected_keys), set(c.completed_keys)),
+    ),
+    "monthly": (
+        "month calendar",
+        lambda c: _build_monthly_calendar(set(c.expected_keys), set(c.completed_keys)),
+    ),
+    "hourly": (
+        "hour calendar",
+        lambda c: _build_hourly_calendar(set(c.expected_keys), set(c.completed_keys)),
+    ),
+}
+
+
+def _page_overview(
+    overviews: list[JobOverview],
+    coverages: dict[str, BackfillCoverage],
+) -> Any:
+    """Build the Overview page layout — KPI cards + job status grid."""
+    import dash_bootstrap_components as dbc
+    from dash import html
+
+    total_jobs = len(overviews)
+    deployed = sum(1 for o in overviews if o.job_id)
+    total_runs = sum(o.total_runs for o in overviews)
+    total_failures = sum(o.failures for o in overviews)
+    all_durations = [
+        o.avg_duration_seconds for o in overviews if o.avg_duration_seconds is not None
+    ]
+    avg_dur = round(sum(all_durations) / len(all_durations), 1) if all_durations else 0
+    success_rate = (
+        round(
+            sum(o.successes for o in overviews) / total_runs * 100,
+            1,
+        )
+        if total_runs
+        else 0
+    )
+
+    kpi_row = dbc.Row(
+        [
+            dbc.Col(_kpi_card("Registered Jobs", total_jobs), md=2),
+            dbc.Col(_kpi_card("Deployed", deployed, "info"), md=2),
+            dbc.Col(_kpi_card("Total Runs", total_runs), md=2),
+            dbc.Col(_kpi_card("Success Rate", f"{success_rate}%", "success"), md=2),
+            dbc.Col(_kpi_card("Failures", total_failures, "danger"), md=2),
+            dbc.Col(_kpi_card("Avg Duration", f"{avg_dur}s"), md=2),
+        ],
+        className="mb-4 g-3",
+    )
+
+    # Job status cards — one per job
+    job_cards = []
+    for o in sorted(overviews, key=lambda x: x.job_name):
+        state = o.last_run_state or "UNKNOWN"
+        rate = (
+            f"{o.successes / o.total_runs * 100:.0f}%" if o.total_runs > 0 else "\u2014"
+        )
+        badge = _state_badge(state)
+        backfill_badge = (
+            dbc.Badge("Backfill", color="info", className="ms-1")
+            if o.has_backfill
+            else None
+        )
+
+        deployed_icon = (
+            html.Span("\u2713 Deployed", className="text-success small")
+            if o.job_id
+            else html.Span("\u2717 Not deployed", className="text-muted small")
+        )
+
+        card = dbc.Card(
+            dbc.CardBody(
+                [
+                    html.Div(
+                        [
+                            html.H6(
+                                o.job_name,
+                                className="card-title mb-1 text-truncate",
+                            ),
+                            html.Div(
+                                [badge, backfill_badge] if backfill_badge else [badge],
+                            ),
+                        ],
+                    ),
+                    html.Hr(className="my-2"),
+                    html.Div(
+                        [
+                            html.Span(
+                                f"{o.total_runs} runs",
+                                className="small text-muted me-2",
+                            ),
+                            html.Span(
+                                f"{rate} pass rate",
+                                className="small text-muted me-2",
+                            ),
+                        ],
+                    ),
+                    deployed_icon,
+                ]
+            ),
+            className="shadow-sm h-100",
+        )
+        job_cards.append(dbc.Col(card, md=3, className="mb-3"))
+
+    # Backfill summary (if any)
+    backfill_section: list[Any] = []
+    if coverages:
+        cov_records = _coverages_to_records(coverages)
+        from dash import dash_table
+
+        backfill_section = [
+            html.H5("Backfill Coverage", className="mt-4 mb-3"),
+            dash_table.DataTable(
+                data=cov_records,  # type: ignore[invalid-argument-type]
+                columns=[{"name": k, "id": k} for k in cov_records[0]],
+                style_table={"overflowX": "auto"},
+                style_cell={"textAlign": "left", "padding": "8px"},
+                style_header={
+                    "backgroundColor": "#f8f9fa",
+                    "fontWeight": "bold",
+                },
+                style_data_conditional=[
+                    {
+                        "if": {"column_id": "Coverage"},
+                        "fontWeight": "bold",
+                    },
+                ],
+                page_size=20,
+            ),
+        ]
+
+    return html.Div(
+        [
+            html.H4("Overview", className="mb-3"),
+            kpi_row,
+            html.H5("Job Status", className="mt-4 mb-3"),
+            dbc.Row(job_cards),
+            *backfill_section,
+        ]
+    )
+
+
+def _page_jobs(overviews: list[JobOverview]) -> Any:
+    """Build the Jobs page layout — sortable table of all jobs."""
+    from dash import dash_table, html
+
+    records = _overviews_to_records(overviews)
+    if not records:
+        return html.Div(
+            html.P("No jobs registered.", className="text-muted"),
+        )
+
+    return html.Div(
+        [
+            html.H4("Jobs", className="mb-3"),
+            html.P(
+                f"{len(records)} registered jobs across the bundle.",
+                className="text-muted",
+            ),
+            dash_table.DataTable(
+                id="jobs-table",
+                data=records,  # type: ignore[invalid-argument-type]
+                columns=[{"name": k, "id": k} for k in records[0]],
+                sort_action="native",
+                filter_action="native",
+                style_table={"overflowX": "auto"},
+                style_cell={"textAlign": "left", "padding": "8px"},
+                style_header={
+                    "backgroundColor": "#f8f9fa",
+                    "fontWeight": "bold",
+                },
+                style_data_conditional=[
+                    {
+                        "if": {
+                            "filter_query": '{Status} = "FAILED"',
+                            "column_id": "Status",
+                        },
+                        "color": "#dc3545",
+                        "fontWeight": "bold",
+                    },
+                    {
+                        "if": {
+                            "filter_query": '{Status} = "SUCCESS"',
+                            "column_id": "Status",
+                        },
+                        "color": "#198754",
+                    },
+                    {
+                        "if": {
+                            "filter_query": '{Status} = "RUNNING"',
+                            "column_id": "Status",
+                        },
+                        "color": "#0d6efd",
+                    },
+                ],
+                page_size=25,
+            ),
+        ]
+    )
+
+
+def _page_runs(
+    all_runs: dict[str, list[RunInfo]],
+    job_names: list[str],
+) -> Any:
+    """Build the Runs page layout — all runs across all jobs."""
+    import dash_bootstrap_components as dbc
+    from dash import dash_table, html
+
+    all_records: list[dict[str, Any]] = []
+    for name in job_names:
+        for r in all_runs.get(name, []):
+            start = "\u2014"
+            if r.start_time_ms:
+                from datetime import datetime, timezone
+
+                dt = datetime.fromtimestamp(r.start_time_ms / 1000, tz=timezone.utc)
+                start = dt.strftime("%Y-%m-%d %H:%M")
+            all_records.append(
+                {
+                    "Run ID": r.run_id,
+                    "Job": name,
+                    "Status": _effective_state(r.result_state, r.life_cycle_state),
+                    "Start": start,
+                    "Duration (s)": (
+                        str(r.duration_seconds) if r.duration_seconds else "\u2014"
+                    ),
+                    "Backfill Key": r.backfill_key or "",
+                }
+            )
+
+    if not all_records:
+        return html.Div(
+            [
+                html.H4("Runs", className="mb-3"),
+                dbc.Alert("No runs found.", color="info"),
+            ]
+        )
+
+    return html.Div(
+        [
+            html.H4("Runs", className="mb-3"),
+            html.P(
+                f"{len(all_records)} runs across {len(job_names)} jobs.",
+                className="text-muted",
+            ),
+            dash_table.DataTable(
+                id="runs-table",
+                data=all_records,  # type: ignore[invalid-argument-type]
+                columns=[{"name": k, "id": k} for k in all_records[0]],
+                sort_action="native",
+                filter_action="native",
+                style_table={"overflowX": "auto"},
+                style_cell={"textAlign": "left", "padding": "8px"},
+                style_header={
+                    "backgroundColor": "#f8f9fa",
+                    "fontWeight": "bold",
+                },
+                style_data_conditional=[
+                    {
+                        "if": {
+                            "filter_query": '{Status} = "FAILED"',
+                            "column_id": "Status",
+                        },
+                        "color": "#dc3545",
+                        "fontWeight": "bold",
+                    },
+                    {
+                        "if": {
+                            "filter_query": '{Status} = "SUCCESS"',
+                            "column_id": "Status",
+                        },
+                        "color": "#198754",
+                    },
+                    {
+                        "if": {
+                            "filter_query": '{Status} = "INTERNAL_ERROR"',
+                            "column_id": "Status",
+                        },
+                        "color": "#dc3545",
+                        "fontWeight": "bold",
+                    },
+                ],
+                page_size=50,
+            ),
+        ]
+    )
+
+
+def _page_job_detail(
+    job_name: str,
+    overviews: list[JobOverview],
+    runs: list[RunInfo],
+    coverages: dict[str, BackfillCoverage],
+    profile: str | None,
+) -> Any:
+    """Build the Job Detail page — run history, task DAG, backfill coverage."""
+    import dash_bootstrap_components as dbc
+    from dash import dcc, html
+
+    overview = next((o for o in overviews if o.job_name == job_name), None)
+    if overview is None:
+        return dbc.Alert(f"Job '{job_name}' not found.", color="warning")
+
+    # Header
+    state = overview.last_run_state or "UNKNOWN"
+    header = html.Div(
+        [
+            html.H4(
+                [
+                    job_name,
+                    html.Span(" "),
+                    _state_badge(state),
+                ],
+                className="mb-1",
+            ),
+            html.P(
+                [
+                    html.Span(
+                        f"{overview.total_runs} runs  \u00b7  "
+                        f"{overview.successes} passed  \u00b7  "
+                        f"{overview.failures} failed",
+                        className="text-muted",
+                    ),
+                ],
+            ),
+        ],
+        className="mb-4",
+    )
+
+    # Run history table
+    run_records = _runs_to_records(runs)
+    from dash import dash_table
+
+    run_table = (
+        dash_table.DataTable(
+            data=run_records,  # type: ignore[invalid-argument-type]
+            columns=[{"name": k, "id": k} for k in run_records[0]]
+            if run_records
+            else [],
+            sort_action="native",
+            style_table={"overflowX": "auto"},
+            style_cell={"textAlign": "left", "padding": "8px"},
+            style_header={"backgroundColor": "#f8f9fa", "fontWeight": "bold"},
+            style_data_conditional=[
+                {
+                    "if": {
+                        "filter_query": '{Status} = "FAILED"',
+                        "column_id": "Status",
+                    },
+                    "color": "#dc3545",
+                    "fontWeight": "bold",
+                },
+                {
+                    "if": {
+                        "filter_query": '{Status} = "SUCCESS"',
+                        "column_id": "Status",
+                    },
+                    "color": "#198754",
+                },
+            ],
+            page_size=25,
+        )
+        if run_records
+        else html.P("No runs found.", className="text-muted")
+    )
+
+    # Error messages from recent failures
+    error_alerts: list[Any] = []
     errored = [
         r
         for r in runs
         if _is_terminal_failure(r.result_state, r.life_cycle_state) and r.state_message
     ]
-    if errored:
-        latest = errored[0]
-        st.error(
-            f"**Run {latest.run_id}** "
-            f"({_effective_state(latest.result_state, latest.life_cycle_state)}): "
-            f"{latest.state_message}"
+    for r in errored[:3]:
+        error_alerts.append(
+            dbc.Alert(
+                f"Run {r.run_id} "
+                f"({_effective_state(r.result_state, r.life_cycle_state)}): "
+                f"{r.state_message}",
+                color="danger",
+                className="mb-2",
+            )
         )
 
-    # --- Task details for selected run ---
-    overview = next((o for o in overviews if o.job_name == selected), None)
-    if not overview or not overview.job_id:
-        return
+    # Task DAG from most recent run
+    dag_section: list[Any] = []
+    if runs and overview.job_id:
+        latest_run = runs[0]
+        task_runs = fetch_task_runs(latest_run.run_id, profile=profile)
+        if task_runs:
+            dag_fig = _build_task_dag_figure(task_runs)
+            if dag_fig is not None:
+                dag_section.append(
+                    html.H5("Task DAG (latest run)", className="mt-4 mb-3")
+                )
+                dag_section.append(dcc.Graph(figure=dag_fig))
 
-    run_ids = [r.run_id for r in runs]
-    selected_run_id = st.selectbox("Inspect run", run_ids, key="rh_run_detail")
-    if selected_run_id is None:
-        return
+            task_records = _tasks_to_records(task_runs)
+            if task_records:
+                dag_section.append(html.H5("Task Breakdown", className="mt-3 mb-2"))
+                dag_section.append(
+                    dash_table.DataTable(
+                        data=task_records,  # type: ignore[invalid-argument-type]
+                        columns=[{"name": k, "id": k} for k in task_records[0]],
+                        style_table={"overflowX": "auto"},
+                        style_cell={"textAlign": "left", "padding": "8px"},
+                        style_header={
+                            "backgroundColor": "#f8f9fa",
+                            "fontWeight": "bold",
+                        },
+                        style_data_conditional=[
+                            {
+                                "if": {
+                                    "filter_query": '{Status} = "FAILED"',
+                                    "column_id": "Status",
+                                },
+                                "color": "#dc3545",
+                                "fontWeight": "bold",
+                            },
+                            {
+                                "if": {
+                                    "filter_query": '{Status} = "SUCCESS"',
+                                    "column_id": "Status",
+                                },
+                                "color": "#198754",
+                            },
+                        ],
+                        page_size=50,
+                    )
+                )
 
-    with st.spinner("Fetching task details\u2026"):
-        try:
-            task_runs = fetch_task_runs(selected_run_id, profile=profile)
-        except Exception as exc:  # noqa: BLE001
-            st.error(f"Failed to fetch task details: {exc}")
-            return
-
-    if not task_runs:
-        st.info("No task data for this run.")
-        return
-
-    dag_fig = _build_task_dag_figure(task_runs)
-    if dag_fig is not None:
-        st.plotly_chart(dag_fig, width="stretch")
-
-    task_rows = []
-    for t in task_runs:
-        row: dict[str, object] = {
-            "Task": t.task_key,
-            "Status": _effective_state(t.result_state, t.life_cycle_state),
-            "Duration (s)": t.duration_seconds or "\u2014",
-        }
-        if t.state_message:
-            row["Error"] = t.state_message
-        task_rows.append(row)
-    st.dataframe(task_rows, width="stretch", hide_index=True)
-
-
-def _render_backfill(
-    coverages: dict[str, BackfillCoverage],
-) -> None:
-    import streamlit as st
-
-    st.caption(
-        "Expected keys from BackfillDef vs successful runs "
-        "with matching backfill_key parameter.  "
-        "For exact key-level catchup, use: dbxdec catchup"
-    )
-
-    # Summary table
-    rows = [
-        {
-            "Job": c.job_name,
-            "Type": c.kind.title(),
-            "Expected": len(c.expected_keys),
-            "Completed": len(c.completed_keys),
-            "Missing": len(c.missing_keys),
-            "Coverage": f"{c.coverage_pct}%",
-        }
-        for c in sorted(coverages.values(), key=lambda c: c.coverage_pct)
-    ]
-    st.dataframe(rows, width="stretch", hide_index=True)
-
-    # Per-job visualizations
-    _FIGURE_BUILDERS = {
-        "daily": (
-            "calendar",
-            lambda c: _build_daily_calendar(
-                set(c.expected_keys), set(c.completed_keys)
-            ),
-        ),
-        "weekly": (
-            "week calendar",
-            lambda c: _build_weekly_calendar(
-                set(c.expected_keys), set(c.completed_keys)
-            ),
-        ),
-        "monthly": (
-            "month calendar",
-            lambda c: _build_monthly_calendar(
-                set(c.expected_keys), set(c.completed_keys)
-            ),
-        ),
-        "hourly": (
-            "hour calendar",
-            lambda c: _build_hourly_calendar(
-                set(c.expected_keys), set(c.completed_keys)
-            ),
-        ),
-    }
-
-    for name, cov in sorted(coverages.items()):
+    # Backfill coverage for this job
+    backfill_section: list[Any] = []
+    cov = coverages.get(job_name)
+    if cov:
+        backfill_section.append(html.H5("Backfill Coverage", className="mt-4 mb-3"))
+        backfill_section.append(
+            html.P(
+                f"{cov.coverage_pct}% coverage "
+                f"({len(cov.completed_keys)}/{len(cov.expected_keys)} keys)",
+                className="text-muted",
+            )
+        )
         builder = _FIGURE_BUILDERS.get(cov.kind)
         if builder:
-            label, build_fn = builder
-            with st.expander(f"{name} \u2014 {cov.coverage_pct}% coverage ({label})"):
-                fig = build_fn(cov)
-                if fig is not None:
-                    st.plotly_chart(fig, width="stretch")
-                if cov.missing_keys:
-                    st.markdown(f"**{len(cov.missing_keys)} not launched:**")
-                    st.code("\n".join(cov.missing_keys))
+            _, build_fn = builder
+            fig = build_fn(cov)
+            if fig is not None:
+                backfill_section.append(dcc.Graph(figure=fig))
         else:
-            with st.expander(
-                f"{name} \u2014 {cov.coverage_pct}% coverage (partition grid)"
-            ):
-                fig = _build_partition_grid(cov.expected_keys, set(cov.completed_keys))
-                if fig is not None:
-                    st.plotly_chart(fig, width="stretch")
-                if cov.missing_keys:
-                    st.markdown(f"**{len(cov.missing_keys)} not launched:**")
-                    st.code("\n".join(cov.missing_keys))
+            fig = _build_partition_grid(cov.expected_keys, set(cov.completed_keys))
+            if fig is not None:
+                backfill_section.append(dcc.Graph(figure=fig))
+        if cov.missing_keys:
+            backfill_section.append(
+                html.Details(
+                    [
+                        html.Summary(
+                            f"{len(cov.missing_keys)} keys not launched",
+                            className="text-warning mb-2",
+                        ),
+                        html.Pre(
+                            "\n".join(cov.missing_keys),
+                            className="bg-light p-3 rounded",
+                        ),
+                    ]
+                )
+            )
+
+    return html.Div(
+        [
+            dbc.Button(
+                "\u2190 Back to Jobs",
+                href="/jobs",
+                color="link",
+                className="mb-2 ps-0",
+            ),
+            header,
+            *error_alerts,
+            html.H5("Run History", className="mb-3"),
+            run_table,
+            *dag_section,
+            *backfill_section,
+        ]
+    )
+
+
+def _page_backfills(coverages: dict[str, BackfillCoverage]) -> Any:
+    """Build the Backfills page — coverage summary + per-job visualizations."""
+    import dash_bootstrap_components as dbc
+    from dash import dcc, html
+
+    if not coverages:
+        return html.Div(
+            [
+                html.H4("Backfills", className="mb-3"),
+                dbc.Alert(
+                    "No jobs with backfill definitions found.",
+                    color="info",
+                ),
+            ]
+        )
+
+    # Summary table
+    cov_records = _coverages_to_records(coverages)
+    from dash import dash_table
+
+    summary_table = dash_table.DataTable(
+        data=cov_records,  # type: ignore[invalid-argument-type]
+        columns=[{"name": k, "id": k} for k in cov_records[0]],
+        sort_action="native",
+        style_table={"overflowX": "auto"},
+        style_cell={"textAlign": "left", "padding": "8px"},
+        style_header={"backgroundColor": "#f8f9fa", "fontWeight": "bold"},
+        page_size=20,
+    )
+
+    # Per-job detail sections
+    detail_sections: list[Any] = []
+    for name, cov in sorted(coverages.items()):
+        builder = _FIGURE_BUILDERS.get(cov.kind)
+        fig = None
+        label = "partition grid"
+        if builder:
+            label, build_fn = builder
+            fig = build_fn(cov)
+        else:
+            fig = _build_partition_grid(cov.expected_keys, set(cov.completed_keys))
+
+        content: list[Any] = [
+            html.P(
+                f"{cov.coverage_pct}% coverage  \u00b7  "
+                f"{cov.kind.title()} backfill  \u00b7  "
+                f"{len(cov.completed_keys)}/{len(cov.expected_keys)} keys ({label})",
+                className="text-muted mb-2",
+            ),
+        ]
+        if fig is not None:
+            content.append(dcc.Graph(figure=fig))
+        if cov.missing_keys:
+            content.append(
+                html.Details(
+                    [
+                        html.Summary(
+                            f"{len(cov.missing_keys)} keys not launched",
+                            className="text-warning mb-2",
+                        ),
+                        html.Pre(
+                            "\n".join(cov.missing_keys),
+                            className="bg-light p-3 rounded",
+                        ),
+                    ]
+                )
+            )
+
+        detail_sections.append(
+            dbc.Card(
+                [
+                    dbc.CardHeader(html.H6(name, className="mb-0")),
+                    dbc.CardBody(content),
+                ],
+                className="mb-3",
+            )
+        )
+
+    return html.Div(
+        [
+            html.H4("Backfill Coverage", className="mb-3"),
+            html.P(
+                "Expected keys from BackfillDef vs successful runs "
+                "with matching backfill_key parameter. "
+                "For exact key-level catchup, use: dbxdec catchup",
+                className="text-muted",
+            ),
+            summary_table,
+            html.Div(detail_sections, className="mt-4"),
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1351,69 +1925,68 @@ def _render_backfill(
 # ---------------------------------------------------------------------------
 
 
-def run_app() -> None:
-    """Launch the Streamlit observability dashboard.
+def run_app(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8050,
+    debug: bool = False,
+) -> None:
+    """Launch the Dash observability dashboard.
 
     Import your pipeline package **before** calling this so the
     job registry is populated.  Requires the ``[observability]``
-    optional dependency (``streamlit``).
+    optional dependency (``dash``).
 
     The dashboard is **bundle-scoped** — only jobs deployed from
     the current bundle are shown.  It uses the Databricks CLI for
     data access, inheriting the same unified credentials used for
     ``databricks bundle deploy``.
+
+    Parameters
+    ----------
+    host:
+        Host to bind the server to.
+    port:
+        Port number.
+    debug:
+        Enable Dash debug mode with hot-reloading.
     """
     try:
-        import streamlit as st
+        import dash
+        import dash_bootstrap_components as dbc
     except ImportError as exc:
         raise ImportError(
-            "streamlit is required for the observability dashboard. "
+            "dash and dash-bootstrap-components are required for the "
+            "observability dashboard. "
             "Install with: uv add databricks-bundle-decorators[observability]"
         ) from exc
 
-    from databricks_bundle_decorators.registry import _JOB_REGISTRY
+    from dash import Input, Output, dcc, html
 
-    st.set_page_config(page_title="Pipeline Observability", layout="wide")
+    from databricks_bundle_decorators.registry import _JOB_REGISTRY
 
     job_names = sorted(_JOB_REGISTRY.keys())
     if not job_names:
-        st.error(
-            "No jobs found in registry. "
-            "Ensure your pipeline package is imported before run_app()."
+        print(
+            "Error: No jobs found in registry. "
+            "Ensure your pipeline package is imported before run_app().",
+            file=sys.stderr,
         )
-        return
+        sys.exit(1)
 
-    # --- Sidebar ---
-    st.sidebar.title("Pipeline Observability")
-    st.sidebar.markdown(f"**{len(job_names)}** registered jobs")
+    # --- Fetch data ---
+    _data: dict[str, Any] = {
+        "job_names": job_names,
+        "job_id_map": {},
+        "all_runs": {},
+        "overviews": [],
+        "coverages": {},
+    }
 
-    with st.sidebar.expander("Settings", expanded=False):
-        target = st.text_input("Bundle target", value="", help="e.g. dev, prod")
-        profile = st.text_input("CLI profile", value="", help="Databricks CLI profile")
+    def _refresh_data(target: str | None, profile: str | None) -> None:
+        job_id_map = resolve_job_ids(target=target, profile=profile)
+        _data["job_id_map"] = job_id_map
 
-    profile_val = profile or None
-    target_val = target or None
-
-    # --- Resolve job IDs & fetch data with caching + spinner ---
-    @st.cache_data(ttl=120, show_spinner=False)
-    def _cached_resolve(target: str | None, profile: str | None) -> dict[str, int]:
-        return resolve_job_ids(target=target, profile=profile)
-
-    @st.cache_data(ttl=60, show_spinner=False)
-    def _cached_job_runs(job_id: int, profile: str | None) -> list[RunInfo]:
-        return fetch_job_runs(job_id, profile=profile)
-
-    with st.spinner("Resolving bundle jobs\u2026"):
-        job_id_map = _cached_resolve(target_val, profile_val)
-
-    if not job_id_map:
-        st.warning(
-            "Could not resolve job IDs from bundle summary. "
-            "Ensure the bundle is deployed and you're running "
-            "from the project root."
-        )
-
-    with st.spinner("Fetching run data\u2026"):
         all_runs: dict[str, list[RunInfo]] = {}
         overviews: list[JobOverview] = []
         coverages: dict[str, BackfillCoverage] = {}
@@ -1421,7 +1994,7 @@ def run_app() -> None:
         for name in job_names:
             meta = _JOB_REGISTRY[name]
             job_id = job_id_map.get(name)
-            runs = _cached_job_runs(job_id, profile_val) if job_id else []
+            runs = fetch_job_runs(job_id, profile=profile) if job_id else []
             all_runs[name] = runs
 
             has_bf = meta.backfill is not None
@@ -1436,29 +2009,147 @@ def run_app() -> None:
                     name, runs, expected, kind=kind
                 )
 
-    # --- Tab navigation (persisted via query params) ---
-    tab_labels = ["Overview", "Run History"]
-    if coverages:
-        tab_labels.append("Backfill Coverage")
+        _data["all_runs"] = all_runs
+        _data["overviews"] = overviews
+        _data["coverages"] = coverages
 
-    params = st.query_params
-    saved_tab = params.get("tab", "Overview")
-    default_idx = tab_labels.index(saved_tab) if saved_tab in tab_labels else 0
+    # --- Build Dash app ---
+    app = dash.Dash(
+        __name__,
+        external_stylesheets=[dbc.themes.COSMO],
+        suppress_callback_exceptions=True,
+    )
+    app.title = "Pipeline Observability"
 
-    tabs = st.tabs(tab_labels)
+    navbar = dbc.Navbar(
+        dbc.Container(
+            [
+                dbc.NavbarBrand(
+                    [
+                        html.Span(
+                            "\u26a1",
+                            className="me-2",
+                        ),
+                        "Pipeline Observability",
+                    ],
+                    href="/",
+                    className="fw-bold",
+                ),
+                dbc.Nav(
+                    [
+                        dbc.NavItem(dbc.NavLink("Overview", href="/")),
+                        dbc.NavItem(dbc.NavLink("Jobs", href="/jobs")),
+                        dbc.NavItem(dbc.NavLink("Runs", href="/runs")),
+                        dbc.NavItem(dbc.NavLink("Backfills", href="/backfills")),
+                    ],
+                    navbar=True,
+                    className="me-auto",
+                ),
+                dbc.Nav(
+                    [
+                        dbc.NavItem(
+                            dbc.Input(
+                                id="input-target",
+                                placeholder="Target (e.g. dev)",
+                                size="sm",
+                                className="me-2",
+                                style={"width": "140px"},
+                            )
+                        ),
+                        dbc.NavItem(
+                            dbc.Input(
+                                id="input-profile",
+                                placeholder="CLI profile",
+                                size="sm",
+                                className="me-2",
+                                style={"width": "140px"},
+                            )
+                        ),
+                        dbc.NavItem(
+                            dbc.Button(
+                                "\u21bb Refresh",
+                                id="btn-refresh",
+                                color="outline-light",
+                                size="sm",
+                            )
+                        ),
+                    ],
+                    navbar=True,
+                ),
+            ],
+            fluid=True,
+        ),
+        color="dark",
+        dark=True,
+        className="mb-4",
+    )
 
-    with tabs[0]:
-        if default_idx == 0:
-            params["tab"] = "Overview"
-        _render_overview(overviews)
+    app.layout = html.Div(
+        [
+            dcc.Location(id="url", refresh=False),
+            navbar,
+            dbc.Container(
+                [
+                    dcc.Loading(
+                        id="page-loading",
+                        children=html.Div(id="page-content"),
+                        type="default",
+                    ),
+                ],
+                fluid=True,
+                className="pb-4",
+            ),
+        ]
+    )
 
-    with tabs[1]:
-        if default_idx == 1:
-            params["tab"] = "Run History"
-        _render_run_history(job_names, all_runs, overviews, profile_val)
+    # --- Callbacks ---
 
-    if coverages:
-        with tabs[2]:
-            if default_idx == 2:
-                params["tab"] = "Backfill Coverage"
-            _render_backfill(coverages)
+    @app.callback(
+        Output("page-content", "children"),
+        [
+            Input("url", "pathname"),
+            Input("btn-refresh", "n_clicks"),
+        ],
+        [
+            dash.State("input-target", "value"),
+            dash.State("input-profile", "value"),
+        ],
+    )
+    def _display_page(
+        pathname: str | None,
+        n_clicks: int | None,
+        target: str | None,
+        profile: str | None,
+    ) -> Any:
+        target_val = target if target else None
+        profile_val = profile if profile else None
+
+        _refresh_data(target_val, profile_val)
+
+        overviews = _data["overviews"]
+        all_runs = _data["all_runs"]
+        coverages = _data["coverages"]
+
+        if pathname is None or pathname == "/":
+            return _page_overview(overviews, coverages)
+
+        if pathname == "/jobs":
+            return _page_jobs(overviews)
+
+        if pathname.startswith("/jobs/"):
+            name = pathname[len("/jobs/") :]
+            runs = all_runs.get(name, [])
+            return _page_job_detail(name, overviews, runs, coverages, profile_val)
+
+        if pathname == "/runs":
+            return _page_runs(all_runs, job_names)
+
+        if pathname == "/backfills":
+            return _page_backfills(coverages)
+
+        return dbc.Alert(
+            f"Page not found: {pathname}",
+            color="warning",
+        )
+
+    app.run(host=host, port=port, debug=debug)

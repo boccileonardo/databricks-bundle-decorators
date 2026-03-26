@@ -33,8 +33,10 @@ optional-dependencies.gcp = [
   "gcsfs",
 ]
 optional-dependencies.observability = [
+  "dash>=2.14",
+  "dash-bootstrap-components>=1.5",
   "plotly>=5.18",
-  "streamlit>=1.30",
+  "polars",
 ]
 optional-dependencies.polars = [
   "polars",
@@ -48,6 +50,8 @@ scripts.dbxdec-run = "databricks_bundle_decorators.runtime:main"
 
 [dependency-groups]
 dev = [
+  "dash>=2.14",
+  "dash-bootstrap-components>=1.5",
   "databricks-bundle-decorators",
   "delta-spark>=3.2,<4",
   "deltalake",
@@ -60,7 +64,6 @@ dev = [
   "pytest>=9.0.2",
   "pytest-cov>=6",
   "ruff>=0.15.1",
-  "streamlit>=1.30",
   "ty>=0.0.17",
   "vulture>=2.14",
 ]

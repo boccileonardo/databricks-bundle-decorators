@@ -1007,7 +1007,7 @@ class TestDashboardCmd:
     def _write_pyproject(self, path: Path) -> None:
         (path / "pyproject.toml").write_text('[project]\nname = "my-pipeline"\n')
 
-    def test_exits_when_streamlit_not_installed(
+    def test_exits_when_dash_not_installed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         monkeypatch.chdir(tmp_path)
@@ -1017,12 +1017,12 @@ class TestDashboardCmd:
 
         orig_import = importlib.import_module
 
-        def _block_streamlit(name: str) -> object:
-            if name == "streamlit":
-                raise ImportError("no streamlit")
+        def _block_dash(name: str) -> object:
+            if name == "dash":
+                raise ImportError("no dash")
             return orig_import(name)
 
-        monkeypatch.setattr("importlib.import_module", _block_streamlit)
+        monkeypatch.setattr("importlib.import_module", _block_dash)
 
         with pytest.raises(SystemExit, match="1"):
             dashboard()
@@ -1069,7 +1069,7 @@ class TestDashboardCmd:
 
         assert app_file.read_text() == "# custom\n"
 
-    def test_launches_streamlit_via_sys_executable(
+    def test_launches_dash_via_sys_executable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         monkeypatch.chdir(tmp_path)
@@ -1085,5 +1085,5 @@ class TestDashboardCmd:
             dashboard()
 
         assert len(calls) == 1
-        assert calls[0][:4] == [sys.executable, "-m", "streamlit", "run"]
-        assert "observability/app.py" in calls[0][4]
+        assert calls[0][0] == sys.executable
+        assert "observability/app.py" in calls[0][1]
