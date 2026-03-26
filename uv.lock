@@ -640,7 +640,7 @@ wheels = [
 
 [[package]]
 name = "databricks-bundle-decorators"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "databricks-bundles" },
@@ -705,7 +705,7 @@ docs = [
 requires-dist = [
     { name = "adlfs", marker = "extra == 'azure'" },
     { name = "dash", marker = "extra == 'observability'", specifier = ">=2.14" },
-    { name = "dash-ag-grid", marker = "extra == 'observability'", specifier = ">=31.0" },
+    { name = "dash-ag-grid", marker = "extra == 'observability'", specifier = ">=31" },
     { name = "dash-bootstrap-components", marker = "extra == 'observability'", specifier = ">=1.5" },
     { name = "databricks-bundles", specifier = ">=0.275" },
     { name = "deltalake", marker = "extra == 'polars-delta'" },
@@ -726,7 +726,7 @@ provides-extras = ["aws", "azure", "gcp", "observability", "polars", "polars-del
 [package.metadata.requires-dev]
 dev = [
     { name = "dash", specifier = ">=2.14" },
-    { name = "dash-ag-grid", specifier = ">=31.0" },
+    { name = "dash-ag-grid", specifier = ">=31" },
     { name = "dash-bootstrap-components", specifier = ">=1.5" },
     { name = "databricks-bundle-decorators", editable = "." },
     { name = "delta-spark", specifier = ">=3.2,<4" },
