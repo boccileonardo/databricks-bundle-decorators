@@ -23,20 +23,15 @@ from databricks_bundle_decorators.dashboard._figures import (
     _build_partition_grid,
     _build_weekly_calendar,
 )
-from databricks_bundle_decorators.dashboard._polars_helpers import (
+from databricks_bundle_decorators.dashboard._display import (
     _coverages_to_records,
+    _fmt_duration,
     _overviews_to_records,
-)
-from databricks_bundle_decorators.dashboard._polars_helpers import (
-    _fmt_duration as _fmt_duration_compat,
 )
 
 # ---------------------------------------------------------------------------
 # KPI card helper
 # ---------------------------------------------------------------------------
-
-# _fmt_duration is now in _polars_helpers.py; re-export for API compat
-_fmt_duration = _fmt_duration_compat
 
 
 def _kpi_card(title: str, value: str | int, color: str = "primary") -> Any:
@@ -163,14 +158,6 @@ def _backfill_date_bounds(
     else:
         init_start = min_d
     return min_d, max_d, init_start, init_end
-
-
-# Keep old name available for backwards compat / existing tests
-def _hourly_date_bounds(
-    expected_keys: list[str],
-) -> tuple[date | None, date | None, date | None, date | None]:
-    """Derive date bounds from hourly keys.  Delegates to `_backfill_date_bounds`."""
-    return _backfill_date_bounds("hourly", expected_keys)
 
 
 # ---------------------------------------------------------------------------

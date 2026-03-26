@@ -14,20 +14,6 @@ from databricks_bundle_decorators.dashboard import (
     BackfillCoverage,
     JobOverview,
     RunInfo,
-    _backfill_date_bounds,
-    _backfill_kind,
-    _build_daily_calendar,
-    _build_hourly_calendar,
-    _build_monthly_calendar,
-    _build_partition_grid,
-    _build_weekly_calendar,
-    _coverages_to_records,
-    _effective_state,
-    _filter_past_keys,
-    _fmt_duration,
-    _hourly_date_bounds,
-    _is_terminal_failure,
-    _overviews_to_records,
     build_job_overview,
     compute_backfill_coverage,
     fetch_job_runs,
@@ -35,6 +21,25 @@ from databricks_bundle_decorators.dashboard import (
     resolve_job_ids,
     resolve_workspace_url,
 )
+from databricks_bundle_decorators.dashboard._compute import (
+    _backfill_kind,
+    _effective_state,
+    _filter_past_keys,
+    _is_terminal_failure,
+)
+from databricks_bundle_decorators.dashboard._display import (
+    _coverages_to_records,
+    _fmt_duration,
+    _overviews_to_records,
+)
+from databricks_bundle_decorators.dashboard._figures import (
+    _build_daily_calendar,
+    _build_hourly_calendar,
+    _build_monthly_calendar,
+    _build_partition_grid,
+    _build_weekly_calendar,
+)
+from databricks_bundle_decorators.dashboard._pages import _backfill_date_bounds
 
 
 def _flatten_z(fig: object) -> list[int]:
@@ -1164,47 +1169,6 @@ class TestBuildHourlyCalendar:
 
 
 # ---------------------------------------------------------------------------
-# _hourly_date_bounds
-# ---------------------------------------------------------------------------
-
-
-class TestHourlyDateBounds:
-    def test_empty_keys(self) -> None:
-        assert _hourly_date_bounds([]) == (None, None, None, None)
-
-    def test_invalid_keys(self) -> None:
-        assert _hourly_date_bounds(["bad"]) == (None, None, None, None)
-
-    def test_single_day(self) -> None:
-        from datetime import date
-
-        min_d, max_d, start, end = _hourly_date_bounds(["2024-01-15T10"])
-        assert min_d == date(2024, 1, 15)
-        assert max_d == date(2024, 1, 15)
-        assert start == min_d
-        assert end == max_d
-
-    def test_small_range_no_clip(self) -> None:
-        from datetime import date
-
-        keys = [f"2024-01-{d:02d}T10" for d in range(1, 10)]
-        min_d, max_d, start, end = _hourly_date_bounds(keys)
-        assert min_d == date(2024, 1, 1)
-        assert max_d == date(2024, 1, 9)
-        assert start == min_d  # no clipping
-
-    def test_large_range_clips_to_last_7(self) -> None:
-        from datetime import date
-
-        keys = [f"2024-01-{d:02d}T10" for d in range(1, 31)]
-        min_d, max_d, start, end = _hourly_date_bounds(keys)
-        assert min_d == date(2024, 1, 1)
-        assert max_d == date(2024, 1, 30)
-        assert start == date(2024, 1, 23)  # max_d - 7 days
-        assert end == max_d
-
-
-# ---------------------------------------------------------------------------
 # _backfill_date_bounds
 # ---------------------------------------------------------------------------
 
@@ -1238,6 +1202,40 @@ class TestBackfillDateBounds:
         assert min_d == date(2024, 1, 1)
         assert max_d == date(2024, 12, 1)
         assert start == min_d
+
+    def test_hourly_empty_keys(self) -> None:
+        assert _backfill_date_bounds("hourly", []) == (None, None, None, None)
+
+    def test_hourly_invalid_keys(self) -> None:
+        assert _backfill_date_bounds("hourly", ["bad"]) == (None, None, None, None)
+
+    def test_hourly_single_day(self) -> None:
+        from datetime import date
+
+        min_d, max_d, start, end = _backfill_date_bounds("hourly", ["2024-01-15T10"])
+        assert min_d == date(2024, 1, 15)
+        assert max_d == date(2024, 1, 15)
+        assert start == min_d
+        assert end == max_d
+
+    def test_hourly_small_range_no_clip(self) -> None:
+        from datetime import date
+
+        keys = [f"2024-01-{d:02d}T10" for d in range(1, 10)]
+        min_d, max_d, start, end = _backfill_date_bounds("hourly", keys)
+        assert min_d == date(2024, 1, 1)
+        assert max_d == date(2024, 1, 9)
+        assert start == min_d  # no clipping
+
+    def test_hourly_large_range_clips_to_last_7(self) -> None:
+        from datetime import date
+
+        keys = [f"2024-01-{d:02d}T10" for d in range(1, 31)]
+        min_d, max_d, start, end = _backfill_date_bounds("hourly", keys)
+        assert min_d == date(2024, 1, 1)
+        assert max_d == date(2024, 1, 30)
+        assert start == date(2024, 1, 23)  # max_d - 7 days
+        assert end == max_d
 
     def test_hourly_bounds(self) -> None:
         from datetime import date

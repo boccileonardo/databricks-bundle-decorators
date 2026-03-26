@@ -1,4 +1,4 @@
-"""Polars data helpers — convert dataclasses to DataFrames for display."""
+"""Display helpers — convert dataclasses to table records for Dash AG Grid."""
 
 from __future__ import annotations
 

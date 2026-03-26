@@ -244,8 +244,7 @@ def run_app(
     # --- URL routing callback ---
 
     @app.callback(
-        Output("page-content", "children"),
-        Output("workspace-link", "children"),
+        [Output("page-content", "children"), Output("workspace-link", "children")],
         [
             Input("url", "pathname"),
             Input("btn-refresh", "n_clicks"),
