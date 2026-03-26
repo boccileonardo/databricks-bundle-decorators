@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from databricks_bundle_decorators.dashboard._data import (
+    COLOR_COMPLETED,
+    COLOR_FAILED,
+    COLOR_IN_PROGRESS,
+    COLOR_MISSING,
     BackfillCoverage,
     JobOverview,
 )
@@ -108,13 +112,15 @@ _SQ_STYLE = (
     "display:inline-block;width:14px;height:14px;border-radius:2px;margin-right:3px"
 )
 _SQ_COMPLETED = (
-    f'<span style="{_SQ_STYLE};background:#2fb380" title="Completed"></span>'
+    f'<span style="{_SQ_STYLE};background:{COLOR_COMPLETED}" title="Completed"></span>'
 )
-_SQ_IN_PROGRESS = (
-    f'<span style="{_SQ_STYLE};background:#3459e6" title="In progress"></span>'
+_SQ_IN_PROGRESS = f'<span style="{_SQ_STYLE};background:{COLOR_IN_PROGRESS}" title="In progress"></span>'
+_SQ_FAILED = (
+    f'<span style="{_SQ_STYLE};background:{COLOR_FAILED}" title="Failed"></span>'
 )
-_SQ_FAILED = f'<span style="{_SQ_STYLE};background:#e5484d" title="Failed"></span>'
-_SQ_MISSING = f'<span style="{_SQ_STYLE};background:#f2a20d" title="Missing"></span>'
+_SQ_MISSING = (
+    f'<span style="{_SQ_STYLE};background:{COLOR_MISSING}" title="Missing"></span>'
+)
 
 
 def _build_key_squares(cov: BackfillCoverage, max_squares: int) -> list[str]:
@@ -131,20 +137,21 @@ def _build_key_squares(cov: BackfillCoverage, max_squares: int) -> list[str]:
     errored_set = set(cov.errored_keys) if cov.errored_keys else set()
     in_progress_set = set(cov.in_progress_keys) if cov.in_progress_keys else set()
 
-    # Due keys = union of completed, missing, in-progress, errored (deduplicated).
-    # Errored keys are normally a subset of missing, but we include them
-    # explicitly for robustness.
-    seen: set[str] = set()
-    due_keys: list[str] = []
-    for k in (
-        cov.completed_keys
-        + cov.missing_keys
-        + list(in_progress_set)
-        + list(errored_set)
-    ):
-        if k not in seen:
-            seen.add(k)
-            due_keys.append(k)
+    # Use pre-computed due_keys when available; otherwise reconstruct.
+    if cov.due_keys is not None:
+        due_keys = cov.due_keys
+    else:
+        seen: set[str] = set()
+        due_keys = []
+        for k in (
+            cov.completed_keys
+            + cov.missing_keys
+            + list(in_progress_set)
+            + list(errored_set)
+        ):
+            if k not in seen:
+                seen.add(k)
+                due_keys.append(k)
 
     if cov.kind in _TIME_BASED_KINDS:
         # Chronological sort, take the most recent N

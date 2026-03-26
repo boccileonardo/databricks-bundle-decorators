@@ -15,6 +15,7 @@ from databricks_bundle_decorators.dashboard._compute import (
     compute_backfill_coverage,
 )
 from databricks_bundle_decorators.dashboard._data import (
+    COLOR_IN_PROGRESS,
     BackfillCoverage,
     JobOverview,
     RunInfo,
@@ -104,22 +105,32 @@ def run_app(
 
     bundle_targets = resolve_bundle_targets()
 
-    # --- Mutable data store ---
-    _data: dict[str, Any] = {
-        "job_names": job_names,
-        "job_id_map": {},
-        "all_runs": {},
-        "overviews": [],
-        "coverages": {},
-        "workspace_url": None,
-        "active_target": bundle_targets[0] if bundle_targets else None,
-    }
+    # --- Per-target data cache ---
+    # Each target gets its own slot so switching targets doesn't
+    # discard results already fetched.  Note: this is a
+    # process-level cache — concurrent browser sessions on the
+    # same target share the same data.
+    _cache: dict[str | None, dict[str, Any]] = {}
+
+    def _empty_slot() -> dict[str, Any]:
+        return {
+            "job_id_map": {},
+            "all_runs": {},
+            "overviews": [],
+            "coverages": {},
+            "workspace_url": None,
+        }
+
+    def _get_slot(target: str | None) -> dict[str, Any]:
+        if target not in _cache:
+            _cache[target] = _empty_slot()
+        return _cache[target]
 
     def _refresh_data(target: str | None) -> None:
+        slot = _get_slot(target)
         job_id_map = resolve_job_ids(target=target)
-        _data["job_id_map"] = job_id_map
-        _data["workspace_url"] = resolve_workspace_url()
-        _data["active_target"] = target
+        slot["job_id_map"] = job_id_map
+        slot["workspace_url"] = resolve_workspace_url()
 
         all_runs: dict[str, list[RunInfo]] = {}
         overviews: list[JobOverview] = []
@@ -144,9 +155,9 @@ def run_app(
                     name, runs, expected, kind=kind, tz=tz
                 )
 
-        _data["all_runs"] = all_runs
-        _data["overviews"] = overviews
-        _data["coverages"] = coverages
+        slot["all_runs"] = all_runs
+        slot["overviews"] = overviews
+        slot["coverages"] = coverages
 
     # --- Build Dash app ---
     app = dash.Dash(
@@ -234,7 +245,7 @@ def run_app(
                         id="page-loading",
                         children=html.Div(id="page-content"),
                         type="default",
-                        color="#3459e6",
+                        color=COLOR_IN_PROGRESS,
                     ),
                 ],
                 fluid=True,
@@ -258,16 +269,17 @@ def run_app(
         target: str | None,
     ) -> tuple[Any, Any]:
         target_val = target if target else None
+        slot = _get_slot(target_val)
 
         # Re-fetch when refresh is clicked, target changes, or first load.
         triggered = dash.ctx.triggered_id
-        if triggered in ("btn-refresh", "input-target") or not _data["overviews"]:
+        if triggered in ("btn-refresh", "input-target") or not slot["overviews"]:
             _refresh_data(target_val)
 
-        overviews = _data["overviews"]
-        coverages = _data["coverages"]
-        workspace_url = _data["workspace_url"]
-        job_id_map = _data["job_id_map"]
+        overviews = slot["overviews"]
+        coverages = slot["coverages"]
+        workspace_url = slot["workspace_url"]
+        job_id_map = slot["job_id_map"]
 
         # Workspace link for the navbar
         if workspace_url:
@@ -324,7 +336,12 @@ def run_app(
 
         if not job_name or not kind:
             return dash.no_update
-        cov = _data["coverages"].get(job_name)
+        # Find the coverage from whichever target slot has this job.
+        cov: BackfillCoverage | None = None
+        for s in _cache.values():
+            if job_name in s.get("coverages", {}):
+                cov = s["coverages"][job_name]
+                break
         if cov is None:
             return dash.no_update
         builder = _FIGURE_BUILDERS.get(kind)

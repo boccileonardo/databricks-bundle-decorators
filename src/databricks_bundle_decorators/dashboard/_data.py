@@ -7,6 +7,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# ---------------------------------------------------------------------------
+# Shared color palette — single source of truth for heatmaps,
+# status indicators, and legend entries.
+# ---------------------------------------------------------------------------
+
+COLOR_COMPLETED = "#2fb380"
+COLOR_FAILED = "#e5484d"
+COLOR_IN_PROGRESS = "#3459e6"
+COLOR_MISSING = "#f2a20d"
+COLOR_NOT_STARTED = "#d0e8ff"
+COLOR_NOT_IN_RANGE = "#f0f1f4"
+
 
 @dataclass(frozen=True)
 class RunInfo:
@@ -64,3 +76,6 @@ class BackfillCoverage:
     in_progress_keys: list[str] | None = None
     """Keys with an active (running/pending) run but no
     successful run yet."""
+    due_keys: list[str] | None = None
+    """Expected keys filtered to exclude future periods.
+    Populated by `compute_backfill_coverage`."""

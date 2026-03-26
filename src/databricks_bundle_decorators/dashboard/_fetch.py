@@ -89,7 +89,7 @@ def resolve_job_ids(
     if profile:
         cmd += ["--profile", profile]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         err = result.stderr.strip() or result.stdout.strip()
         print(
@@ -137,7 +137,7 @@ def fetch_job_runs(
     if profile:
         cmd += ["--profile", profile]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         return []
 
@@ -193,7 +193,7 @@ def resolve_workspace_url(
     if profile:
         cmd += ["--profile", profile]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         return None
 

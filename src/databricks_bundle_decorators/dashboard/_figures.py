@@ -16,6 +16,14 @@ from databricks_bundle_decorators.dashboard._compute import (
     _HOURLY_FMT,
     _WEEK_KEY_RE,
 )
+from databricks_bundle_decorators.dashboard._data import (
+    COLOR_COMPLETED,
+    COLOR_FAILED,
+    COLOR_IN_PROGRESS,
+    COLOR_MISSING,
+    COLOR_NOT_IN_RANGE,
+    COLOR_NOT_STARTED,
+)
 
 # ---------------------------------------------------------------------------
 # Coverage heatmap colorscale & legend
@@ -29,31 +37,46 @@ from databricks_bundle_decorators.dashboard._compute import (
 #: are 0, 0.2, 0.4, 0.6, 0.8, 1.  Boundaries sit at midpoints (0.1, 0.3,
 #: 0.5, 0.7, 0.9) so each z value falls squarely inside its colour band.
 _COVERAGE_COLORSCALE: list[list[object]] = [
-    [0.0, "#f0f1f4"],
-    [0.1, "#f0f1f4"],
-    [0.1, "#f2a20d"],
-    [0.3, "#f2a20d"],
-    [0.3, "#2fb380"],
-    [0.5, "#2fb380"],
-    [0.5, "#d0e8ff"],
-    [0.7, "#d0e8ff"],
-    [0.7, "#3459e6"],
-    [0.9, "#3459e6"],
-    [0.9, "#e5484d"],
-    [1.0, "#e5484d"],
+    [0.0, COLOR_NOT_IN_RANGE],
+    [0.1, COLOR_NOT_IN_RANGE],
+    [0.1, COLOR_MISSING],
+    [0.3, COLOR_MISSING],
+    [0.3, COLOR_COMPLETED],
+    [0.5, COLOR_COMPLETED],
+    [0.5, COLOR_NOT_STARTED],
+    [0.7, COLOR_NOT_STARTED],
+    [0.7, COLOR_IN_PROGRESS],
+    [0.9, COLOR_IN_PROGRESS],
+    [0.9, COLOR_FAILED],
+    [1.0, COLOR_FAILED],
+]
+
+#: Labels and colors for the full 6-state heatmap legend.
+_LEGEND_ITEMS: list[tuple[str, str]] = [
+    ("Completed", COLOR_COMPLETED),
+    ("In progress", COLOR_IN_PROGRESS),
+    ("Failed", COLOR_FAILED),
+    ("Missing", COLOR_MISSING),
+    ("Not started", COLOR_NOT_STARTED),
+    ("Not in range", COLOR_NOT_IN_RANGE),
 ]
 
 
-def _add_coverage_legend(fig: Any) -> None:
-    """Add a green/red/blue/gray legend to a coverage heatmap figure."""
-    for label, color in [
-        ("Completed", "#2fb380"),
-        ("In progress", "#3459e6"),
-        ("Failed", "#e5484d"),
-        ("Missing", "#f2a20d"),
-        ("Not started", "#d0e8ff"),
-        ("Not in range", "#f0f1f4"),
-    ]:
+def _add_coverage_legend(
+    fig: Any,
+    items: list[tuple[str, str]] | None = None,
+) -> None:
+    """Add a colored-square legend to a coverage heatmap figure.
+
+    Parameters
+    ----------
+    fig:
+        Plotly ``Figure`` to update.
+    items:
+        Optional (label, color) pairs.  Defaults to the full
+        6-state legend.
+    """
+    for label, color in items or _LEGEND_ITEMS:
         fig.add_trace(
             go.Scatter(
                 x=[None],
@@ -95,6 +118,36 @@ def _hover_completed(key: str, key_run_info: _KeyRunInfo | None) -> str:
             return f"{key}: Completed<br>Run {run_id} \u00b7 {ts}"
         return f"{key}: Completed<br>Run {run_id}"
     return f"{key}: Completed"
+
+
+#: Z-values for the 6-state heatmap (indices into ``_COVERAGE_COLORSCALE``).
+_Z_NOT_IN_RANGE = 0
+_Z_MISSING = 1
+_Z_COMPLETED = 2
+_Z_NOT_STARTED = 3
+_Z_IN_PROGRESS = 4
+_Z_FAILED = 5
+
+
+def _classify_cell(
+    key_str: str,
+    *,
+    is_completed: bool,
+    is_future: bool,
+    in_progress_keys: set[str],
+    errored_keys: set[str],
+    key_run_info: _KeyRunInfo | None,
+) -> tuple[int, str]:
+    """Return ``(z_value, hover_text)`` for a single heatmap cell."""
+    if is_completed:
+        return _Z_COMPLETED, _hover_completed(key_str, key_run_info)
+    if key_str in in_progress_keys:
+        return _Z_IN_PROGRESS, f"{key_str}: In progress"
+    if key_str in errored_keys:
+        return _Z_FAILED, f"{key_str}: Failed"
+    if is_future:
+        return _Z_NOT_STARTED, f"{key_str}: Not started"
+    return _Z_MISSING, f"{key_str}: Missing"
 
 
 # ---------------------------------------------------------------------------
@@ -176,21 +229,15 @@ def _build_daily_calendar(
             d = start.add(days=week_idx * 7 + dow)
             if d in expected_dates:
                 key_str = d.format_iso()
-                if d in completed_dates:
-                    z[dow][week_idx] = 2
-                    hover[dow][week_idx] = _hover_completed(key_str, key_run_info)
-                elif key_str in _ip:
-                    z[dow][week_idx] = 4
-                    hover[dow][week_idx] = f"{key_str}: In progress"
-                elif key_str in _err:
-                    z[dow][week_idx] = 5
-                    hover[dow][week_idx] = f"{key_str}: Failed"
-                elif d > today_wd:
-                    z[dow][week_idx] = 3
-                    hover[dow][week_idx] = f"{key_str}: Scheduled"
-                else:
-                    z[dow][week_idx] = 1
-                    hover[dow][week_idx] = f"{key_str}: Missing"
+                is_completed = d in completed_dates
+                z[dow][week_idx], hover[dow][week_idx] = _classify_cell(
+                    key_str,
+                    is_completed=is_completed,
+                    is_future=d > today_wd,
+                    in_progress_keys=_ip,
+                    errored_keys=_err,
+                    key_run_info=key_run_info,
+                )
             else:
                 hover[dow][week_idx] = d.format_iso()
 
@@ -320,21 +367,16 @@ def _build_weekly_calendar(
         for w in range(1, week_cols + 1):
             if (year, w) in expected:
                 key_str = expected[(year, w)]
-                if (year, w) in completed_parsed:
-                    row_z.append(2)
-                    row_h.append(_hover_completed(key_str, key_run_info))
-                elif key_str in _ip:
-                    row_z.append(4)
-                    row_h.append(f"{key_str}: In progress")
-                elif key_str in _err:
-                    row_z.append(5)
-                    row_h.append(f"{key_str}: Failed")
-                elif (year, w) > today_yw:
-                    row_z.append(3)
-                    row_h.append(f"{key_str}: Not started")
-                else:
-                    row_z.append(1)
-                    row_h.append(f"{key_str}: Missing")
+                z_val, h_val = _classify_cell(
+                    key_str,
+                    is_completed=(year, w) in completed_parsed,
+                    is_future=(year, w) > today_yw,
+                    in_progress_keys=_ip,
+                    errored_keys=_err,
+                    key_run_info=key_run_info,
+                )
+                row_z.append(z_val)
+                row_h.append(h_val)
             else:
                 row_z.append(0)
                 row_h.append(f"{year}-W{w:02d}")
@@ -443,21 +485,16 @@ def _build_monthly_calendar(
         for m in range(1, 13):
             if (year, m) in expected:
                 key_str = expected[(year, m)]
-                if (year, m) in completed_parsed:
-                    row_z.append(2)
-                    row_h.append(_hover_completed(key_str, key_run_info))
-                elif key_str in _ip:
-                    row_z.append(4)
-                    row_h.append(f"{key_str}: In progress")
-                elif key_str in _err:
-                    row_z.append(5)
-                    row_h.append(f"{key_str}: Failed")
-                elif (year, m) > today_ym:
-                    row_z.append(3)
-                    row_h.append(f"{key_str}: Not started")
-                else:
-                    row_z.append(1)
-                    row_h.append(f"{key_str}: Missing")
+                z_val, h_val = _classify_cell(
+                    key_str,
+                    is_completed=(year, m) in completed_parsed,
+                    is_future=(year, m) > today_ym,
+                    in_progress_keys=_ip,
+                    errored_keys=_err,
+                    key_run_info=key_run_info,
+                )
+                row_z.append(z_val)
+                row_h.append(h_val)
             else:
                 row_z.append(0)
                 row_h.append(f"{year}-{m:02d}")
@@ -555,24 +592,19 @@ def _build_hourly_calendar(
         for h in range(24):
             if (day, h) in expected:
                 key_str = expected[(day, h)]
-                if (day, h) in completed_parsed:
-                    row_z.append(2)
-                    row_h.append(_hover_completed(key_str, key_run_info))
-                elif key_str in _ip:
-                    row_z.append(4)
-                    row_h.append(f"{key_str}: In progress")
-                elif key_str in _err:
-                    row_z.append(5)
-                    row_h.append(f"{key_str}: Failed")
-                elif (
-                    whenever.ZonedDateTime(day.year, day.month, day.day, h, tz=tz)
-                    > now_zdt
-                ):
-                    row_z.append(3)
-                    row_h.append(f"{key_str}: Not started")
-                else:
-                    row_z.append(1)
-                    row_h.append(f"{key_str}: Missing")
+                z_val, h_val = _classify_cell(
+                    key_str,
+                    is_completed=(day, h) in completed_parsed,
+                    is_future=(
+                        whenever.ZonedDateTime(day.year, day.month, day.day, h, tz=tz)
+                        > now_zdt
+                    ),
+                    in_progress_keys=_ip,
+                    errored_keys=_err,
+                    key_run_info=key_run_info,
+                )
+                row_z.append(z_val)
+                row_h.append(h_val)
             else:
                 row_z.append(0)
                 row_h.append(f"{day.isoformat()}T{h:02d}")
@@ -626,12 +658,12 @@ def _build_partition_grid(
 
     def _cell_z(k: str) -> int:
         if k in completed_keys:
-            return 2
+            return _Z_COMPLETED
         if k in _ip:
-            return 4
+            return _Z_IN_PROGRESS
         if k in _err:
-            return 5
-        return 1
+            return _Z_FAILED
+        return _Z_MISSING
 
     def _cell_hover(k: str) -> str:
         if k in completed_keys:
@@ -673,22 +705,15 @@ def _build_partition_grid(
         xaxis=xaxis_opts,
     )
     # Static grid only has completed/in-progress/failed/missing
-    for label, color in [
-        ("Completed", "#2fb380"),
-        ("In progress", "#3459e6"),
-        ("Failed", "#e5484d"),
-        ("Missing", "#f2a20d"),
-    ]:
-        fig.add_trace(
-            go.Scatter(
-                x=[None],
-                y=[None],
-                mode="markers",
-                marker=dict(size=10, color=color, symbol="square"),
-                name=label,
-                showlegend=True,
-            )
-        )
+    _add_coverage_legend(
+        fig,
+        items=[
+            ("Completed", COLOR_COMPLETED),
+            ("In progress", COLOR_IN_PROGRESS),
+            ("Failed", COLOR_FAILED),
+            ("Missing", COLOR_MISSING),
+        ],
+    )
     fig.update_layout(
         legend=dict(
             orientation="h",

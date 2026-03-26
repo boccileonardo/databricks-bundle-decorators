@@ -248,7 +248,8 @@ class TestBuildJobOverview:
         assert o.successes == 2
         assert o.failures == 0
         assert o.avg_duration_seconds == 45.0
-        assert o.last_run_time_ms == 1000
+        # most_recent is the run with the highest start_time_ms
+        assert o.last_run_time_ms == 2000
         assert o.last_run_state == "SUCCESS"
         assert o.job_id == 42
 

@@ -6,7 +6,7 @@ No I/O — easy to test.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date
 from typing import Any
 
 import whenever
@@ -103,7 +103,8 @@ def build_job_overview(
     in_progress = sum(1 for r in runs if _is_active(r.result_state, r.life_cycle_state))
     durations = [r.duration_seconds for r in runs if r.duration_seconds is not None]
 
-    most_recent = runs[0]
+    # Most recent run by start_time_ms (not relying on API sort order).
+    most_recent = max(runs, key=lambda r: r.start_time_ms or 0)
 
     return JobOverview(
         job_name=job_name,
@@ -181,11 +182,6 @@ def _filter_past_keys(keys: list[str], kind: str, tz: str = "UTC") -> list[str]:
         cutoff_str = now_zdt.py_datetime().strftime(_HOURLY_FMT)
         result = []
         for k in keys:
-            try:
-                datetime.strptime(k, _HOURLY_FMT)  # validate format
-            except ValueError:
-                result.append(k)
-                continue
             if k <= cutoff_str:
                 result.append(k)
         return result
@@ -230,32 +226,24 @@ def compute_backfill_coverage(
     # Filter out future keys so they aren't counted as missing
     due_keys = _filter_past_keys(expected_keys, kind, tz=tz)
 
-    # Build mapping of key → most recent successful run (by start_time_ms)
+    # Single pass over runs to classify by backfill key.
     key_runs: dict[str, tuple[int, int | None]] = {}
+    errored: set[str] = set()
+    active: set[str] = set()
     for r in runs:
-        if r.result_state == "SUCCESS" and r.backfill_key is not None:
+        if r.backfill_key is None:
+            continue
+        if r.result_state == "SUCCESS":
             prev = key_runs.get(r.backfill_key)
             if prev is None or (r.start_time_ms or 0) > (prev[1] or 0):
                 key_runs[r.backfill_key] = (r.run_id, r.start_time_ms)
-
-    # Track keys that were attempted but only have failures
-    errored: set[str] = set()
-    for r in runs:
-        if r.backfill_key is not None and _is_terminal_failure(
-            r.result_state, r.life_cycle_state
-        ):
+        elif _is_terminal_failure(r.result_state, r.life_cycle_state):
             errored.add(r.backfill_key)
+        elif _is_active(r.result_state, r.life_cycle_state):
+            active.add(r.backfill_key)
+
     # Remove keys that also have a successful run
     errored -= set(key_runs)
-
-    # Track keys with an active (running/pending) run but no success yet
-    active: set[str] = set()
-    for r in runs:
-        if r.backfill_key is not None and _is_active(
-            r.result_state, r.life_cycle_state
-        ):
-            active.add(r.backfill_key)
-    # Remove keys that already have a successful run
     active -= set(key_runs)
 
     completed = set(key_runs)
@@ -278,6 +266,7 @@ def compute_backfill_coverage(
         completed_key_runs=due_key_runs,
         errored_keys=errored_list,
         in_progress_keys=in_progress_list,
+        due_keys=due_keys,
     )
 
 

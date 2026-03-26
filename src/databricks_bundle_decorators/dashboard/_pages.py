@@ -18,6 +18,9 @@ from databricks_bundle_decorators.dashboard._compute import (
     _WEEK_KEY_RE,
 )
 from databricks_bundle_decorators.dashboard._data import (
+    COLOR_COMPLETED,
+    COLOR_FAILED,
+    COLOR_IN_PROGRESS,
     BackfillCoverage,
     JobOverview,
 )
@@ -61,19 +64,19 @@ _STATUS_CELL_STYLE = {
     "styleConditions": [
         {
             "condition": "params.value == 'SUCCESS'",
-            "style": {"color": "#2fb380", "fontWeight": "bold"},
+            "style": {"color": COLOR_COMPLETED, "fontWeight": "bold"},
         },
         {
             "condition": "params.value == 'FAILED'",
-            "style": {"color": "#cf3257", "fontWeight": "bold"},
+            "style": {"color": COLOR_FAILED, "fontWeight": "bold"},
         },
         {
             "condition": "params.value == 'RUNNING'",
-            "style": {"color": "#3459e6", "fontWeight": "bold"},
+            "style": {"color": COLOR_IN_PROGRESS, "fontWeight": "bold"},
         },
         {
             "condition": "params.value == 'INTERNAL_ERROR'",
-            "style": {"color": "#cf3257", "fontWeight": "bold"},
+            "style": {"color": COLOR_FAILED, "fontWeight": "bold"},
         },
     ],
 }
@@ -103,9 +106,6 @@ _DATE_THRESHOLDS: dict[str, tuple[int, timedelta]] = {
     "monthly": (1460, timedelta(days=730)),  # ~24 months
     "hourly": (14, timedelta(days=7)),
 }
-
-#: Kinds that support date-range filtering via a DatePickerRange.
-_DATE_FILTERABLE_KINDS = frozenset(_DATE_THRESHOLDS)
 
 
 def _backfill_date_bounds(
@@ -329,7 +329,6 @@ def _page_backfills(
                 rowData=cov_records,
                 columnDefs=cov_cols,
                 defaultColDef=_default_col_def(),
-                dangerously_allow_code=True,
                 dashGridOptions={
                     "pagination": True,
                     "paginationPageSize": 25,
@@ -437,6 +436,13 @@ def _page_backfill_detail(
             backfill_section.append(dcc.Graph(figure=fig))
 
     if cov.missing_keys:
+        _MAX_MISSING_DISPLAY = 500
+        if len(cov.missing_keys) <= _MAX_MISSING_DISPLAY:
+            missing_text = "\n".join(cov.missing_keys)
+        else:
+            shown = cov.missing_keys[:_MAX_MISSING_DISPLAY]
+            remaining = len(cov.missing_keys) - _MAX_MISSING_DISPLAY
+            missing_text = "\n".join(shown) + f"\n\n… and {remaining} more"
         backfill_section.append(
             html.Details(
                 [
@@ -445,7 +451,7 @@ def _page_backfill_detail(
                         className="text-warning mb-2",
                     ),
                     html.Pre(
-                        "\n".join(cov.missing_keys),
+                        missing_text,
                         className="bg-light p-3 rounded",
                     ),
                 ]
