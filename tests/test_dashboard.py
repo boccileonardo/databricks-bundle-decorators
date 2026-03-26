@@ -1425,16 +1425,16 @@ class TestFmtDuration:
         assert _fmt_duration(0) == "0s"
 
     def test_minutes_and_seconds(self) -> None:
-        assert _fmt_duration(125) == "2:05"
+        assert _fmt_duration(125) == "2m 05s"
 
     def test_hours_minutes_seconds(self) -> None:
-        assert _fmt_duration(3661) == "1:01:01"
+        assert _fmt_duration(3661) == "1h 01m 01s"
 
     def test_exact_minute(self) -> None:
-        assert _fmt_duration(60) == "1:00"
+        assert _fmt_duration(60) == "1m 00s"
 
     def test_exact_hour(self) -> None:
-        assert _fmt_duration(3600) == "1:00:00"
+        assert _fmt_duration(3600) == "1h 00m 00s"
 
 
 # ---------------------------------------------------------------------------

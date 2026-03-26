@@ -69,15 +69,15 @@ def _state_badge(state: str) -> Any:
 
 
 def _fmt_duration(seconds: int | float) -> str:
-    """Format a duration as ``H:MM:SS``, ``M:SS``, or ``Ns``."""
+    """Format a duration as ``Hh MMm SSs``, ``Mm SSs``, or ``Ns``."""
     total = int(seconds)
     if total < 60:
         return f"{total}s"
     m, s = divmod(total, 60)
     if m < 60:
-        return f"{m}:{s:02d}"
+        return f"{m}m {s:02d}s"
     h, m = divmod(m, 60)
-    return f"{h}:{m:02d}:{s:02d}"
+    return f"{h}h {m:02d}m {s:02d}s"
 
 
 def _kpi_card(title: str, value: str | int, color: str = "primary") -> Any:
@@ -283,7 +283,7 @@ def _page_overview(
     kpi_row = dbc.Row(
         [
             dbc.Col(_kpi_card("Registered Jobs", total_jobs), md=2),
-            dbc.Col(_kpi_card("Deployed", deployed, "info"), md=2),
+            dbc.Col(_kpi_card("Deployed", deployed), md=2),
             dbc.Col(_kpi_card("Total Runs", total_runs), md=2),
             dbc.Col(_kpi_card("Success Rate", f"{success_rate}%", "success"), md=2),
             dbc.Col(_kpi_card("Failures", total_failures, "danger"), md=2),

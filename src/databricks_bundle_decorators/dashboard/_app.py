@@ -253,7 +253,11 @@ def run_app(
         target_val = target if target else None
         profile_val = profile if profile else None
 
-        _refresh_data(target_val, profile_val)
+        # Only re-fetch data when the refresh button is clicked,
+        # not on every page navigation.
+        triggered = dash.ctx.triggered_id
+        if triggered == "btn-refresh" or not _data["overviews"]:
+            _refresh_data(target_val, profile_val)
 
         overviews = _data["overviews"]
         all_runs = _data["all_runs"]
