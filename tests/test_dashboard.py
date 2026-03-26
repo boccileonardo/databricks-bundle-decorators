@@ -20,6 +20,7 @@ from databricks_bundle_decorators.dashboard import (
     _build_partition_grid,
     _build_task_dag_figure,
     _build_weekly_calendar,
+    _filter_past_keys,
     build_job_overview,
     compute_backfill_coverage,
     fetch_job_runs,
@@ -325,6 +326,59 @@ class TestComputeBackfillCoverage:
     def test_default_kind_is_static(self) -> None:
         cov = compute_backfill_coverage("j", [], ["k1"])
         assert cov.kind == "static"
+
+    def test_daily_future_keys_excluded(self) -> None:
+        """Daily keys in the future are not counted as missing."""
+        runs = [
+            RunInfo(1, "SUCCESS", 0, 0, 0, backfill_key="2024-01-01"),
+        ]
+        cov = compute_backfill_coverage(
+            "j", runs, ["2024-01-01", "2099-12-31"], kind="daily"
+        )
+        assert cov.coverage_pct == 100.0
+        assert cov.missing_keys == []
+        assert "2099-12-31" not in cov.missing_keys
+
+
+# ---------------------------------------------------------------------------
+# _filter_past_keys
+# ---------------------------------------------------------------------------
+
+
+class TestFilterPastKeys:
+    def test_static_returns_all(self) -> None:
+        keys = ["us", "eu", "jp"]
+        assert _filter_past_keys(keys, "static") == keys
+
+    def test_daily_excludes_future(self) -> None:
+        past = ["2024-01-01", "2024-06-15"]
+        future = ["2099-01-01", "2099-12-31"]
+        result = _filter_past_keys(past + future, "daily")
+        assert result == past
+
+    def test_daily_invalid_key_kept(self) -> None:
+        result = _filter_past_keys(["not-a-date", "2024-01-01"], "daily")
+        assert "not-a-date" in result
+        assert "2024-01-01" in result
+
+    def test_weekly_excludes_future(self) -> None:
+        result = _filter_past_keys(["2024-W01", "2099-W50"], "weekly")
+        assert "2024-W01" in result
+        assert "2099-W50" not in result
+
+    def test_monthly_excludes_future(self) -> None:
+        result = _filter_past_keys(["2024-01-01", "2099-12-01"], "monthly")
+        assert "2024-01-01" in result
+        assert "2099-12-01" not in result
+
+    def test_hourly_excludes_future(self) -> None:
+        result = _filter_past_keys(["2024-01-01T10", "2099-01-01T00"], "hourly")
+        assert "2024-01-01T10" in result
+        assert "2099-01-01T00" not in result
+
+    def test_unknown_kind_returns_all(self) -> None:
+        keys = ["a", "b"]
+        assert _filter_past_keys(keys, "unknown") == keys
 
 
 # ---------------------------------------------------------------------------

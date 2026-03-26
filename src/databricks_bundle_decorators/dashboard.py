@@ -330,6 +330,83 @@ def build_job_overview(
     )
 
 
+def _filter_past_keys(keys: list[str], kind: str) -> list[str]:
+    """Remove keys that represent future time periods.
+
+    For time-based backfills, keys representing periods that have
+    not yet completed are excluded.  Static backfills are returned
+    unchanged.
+    """
+    from datetime import datetime as _dt
+
+    today = whenever.ZonedDateTime.now("UTC").date()
+
+    if kind == "daily":
+        cutoff = today.subtract(days=1)  # yesterday is the last complete day
+        result: list[str] = []
+        for k in keys:
+            try:
+                d = whenever.Date.parse_iso(k)
+            except ValueError:
+                result.append(k)
+                continue
+            if d <= cutoff:
+                result.append(k)
+        return result
+
+    if kind == "weekly":
+        import re
+
+        week_re = re.compile(r"^(\d{4})-W(\d{2})$")
+        # Current ISO week: consider last week as the last complete one
+        cur_iso = today.py_date().isocalendar()
+        cutoff_year, cutoff_week = cur_iso[0], cur_iso[1] - 1
+        if cutoff_week < 1:
+            cutoff_year -= 1
+            cutoff_week = 52
+        result = []
+        for k in keys:
+            m = week_re.match(k)
+            if not m:
+                result.append(k)
+                continue
+            y, w = int(m.group(1)), int(m.group(2))
+            if (y, w) <= (cutoff_year, cutoff_week):
+                result.append(k)
+        return result
+
+    if kind == "monthly":
+        # Last complete month
+        first_of_month = today.py_date().replace(day=1)
+        result = []
+        for k in keys:
+            try:
+                d = date.fromisoformat(k)
+            except ValueError:
+                result.append(k)
+                continue
+            if d < first_of_month:
+                result.append(k)
+        return result
+
+    if kind == "hourly":
+        fmt = "%Y-%m-%dT%H"
+        now_utc = whenever.ZonedDateTime.now("UTC")
+        cutoff_str = now_utc.subtract(hours=1).py_datetime().strftime(fmt)
+        result = []
+        for k in keys:
+            try:
+                _dt.strptime(k, fmt)  # validate format
+            except ValueError:
+                result.append(k)
+                continue
+            if k <= cutoff_str:
+                result.append(k)
+        return result
+
+    return keys
+
+
 def compute_backfill_coverage(
     job_name: str,
     runs: list[RunInfo],
@@ -343,6 +420,9 @@ def compute_backfill_coverage(
     against the expected keys from the job's `BackfillDef`.  This
     gives **exact key-level matching** — unlike the approximate
     count-based approach that system tables would provide.
+
+    Future keys (time periods that have not completed yet) are
+    automatically excluded so they are not counted as missing.
 
     This is a pure function — no API calls.
 
@@ -358,19 +438,18 @@ def compute_backfill_coverage(
         Backfill type: ``"daily"``, ``"weekly"``, ``"monthly"``,
         ``"hourly"``, or ``"static"``.
     """
+    # Filter out future keys so they aren't counted as missing
+    due_keys = _filter_past_keys(expected_keys, kind)
+
     completed = {
         r.backfill_key
         for r in runs
         if r.result_state == "SUCCESS" and r.backfill_key is not None
     }
-    expected_set = set(expected_keys)
-    completed_list = sorted(expected_set & completed)
-    missing = sorted(expected_set - completed)
-    pct = (
-        round(len(completed_list) / len(expected_keys) * 100, 1)
-        if expected_keys
-        else 0.0
-    )
+    due_set = set(due_keys)
+    completed_list = sorted(due_set & completed)
+    missing = sorted(due_set - completed)
+    pct = round(len(completed_list) / len(due_keys) * 100, 1) if due_keys else 0.0
     return BackfillCoverage(
         job_name=job_name,
         expected_keys=expected_keys,
@@ -906,7 +985,9 @@ def _render_overview(overviews: list[JobOverview]) -> None:
                 "Rate": rate,
                 "Last Run": last_run,
                 "Status": o.last_run_state or "\u2014",
-                "Avg (s)": o.avg_duration_seconds or "\u2014",
+                "Avg (s)": str(o.avg_duration_seconds)
+                if o.avg_duration_seconds
+                else "\u2014",
                 "Backfill": "\u2713" if o.has_backfill else "",
             }
         )
