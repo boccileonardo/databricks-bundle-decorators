@@ -1,8 +1,11 @@
 # Observability Dashboard
 
-A Dash-based dashboard that shows job execution status, run history,
-task performance, and backfill coverage for all jobs deployed from the
-current bundle.
+A Dash-based dashboard that shows job KPIs and backfill coverage for
+all jobs deployed from the current bundle.
+
+For run history, task DAGs, and task-level details, the dashboard links
+directly to the Databricks workspace UI — avoiding duplicating native
+observability features.
 
 The dashboard is **bundle-scoped** — only jobs from *this* bundle are
 shown.  It uses the Databricks CLI for data access, inheriting the same
@@ -30,42 +33,33 @@ server at `http://127.0.0.1:8050`.
 
 ### Overview
 
-The landing page ("factory floor") provides:
+The landing page provides:
 
 - **KPI cards** — registered jobs, deployed count, total runs, success
   rate, failures, average duration.
-- **Job status grid** — one card per job showing latest state, run
-  counts, pass rate, deployment status, and backfill indicator.
+- **Job table** — all registered jobs with status, run counts, pass
+  rate, deployment status, and backfill indicator.  When the Databricks
+  workspace URL is available, job names link directly to the workspace
+  job page.
 - **Backfill summary table** — quick coverage overview for all
-  backfill-enabled jobs.
-
-### Jobs
-
-A sortable, filterable table of all registered jobs with columns for
-deployment status, run count, pass/fail, success rate, last run time,
-status, average duration, and backfill flag.
-
-### Runs
-
-All runs across all jobs in a single filterable table with run ID, job
-name, status, start time, duration, and backfill key.
-
-### Job Detail (`/jobs/<name>`)
-
-Drill-down view for a specific job:
-
-- Run history table with per-run details.
-- Error alerts for recent failures.
-- **Task DAG** visualisation from the latest run (topological layout
-  with colour-coded nodes by result state).
-- Task breakdown table.
-- Backfill coverage chart (if the job has a `BackfillDef`).
+  backfill-enabled jobs, with links to per-job backfill detail.
 
 ### Backfills
 
-Visual comparison of expected backfill keys (from `BackfillDef`)
-against successful runs.  Each backfill type gets a dedicated
-visualization:
+Summary table of backfill coverage across all jobs.  Click a job name
+to see the per-job coverage heatmap.
+
+### Backfill Detail (`/backfills/<name>`)
+
+Drill-down view for a specific job's backfill coverage:
+
+- Coverage percentage and key counts.
+- Link to the Databricks workspace job page (when available).
+- Backfill coverage chart with date-range picker for time-based
+  backfills.
+- Expandable list of missing (not-launched) keys.
+
+Each backfill type gets a dedicated visualization:
 
 | Backfill type | Visualization |
 |---------------|---------------|
@@ -79,9 +73,16 @@ Green = completed, amber = not launched, gray = not in range.
 
 ## Navigation
 
-The top navigation bar provides direct links to **Overview**, **Jobs**,
-**Runs**, and **Backfills** pages.  Target and CLI profile can be set
-inline in the navbar.  Click **Refresh** to re-fetch data.
+The top navigation bar provides direct links to **Overview** and
+**Backfills** pages.  Target and CLI profile can be set inline in
+the navbar.  Click **Refresh** to re-fetch data.
+
+## Workspace links
+
+When the Databricks CLI credentials are configured, job names in the
+overview table link directly to the workspace job page (e.g.
+`https://<workspace>/jobs/<job_id>`).  This lets you access run
+history, task DAGs, and task-level details in the native Databricks UI.
 
 ## Programmatic usage
 
@@ -91,6 +92,7 @@ The data functions can be used independently of the Dash UI:
 from databricks_bundle_decorators.dashboard import (
     fetch_job_runs,
     resolve_job_ids,
+    resolve_workspace_url,
     compute_backfill_coverage,
     build_job_overview,
 )

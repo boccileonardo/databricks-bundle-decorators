@@ -1,6 +1,6 @@
 """Plotly figure builders for the observability dashboard.
 
-Calendar heatmaps, task DAG, and partition grid visualisations.
+Calendar heatmaps and partition grid visualisations.
 """
 
 from __future__ import annotations
@@ -12,9 +12,6 @@ from typing import Any
 
 import plotly.graph_objects as go
 import whenever
-
-from databricks_bundle_decorators.dashboard._compute import _effective_state
-from databricks_bundle_decorators.dashboard._data import TaskRunInfo
 
 # ---------------------------------------------------------------------------
 # Coverage heatmap colorscale & legend
@@ -582,136 +579,5 @@ def _build_partition_grid(
         )
     fig.update_layout(
         legend=dict(orientation="h", yanchor="top", y=-0.3, xanchor="left", x=0),
-    )
-    return fig
-
-
-# ---------------------------------------------------------------------------
-# Task DAG figure
-# ---------------------------------------------------------------------------
-
-
-def _build_task_dag_figure(task_runs: list[TaskRunInfo]) -> Any:
-    """Build a Plotly figure showing the task DAG for a single run.
-
-    Renders a left-to-right layered graph using topological ordering.
-    Nodes are colored by result state.
-    """
-    if not task_runs:
-        return None
-
-    # Build adjacency and compute layers via topological sort
-    task_map = {t.task_key: t for t in task_runs}
-    children: dict[str, list[str]] = {t.task_key: [] for t in task_runs}
-    parents: dict[str, list[str]] = {t.task_key: list(t.depends_on) for t in task_runs}
-    for t in task_runs:
-        for dep in t.depends_on:
-            if dep in children:
-                children[dep].append(t.task_key)
-
-    # Assign layers (longest path from any root)
-    layers: dict[str, int] = {}
-    visited: set[str] = set()
-
-    def _assign_layer(key: str) -> int:
-        if key in layers:
-            return layers[key]
-        if key in visited:
-            return 0
-        visited.add(key)
-        if not parents[key]:
-            layers[key] = 0
-        else:
-            layers[key] = (
-                max(_assign_layer(p) for p in parents[key] if p in task_map) + 1
-            )
-        return layers[key]
-
-    for t in task_runs:
-        _assign_layer(t.task_key)
-
-    # Position nodes: x by layer, y spread within layer
-    max_layer = max(layers.values()) if layers else 0
-    layer_groups: dict[int, list[str]] = {}
-    for key, layer in layers.items():
-        layer_groups.setdefault(layer, []).append(key)
-
-    positions: dict[str, tuple[float, float]] = {}
-    for layer, keys in layer_groups.items():
-        x = layer / max(max_layer, 1)
-        for i, key in enumerate(sorted(keys)):
-            y = (i + 1) / (len(keys) + 1)
-            positions[key] = (x, y)
-
-    # Color map — aligned with Zephyr theme
-    _STATE_COLORS = {
-        "SUCCESS": "#2fb380",
-        "FAILED": "#cf3257",
-        "RUNNING": "#3459e6",
-        "PENDING": "#5b6b79",
-        "CANCELED": "#f2a20d",
-        "TIMED_OUT": "#f2a20d",
-        "INTERNAL_ERROR": "#cf3257",
-        "SKIPPED": "#5b6b79",
-    }
-
-    # Draw edges
-    edge_x: list[float | None] = []
-    edge_y: list[float | None] = []
-    for t in task_runs:
-        x1, y1 = positions[t.task_key]
-        for dep in t.depends_on:
-            if dep in positions:
-                x0, y0 = positions[dep]
-                edge_x.extend([x0, x1, None])
-                edge_y.extend([y0, y1, None])
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=edge_x,
-            y=edge_y,
-            mode="lines",
-            line=dict(width=1, color="#ced4da"),
-            hoverinfo="none",
-            showlegend=False,
-        )
-    )
-
-    # Draw nodes
-    node_x = [positions[t.task_key][0] for t in task_runs]
-    node_y = [positions[t.task_key][1] for t in task_runs]
-    node_colors = [
-        _STATE_COLORS.get(
-            _effective_state(t.result_state, t.life_cycle_state), "#5b6b79"
-        )
-        for t in task_runs
-    ]
-    node_text = [
-        f"{t.task_key}<br>{_effective_state(t.result_state, t.life_cycle_state)}<br>{t.duration_seconds or 0}s"
-        for t in task_runs
-    ]
-    node_labels = [t.task_key for t in task_runs]
-
-    fig.add_trace(
-        go.Scatter(
-            x=node_x,
-            y=node_y,
-            mode="markers+text",
-            marker=dict(size=24, color=node_colors, line=dict(width=1, color="white")),
-            text=node_labels,
-            textposition="top center",
-            hovertext=node_text,
-            hoverinfo="text",
-            showlegend=False,
-        )
-    )
-
-    fig.update_layout(
-        height=max(200, len(task_runs) * 40 + 80),
-        margin=dict(l=20, r=20, t=10, b=10),
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
-        plot_bgcolor="rgba(0,0,0,0)",
     )
     return fig

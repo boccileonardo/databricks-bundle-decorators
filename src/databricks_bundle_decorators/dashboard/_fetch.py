@@ -11,7 +11,7 @@ import subprocess
 import sys
 from typing import Any
 
-from databricks_bundle_decorators.dashboard._data import RunInfo, TaskRunInfo
+from databricks_bundle_decorators.dashboard._data import RunInfo
 
 
 def resolve_job_ids(
@@ -140,63 +140,33 @@ def fetch_job_runs(
     return runs
 
 
-def fetch_task_runs(
-    run_id: int,
+def resolve_workspace_url(
     *,
     profile: str | None = None,
-) -> list[TaskRunInfo]:
-    """Fetch task-level details for a specific job run via the CLI.
+) -> str | None:
+    """Resolve the Databricks workspace URL via the CLI.
 
-    Uses ``databricks jobs get-run`` with the same credential
-    handling as ``databricks bundle deploy``.
-
-    Parameters
-    ----------
-    run_id:
-        The job run ID to inspect.
-    profile:
-        Databricks CLI profile name.
+    Uses ``databricks auth describe`` to discover the workspace
+    host.  Returns ``None`` when the CLI is unavailable or the
+    command fails.
     """
-    cmd: list[str] = [
-        "databricks",
-        "jobs",
-        "get-run",
-        str(run_id),
-        "--output",
-        "json",
-    ]
+    if shutil.which("databricks") is None:
+        return None
+
+    cmd: list[str] = ["databricks", "auth", "describe", "--output", "json"]
     if profile:
         cmd += ["--profile", profile]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        return []
+        return None
 
-    run_data: dict[str, Any] = json.loads(result.stdout)
-    tasks: list[TaskRunInfo] = []
-    for task in run_data.get("tasks", []):
-        state = task.get("state", {})
-        result_state = state.get("result_state")
-        life_cycle_state = state.get("life_cycle_state")
-        state_message = state.get("state_message") or None
-        start_ms = task.get("start_time")
-        end_ms = task.get("end_time")
-        duration = None
-        if start_ms and end_ms:
-            duration = round((end_ms - start_ms) / 1000.0, 1)
-        deps = tuple(
-            d["task_key"] for d in task.get("depends_on", []) if "task_key" in d
-        )
-        tasks.append(
-            TaskRunInfo(
-                task_key=task["task_key"],
-                result_state=result_state,
-                start_time_ms=start_ms,
-                end_time_ms=end_ms,
-                duration_seconds=duration,
-                depends_on=deps,
-                life_cycle_state=life_cycle_state,
-                state_message=state_message,
-            )
-        )
-    return tasks
+    try:
+        data = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+    host = data.get("host")
+    if host and isinstance(host, str):
+        return host.rstrip("/")
+    return None

@@ -22,15 +22,13 @@ from databricks_bundle_decorators.dashboard._data import (
 from databricks_bundle_decorators.dashboard._fetch import (
     fetch_job_runs,
     resolve_job_ids,
+    resolve_workspace_url,
 )
 from databricks_bundle_decorators.dashboard._pages import (
     _FIGURE_BUILDERS,
+    _page_backfill_detail,
     _page_backfills,
-    _page_job_detail,
-    _page_jobs,
     _page_overview,
-    _page_run_detail,
-    _page_runs,
 )
 
 APP_TEMPLATE = '''\
@@ -109,11 +107,13 @@ def run_app(
         "all_runs": {},
         "overviews": [],
         "coverages": {},
+        "workspace_url": None,
     }
 
     def _refresh_data(target: str | None, profile: str | None) -> None:
         job_id_map = resolve_job_ids(target=target, profile=profile)
         _data["job_id_map"] = job_id_map
+        _data["workspace_url"] = resolve_workspace_url(profile=profile)
 
         all_runs: dict[str, list[RunInfo]] = {}
         overviews: list[JobOverview] = []
@@ -166,8 +166,6 @@ def run_app(
                 dbc.Nav(
                     [
                         dbc.NavItem(dbc.NavLink("Overview", href="/")),
-                        dbc.NavItem(dbc.NavLink("Jobs", href="/jobs")),
-                        dbc.NavItem(dbc.NavLink("Runs", href="/runs")),
                         dbc.NavItem(dbc.NavLink("Backfills", href="/backfills")),
                     ],
                     navbar=True,
@@ -260,36 +258,22 @@ def run_app(
             _refresh_data(target_val, profile_val)
 
         overviews = _data["overviews"]
-        all_runs = _data["all_runs"]
         coverages = _data["coverages"]
+        workspace_url = _data["workspace_url"]
+        job_id_map = _data["job_id_map"]
 
         if pathname is None or pathname == "/":
-            return _page_overview(overviews, coverages)
-
-        if pathname == "/jobs":
-            return _page_jobs(overviews)
-
-        if pathname.startswith("/jobs/"):
-            name = pathname[len("/jobs/") :]
-            runs = all_runs.get(name, [])
-            return _page_job_detail(name, overviews, runs, coverages, profile_val)
-
-        if pathname == "/runs":
-            return _page_runs(all_runs, job_names)
-
-        if pathname.startswith("/runs/"):
-            run_id_str = pathname[len("/runs/") :]
-            try:
-                run_id = int(run_id_str)
-            except ValueError:
-                return dbc.Alert(
-                    f"Invalid run ID: {run_id_str}",
-                    color="warning",
-                )
-            return _page_run_detail(run_id, all_runs, profile_val)
+            return _page_overview(overviews, coverages, workspace_url=workspace_url)
 
         if pathname == "/backfills":
             return _page_backfills(coverages)
+
+        if pathname.startswith("/backfills/"):
+            name = pathname[len("/backfills/") :]
+            job_id = job_id_map.get(name)
+            return _page_backfill_detail(
+                name, coverages, workspace_url=workspace_url, job_id=job_id
+            )
 
         return dbc.Alert(
             f"Page not found: {pathname}",

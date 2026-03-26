@@ -22,20 +22,6 @@ class RunInfo:
     state_message: str | None = None
 
 
-@dataclass(frozen=True)
-class TaskRunInfo:
-    """Summary of a single task run within a job run."""
-
-    task_key: str
-    result_state: str | None
-    start_time_ms: int | None
-    end_time_ms: int | None
-    duration_seconds: float | None
-    depends_on: tuple[str, ...] = ()
-    life_cycle_state: str | None = None
-    state_message: str | None = None
-
-
 @dataclass
 class JobOverview:
     """Aggregated stats for a job over recent runs."""

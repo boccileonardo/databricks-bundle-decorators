@@ -13,14 +13,12 @@ from databricks_bundle_decorators.dashboard import (
     BackfillCoverage,
     JobOverview,
     RunInfo,
-    TaskRunInfo,
     _backfill_date_bounds,
     _backfill_kind,
     _build_daily_calendar,
     _build_hourly_calendar,
     _build_monthly_calendar,
     _build_partition_grid,
-    _build_task_dag_figure,
     _build_weekly_calendar,
     _coverages_to_records,
     _effective_state,
@@ -29,13 +27,11 @@ from databricks_bundle_decorators.dashboard import (
     _hourly_date_bounds,
     _is_terminal_failure,
     _overviews_to_records,
-    _runs_to_records,
-    _tasks_to_records,
     build_job_overview,
     compute_backfill_coverage,
     fetch_job_runs,
-    fetch_task_runs,
     resolve_job_ids,
+    resolve_workspace_url,
 )
 
 
@@ -83,34 +79,6 @@ def _cli_run(
     }
 
 
-def _cli_task(
-    *,
-    task_key: str = "extract",
-    result_state: str | None = "SUCCESS",
-    life_cycle_state: str | None = None,
-    state_message: str | None = None,
-    start_time: int = 1_000_000,
-    end_time: int = 1_030_000,
-    depends_on: list[str] | None = None,
-) -> dict[str, Any]:
-    state: dict[str, Any] = {}
-    if result_state is not None:
-        state["result_state"] = result_state
-    if life_cycle_state is not None:
-        state["life_cycle_state"] = life_cycle_state
-    if state_message is not None:
-        state["state_message"] = state_message
-    task: dict[str, Any] = {
-        "task_key": task_key,
-        "state": state,
-        "start_time": start_time,
-        "end_time": end_time,
-    }
-    if depends_on is not None:
-        task["depends_on"] = [{"task_key": d} for d in depends_on]
-    return task
-
-
 def _mock_subprocess(
     stdout: str = "[]",
     returncode: int = 0,
@@ -154,40 +122,6 @@ class TestRunInfo:
             duration_seconds=None,
         )
         assert r.backfill_key is None
-
-
-class TestTaskRunInfo:
-    def test_frozen(self) -> None:
-        t = TaskRunInfo(
-            task_key="a",
-            result_state="SUCCESS",
-            start_time_ms=1000,
-            end_time_ms=2000,
-            duration_seconds=1.0,
-        )
-        with pytest.raises(AttributeError):
-            t.task_key = "b"  # type: ignore[misc]
-
-    def test_depends_on_default_empty(self) -> None:
-        t = TaskRunInfo(
-            task_key="a",
-            result_state="SUCCESS",
-            start_time_ms=1000,
-            end_time_ms=2000,
-            duration_seconds=1.0,
-        )
-        assert t.depends_on == ()
-
-    def test_depends_on_preserved(self) -> None:
-        t = TaskRunInfo(
-            task_key="b",
-            result_state="SUCCESS",
-            start_time_ms=1000,
-            end_time_ms=2000,
-            duration_seconds=1.0,
-            depends_on=("a",),
-        )
-        assert t.depends_on == ("a",)
 
 
 class TestBackfillCoverageKind:
@@ -631,128 +565,6 @@ class TestFetchJobRuns:
 
 
 # ---------------------------------------------------------------------------
-# fetch_task_runs (mocks subprocess — CLI-based)
-# ---------------------------------------------------------------------------
-
-
-class TestFetchTaskRuns:
-    def test_basic(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        run_json = json.dumps(
-            {"tasks": [_cli_task(task_key="extract", result_state="SUCCESS")]}
-        )
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=run_json),
-        )
-        tasks = fetch_task_runs(1)
-        assert len(tasks) == 1
-        assert tasks[0].task_key == "extract"
-        assert tasks[0].result_state == "SUCCESS"
-
-    def test_computes_duration(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        run_json = json.dumps(
-            {"tasks": [_cli_task(start_time=1_000_000, end_time=1_030_000)]}
-        )
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=run_json),
-        )
-        tasks = fetch_task_runs(1)
-        assert tasks[0].duration_seconds == 30.0
-
-    def test_empty_tasks(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        run_json = json.dumps({"tasks": []})
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=run_json),
-        )
-        tasks = fetch_task_runs(1)
-        assert tasks == []
-
-    def test_no_tasks_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        run_json = json.dumps({})
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=run_json),
-        )
-        tasks = fetch_task_runs(1)
-        assert tasks == []
-
-    def test_returns_empty_on_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(returncode=1, stderr="error"),
-        )
-        tasks = fetch_task_runs(1)
-        assert tasks == []
-
-    def test_passes_profile(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        captured_cmd: list[str] = []
-
-        def mock_run(cmd: list[str], **kw: Any) -> SimpleNamespace:
-            captured_cmd.extend(cmd)
-            return SimpleNamespace(
-                returncode=0, stdout=json.dumps({"tasks": []}), stderr=""
-            )
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            mock_run,
-        )
-        fetch_task_runs(99, profile="work")
-        assert "--profile" in captured_cmd
-        assert "work" in captured_cmd
-        assert "99" in captured_cmd
-
-    def test_parses_depends_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        run_json = json.dumps(
-            {
-                "tasks": [
-                    _cli_task(task_key="a"),
-                    _cli_task(task_key="b", depends_on=["a"]),
-                ]
-            }
-        )
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=run_json),
-        )
-        tasks = fetch_task_runs(1)
-        assert tasks[0].depends_on == ()
-        assert tasks[1].depends_on == ("a",)
-
-    def test_no_depends_on_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        run_json = json.dumps({"tasks": [_cli_task(task_key="solo")]})
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=run_json),
-        )
-        tasks = fetch_task_runs(1)
-        assert tasks[0].depends_on == ()
-
-    def test_parses_life_cycle_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        run_json = json.dumps(
-            {
-                "tasks": [
-                    _cli_task(
-                        task_key="t1",
-                        result_state=None,
-                        life_cycle_state="INTERNAL_ERROR",
-                        state_message="OOM killed",
-                    ),
-                ]
-            }
-        )
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=run_json),
-        )
-        tasks = fetch_task_runs(1)
-        assert tasks[0].life_cycle_state == "INTERNAL_ERROR"
-        assert tasks[0].state_message == "OOM killed"
-
-
-# ---------------------------------------------------------------------------
 # resolve_job_ids (mocks subprocess)
 # ---------------------------------------------------------------------------
 
@@ -842,6 +654,85 @@ class TestResolveJobIds:
 
 
 # ---------------------------------------------------------------------------
+# resolve_workspace_url (mocks subprocess)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveWorkspaceUrl:
+    def test_returns_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        auth_data = {"host": "https://my-workspace.databricks.com/"}
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
+            _mock_subprocess(stdout=json.dumps(auth_data)),
+        )
+        result = resolve_workspace_url()
+        assert result == "https://my-workspace.databricks.com"
+
+    def test_strips_trailing_slash(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        auth_data = {"host": "https://example.databricks.com///"}
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
+            _mock_subprocess(stdout=json.dumps(auth_data)),
+        )
+        result = resolve_workspace_url()
+        assert result == "https://example.databricks.com"
+
+    def test_returns_none_when_cli_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        assert resolve_workspace_url() is None
+
+    def test_returns_none_on_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
+            _mock_subprocess(returncode=1, stderr="error"),
+        )
+        assert resolve_workspace_url() is None
+
+    def test_returns_none_on_bad_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
+            _mock_subprocess(stdout="not json"),
+        )
+        assert resolve_workspace_url() is None
+
+    def test_returns_none_when_no_host_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
+            _mock_subprocess(stdout=json.dumps({"user": "test"})),
+        )
+        assert resolve_workspace_url() is None
+
+    def test_passes_profile(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured_cmd: list[str] = []
+
+        def mock_run(cmd: list[str], **kw: Any) -> SimpleNamespace:
+            captured_cmd.extend(cmd)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"host": "https://ws.databricks.com"}),
+                stderr="",
+            )
+
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
+            mock_run,
+        )
+        resolve_workspace_url(profile="work")
+        assert "--profile" in captured_cmd
+        assert "work" in captured_cmd
+
+
+# ---------------------------------------------------------------------------
 # _backfill_kind
 # ---------------------------------------------------------------------------
 
@@ -879,55 +770,6 @@ class TestBackfillKind:
 
     def test_unknown_returns_static(self) -> None:
         assert _backfill_kind("unknown") == "static"
-
-
-# ---------------------------------------------------------------------------
-# _build_task_dag_figure (Plotly figure)
-# ---------------------------------------------------------------------------
-
-
-class TestBuildTaskDagFigure:
-    def test_empty_returns_none(self) -> None:
-        assert _build_task_dag_figure([]) is None
-
-    def test_single_task(self) -> None:
-        tasks = [TaskRunInfo("a", "SUCCESS", 0, 1000, 1.0)]
-        fig = _build_task_dag_figure(tasks)
-        assert fig is not None
-        # Should have at least the node trace
-        assert len(fig.data) >= 1
-
-    def test_linear_dag(self) -> None:
-        tasks = [
-            TaskRunInfo("a", "SUCCESS", 0, 1000, 1.0),
-            TaskRunInfo("b", "SUCCESS", 1000, 2000, 1.0, depends_on=("a",)),
-            TaskRunInfo("c", "FAILED", 2000, 3000, 1.0, depends_on=("b",)),
-        ]
-        fig = _build_task_dag_figure(tasks)
-        assert fig is not None
-        # Edge trace + node trace
-        assert len(fig.data) >= 2
-
-    def test_node_labels_present(self) -> None:
-        tasks = [
-            TaskRunInfo("extract", "SUCCESS", 0, 1000, 1.0),
-            TaskRunInfo(
-                "transform", "RUNNING", 1000, None, None, depends_on=("extract",)
-            ),
-        ]
-        fig = _build_task_dag_figure(tasks)
-        node_trace = fig.data[-1]  # nodes are added last
-        assert "extract" in node_trace.text
-        assert "transform" in node_trace.text
-
-    def test_fan_out_dag(self) -> None:
-        tasks = [
-            TaskRunInfo("root", "SUCCESS", 0, 1000, 1.0),
-            TaskRunInfo("b1", "SUCCESS", 1000, 2000, 1.0, depends_on=("root",)),
-            TaskRunInfo("b2", "SUCCESS", 1000, 2000, 1.0, depends_on=("root",)),
-        ]
-        fig = _build_task_dag_figure(tasks)
-        assert fig is not None
 
 
 # ---------------------------------------------------------------------------
@@ -1496,37 +1338,25 @@ class TestOverviewsToRecords:
         assert r["Status"] == "\u2014"
         assert r["Avg Duration (s)"] == "\u2014"
 
+    def test_workspace_url_adds_links(self) -> None:
+        o = JobOverview(job_name="etl", job_id=42)
+        records = _overviews_to_records([o], workspace_url="https://ws.databricks.com")
+        assert records[0]["Job"] == "[etl](https://ws.databricks.com/jobs/42)"
 
-class TestRunsToRecords:
-    def test_empty(self) -> None:
-        assert _runs_to_records([]) == []
+    def test_workspace_url_skips_undeployed(self) -> None:
+        o = JobOverview(job_name="local", job_id=None)
+        records = _overviews_to_records([o], workspace_url="https://ws.databricks.com")
+        assert records[0]["Job"] == "local"
 
-    def test_basic(self) -> None:
-        runs = [
-            RunInfo(1, "SUCCESS", 1_700_000_000_000, 1_700_000_060_000, 60.0),
-        ]
-        records = _runs_to_records(runs)
-        assert len(records) == 1
-        assert records[0]["Run ID"] == 1
-        assert records[0]["Status"] == "SUCCESS"
+    def test_no_workspace_url_plain_text(self) -> None:
+        o = JobOverview(job_name="etl", job_id=42)
+        records = _overviews_to_records([o])
+        assert records[0]["Job"] == "etl"
 
-    def test_null_duration(self) -> None:
-        runs = [RunInfo(1, None, None, None, None)]
-        records = _runs_to_records(runs)
-        assert records[0]["Duration (s)"] == "\u2014"
-        assert records[0]["Start"] == "\u2014"
-
-
-class TestTasksToRecords:
-    def test_empty(self) -> None:
-        assert _tasks_to_records([]) == []
-
-    def test_basic(self) -> None:
-        tasks = [TaskRunInfo("a", "SUCCESS", 0, 1000, 1.0)]
-        records = _tasks_to_records(tasks)
-        assert len(records) == 1
-        assert records[0]["Task"] == "a"
-        assert records[0]["Status"] == "SUCCESS"
+    def test_job_id_column_not_in_output(self) -> None:
+        o = JobOverview(job_name="etl", job_id=42)
+        records = _overviews_to_records([o])
+        assert "Job ID" not in records[0]
 
 
 class TestCoveragesToRecords:
