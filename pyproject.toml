@@ -32,6 +32,10 @@ optional-dependencies.gcp = [
   "fsspec",
   "gcsfs",
 ]
+optional-dependencies.observability = [
+  "plotly>=5.18",
+  "streamlit>=1.30",
+]
 optional-dependencies.polars = [
   "polars",
 ]
@@ -47,6 +51,7 @@ dev = [
   "databricks-bundle-decorators",
   "delta-spark>=3.2,<4",
   "deltalake",
+  "plotly>=5.18",
   "polars",
   "prek>=0.3.3",
   "pyarrow>=23.0.1",
@@ -55,6 +60,7 @@ dev = [
   "pytest>=9.0.2",
   "pytest-cov>=6",
   "ruff>=0.15.1",
+  "streamlit>=1.30",
   "ty>=0.0.17",
   "vulture>=2.14",
 ]
