@@ -88,7 +88,7 @@ def run_app(
             "Install with: uv add databricks-bundle-decorators[observability]"
         ) from exc
 
-    from dash import Input, Output, dcc, html
+    from dash import Input, Output, State, dcc, html
 
     from databricks_bundle_decorators.registry import _JOB_REGISTRY
 
@@ -244,12 +244,11 @@ def run_app(
     # --- URL routing callback ---
 
     @app.callback(
-        [Output("page-content", "children"), Output("workspace-link", "children")],
-        [
-            Input("url", "pathname"),
-            Input("btn-refresh", "n_clicks"),
-            Input("input-target", "value"),
-        ],
+        Output("page-content", "children"),
+        Output("workspace-link", "children"),
+        Input("url", "pathname"),
+        Input("btn-refresh", "n_clicks"),
+        Input("input-target", "value"),
     )
     def _display_page(
         pathname: str | None,
@@ -307,14 +306,10 @@ def run_app(
 
     @app.callback(
         Output("bf-graph", "figure"),
-        [
-            Input("bf-date-range", "start_date"),
-            Input("bf-date-range", "end_date"),
-        ],
-        [
-            dash.State("bf-job-name", "data"),
-            dash.State("bf-kind", "data"),
-        ],
+        Input("bf-date-range", "start_date"),
+        Input("bf-date-range", "end_date"),
+        State("bf-job-name", "data"),
+        State("bf-kind", "data"),
         prevent_initial_call=True,
     )
     def _update_bf_calendar(

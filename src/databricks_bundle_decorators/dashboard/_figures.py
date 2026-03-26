@@ -18,15 +18,19 @@ import whenever
 # ---------------------------------------------------------------------------
 
 #: Discrete 4-state colorscale:
-#:   0=not-in-range, 1=missing (past), 2=completed, 3=scheduled (future).
+#:   0=not-in-range, 1=not launched (past), 2=completed, 3=scheduled (future).
+#:
+#: z values are integers 0–3 with zmin=0, zmax=3, so normalised positions
+#: are 0, 1/3, 2/3, 1.  Boundaries sit at the midpoints (1/6, 3/6, 5/6)
+#: so that each z value falls squarely inside its colour band.
 _COVERAGE_COLORSCALE: list[list[object]] = [
     [0.0, "#f0f1f4"],
     [1 / 6, "#f0f1f4"],
-    [1 / 6, "#cf3257"],
-    [2 / 6, "#cf3257"],
-    [2 / 6, "#2fb380"],
-    [4 / 6, "#2fb380"],
-    [4 / 6, "#d0e8ff"],
+    [1 / 6, "#f2a20d"],
+    [3 / 6, "#f2a20d"],
+    [3 / 6, "#2fb380"],
+    [5 / 6, "#2fb380"],
+    [5 / 6, "#d0e8ff"],
     [1.0, "#d0e8ff"],
 ]
 
@@ -35,7 +39,7 @@ def _add_coverage_legend(fig: Any) -> None:
     """Add a green/red/blue/gray legend to a coverage heatmap figure."""
     for label, color in [
         ("Completed", "#2fb380"),
-        ("Missing", "#cf3257"),
+        ("Not launched", "#f2a20d"),
         ("Scheduled", "#d0e8ff"),
         ("Not in range", "#f0f1f4"),
     ]:
@@ -157,7 +161,7 @@ def _build_daily_calendar(
                     hover[dow][week_idx] = f"{key_str}: Scheduled"
                 else:
                     z[dow][week_idx] = 1
-                    hover[dow][week_idx] = f"{key_str}: Missing"
+                    hover[dow][week_idx] = f"{key_str}: Not launched"
             else:
                 hover[dow][week_idx] = d.format_iso()
 
@@ -292,7 +296,7 @@ def _build_weekly_calendar(
                     row_h.append(f"{key_str}: Scheduled")
                 else:
                     row_z.append(1)
-                    row_h.append(f"{key_str}: Missing")
+                    row_h.append(f"{key_str}: Not launched")
             else:
                 row_z.append(0)
                 row_h.append(f"{year}-W{w:02d}")
@@ -404,7 +408,7 @@ def _build_monthly_calendar(
                     row_h.append(f"{key_str}: Scheduled")
                 else:
                     row_z.append(1)
-                    row_h.append(f"{key_str}: Missing")
+                    row_h.append(f"{key_str}: Not launched")
             else:
                 row_z.append(0)
                 row_h.append(f"{year}-{m:02d}")
@@ -508,7 +512,7 @@ def _build_hourly_calendar(
                     row_h.append(f"{key_str}: Scheduled")
                 else:
                     row_z.append(1)
-                    row_h.append(f"{key_str}: Missing")
+                    row_h.append(f"{key_str}: Not launched")
             else:
                 row_z.append(0)
                 row_h.append(f"{day.isoformat()}T{h:02d}")
@@ -559,7 +563,7 @@ def _build_partition_grid(
         [
             _hover_completed(k, key_run_info)
             if k in completed_keys
-            else f"{k}: Missing"
+            else f"{k}: Not launched"
             for k in expected_keys
         ]
     ]

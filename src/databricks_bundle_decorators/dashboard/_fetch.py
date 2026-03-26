@@ -202,7 +202,12 @@ def resolve_workspace_url(
     except (json.JSONDecodeError, ValueError):
         return None
 
+    # The host can appear at the top level or nested under details.
     host = data.get("host")
+    if not host:
+        details = data.get("details")
+        if isinstance(details, dict):
+            host = details.get("host")
     if host and isinstance(host, str):
         return host.rstrip("/")
     return None

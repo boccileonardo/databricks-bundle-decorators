@@ -777,6 +777,21 @@ class TestResolveWorkspaceUrl:
         )
         assert resolve_workspace_url() is None
 
+    def test_returns_host_from_nested_details(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        auth_data = {
+            "status": "success",
+            "details": {"host": "https://nested.databricks.com/"},
+        }
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
+            _mock_subprocess(stdout=json.dumps(auth_data)),
+        )
+        result = resolve_workspace_url()
+        assert result == "https://nested.databricks.com"
+
     def test_passes_profile(self, monkeypatch: pytest.MonkeyPatch) -> None:
         captured_cmd: list[str] = []
 
@@ -876,7 +891,7 @@ class TestBuildDailyCalendar:
     def test_hover_shows_missing_status(self) -> None:
         fig = _build_daily_calendar({"2024-01-15"}, set())
         hover = _flatten_hover(fig)
-        assert any("Missing" in h for h in hover)
+        assert any("Not launched" in h for h in hover)
 
     def test_seven_weekday_rows(self) -> None:
         fig = _build_daily_calendar({"2024-01-15"}, set())
@@ -915,7 +930,7 @@ class TestBuildDailyCalendar:
         hover = _flatten_hover(fig)
         # Last date should be present, early dates should be filtered
         assert any("2023-07-19" in h for h in hover)  # day 200
-        assert not any("2023-01-01: Missing" in h for h in hover)
+        assert not any("2023-01-01: Not launched" in h for h in hover)
 
     def test_explicit_range_overrides_auto_clip(self) -> None:
         from datetime import date
@@ -984,18 +999,18 @@ class TestBuildWeeklyCalendar:
             keys, set(), start_date=date(2024, 6, 1), end_date=date(2024, 9, 30)
         )
         hover = _flatten_hover(fig)
-        # W26 (late June) should be present as "Missing"
-        assert any("2024-W26: Missing" in h for h in hover)
-        # W01 (early January) should NOT appear as "Missing" (it was filtered)
-        assert not any("2024-W01: Missing" in h for h in hover)
+        # W26 (late June) should be present as "Not launched"
+        assert any("2024-W26: Not launched" in h for h in hover)
+        # W01 (early January) should NOT appear as "Not launched" (it was filtered)
+        assert not any("2024-W01: Not launched" in h for h in hover)
 
     def test_auto_clips_large_range(self) -> None:
         # >104 weeks triggers auto-clip to last 52
         keys = {f"{y}-W{w:02d}" for y in range(2020, 2024) for w in range(1, 53)}
         fig = _build_weekly_calendar(keys, set())
         hover = _flatten_hover(fig)
-        assert any("2023-W52: Missing" in h for h in hover)
-        assert not any("2020-W01: Missing" in h for h in hover)
+        assert any("2023-W52: Not launched" in h for h in hover)
+        assert not any("2020-W01: Not launched" in h for h in hover)
 
     def test_empty_range_returns_none(self) -> None:
         from datetime import date
@@ -1303,14 +1318,14 @@ class TestBuildPartitionGrid:
         fig = _build_partition_grid(["us", "eu"], {"us"})
         hover = _flatten_hover(fig)
         assert any("Completed" in h for h in hover)
-        assert any("Missing" in h for h in hover)
+        assert any("Not launched" in h for h in hover)
 
     def test_hover_shows_run_info(self) -> None:
         key_run_info = {"us": (99, 1_705_312_800_000)}
         fig = _build_partition_grid(["us", "eu"], {"us"}, key_run_info)
         hover = _flatten_hover(fig)
         assert any("Run 99" in h for h in hover)
-        assert any("Missing" in h for h in hover)
+        assert any("Not launched" in h for h in hover)
 
 
 # ---------------------------------------------------------------------------
