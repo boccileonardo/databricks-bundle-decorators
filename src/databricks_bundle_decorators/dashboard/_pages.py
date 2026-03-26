@@ -5,7 +5,7 @@ Each ``_page_*`` function returns a component tree — no side effects.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 import dash_ag_grid as dag
@@ -78,7 +78,7 @@ def _kpi_card(title: str, value: str | int, color: str = "primary") -> Any:
             ],
             className="text-center py-3",
         ),
-        className="shadow-sm",
+        className="shadow-sm rounded-3",
     )
 
 
@@ -112,7 +112,7 @@ _DEFAULT_GRID_STYLE: dict[str, Any] = {
     "width": "100%",
 }
 
-_DEFAULT_GRID_CLASSNAME = "ag-theme-alpine"
+_DEFAULT_GRID_CLASSNAME = "ag-theme-quartz"
 
 
 def _default_col_def() -> dict[str, Any]:
@@ -124,32 +124,110 @@ def _default_col_def() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Backfill date-range helpers
+# ---------------------------------------------------------------------------
+
+#: (max_unfiltered, default_window) thresholds per backfill kind.
+_DATE_THRESHOLDS: dict[str, tuple[int, int]] = {
+    "daily": (180, 90),
+    "weekly": (104, 52),
+    "monthly": (48, 24),
+    "hourly": (14, 7),
+}
+
+#: Kinds that support date-range filtering via a DatePickerRange.
+_DATE_FILTERABLE_KINDS = frozenset(_DATE_THRESHOLDS)
+
+
+def _backfill_date_bounds(
+    kind: str,
+    expected_keys: list[str],
+) -> tuple[date | None, date | None, date | None, date | None]:
+    """Derive (min_date, max_date, initial_start, initial_end) from keys.
+
+    Works for ``daily``, ``weekly``, ``monthly``, and ``hourly`` kinds.
+    Returns four ``None`` values when no valid dates can be parsed.
+    """
+    import re as _re
+
+    dates: list[date] = []
+    if kind == "daily":
+        for key in expected_keys:
+            try:
+                dates.append(date.fromisoformat(key))
+            except ValueError:
+                continue
+    elif kind == "weekly":
+        _week_re = _re.compile(r"^(\d{4})-W(\d{2})$")
+        for key in expected_keys:
+            m = _week_re.match(key)
+            if m:
+                dates.append(date.fromisocalendar(int(m.group(1)), int(m.group(2)), 1))
+    elif kind == "monthly":
+        for key in expected_keys:
+            try:
+                d = date.fromisoformat(key)
+                dates.append(date(d.year, d.month, 1))
+            except ValueError:
+                continue
+    elif kind == "hourly":
+        for key in expected_keys:
+            try:
+                dates.append(datetime.strptime(key, "%Y-%m-%dT%H").date())
+            except ValueError:
+                continue
+
+    if not dates:
+        return None, None, None, None
+
+    unique = sorted(set(dates))
+    min_d = unique[0]
+    max_d = unique[-1]
+    max_unfiltered, default_window = _DATE_THRESHOLDS.get(kind, (180, 90))
+    if len(unique) > max_unfiltered:
+        init_start = unique[-default_window]
+    else:
+        init_start = min_d
+    return min_d, max_d, init_start, max_d
+
+
+# Keep old name available for backwards compat / existing tests
+def _hourly_date_bounds(
+    expected_keys: list[str],
+) -> tuple[date | None, date | None, date | None, date | None]:
+    """Derive date bounds from hourly keys.  Delegates to `_backfill_date_bounds`."""
+    return _backfill_date_bounds("hourly", expected_keys)
+
+
+# ---------------------------------------------------------------------------
 # Backfill figure builder dispatch
 # ---------------------------------------------------------------------------
 
+#: Maps backfill kind → (label, figure_builder_fn). The builder accepts
+#: a `BackfillCoverage` plus optional ``start_date`` / ``end_date``.
 _FIGURE_BUILDERS: dict[str, tuple[str, Any]] = {
     "daily": (
         "calendar",
-        lambda c: _build_daily_calendar(
-            set(c.expected_keys), set(c.completed_keys), c.completed_key_runs
+        lambda c, **kw: _build_daily_calendar(
+            set(c.expected_keys), set(c.completed_keys), c.completed_key_runs, **kw
         ),
     ),
     "weekly": (
         "week calendar",
-        lambda c: _build_weekly_calendar(
-            set(c.expected_keys), set(c.completed_keys), c.completed_key_runs
+        lambda c, **kw: _build_weekly_calendar(
+            set(c.expected_keys), set(c.completed_keys), c.completed_key_runs, **kw
         ),
     ),
     "monthly": (
         "month calendar",
-        lambda c: _build_monthly_calendar(
-            set(c.expected_keys), set(c.completed_keys), c.completed_key_runs
+        lambda c, **kw: _build_monthly_calendar(
+            set(c.expected_keys), set(c.completed_keys), c.completed_key_runs, **kw
         ),
     ),
     "hourly": (
         "hour calendar",
-        lambda c: _build_hourly_calendar(
-            set(c.expected_keys), set(c.completed_keys), c.completed_key_runs
+        lambda c, **kw: _build_hourly_calendar(
+            set(c.expected_keys), set(c.completed_keys), c.completed_key_runs, **kw
         ),
     ),
 }
@@ -646,8 +724,40 @@ def _page_job_detail(
                 className="text-muted",
             )
         )
-        builder = _FIGURE_BUILDERS.get(cov.kind)
-        if builder:
+        if cov.kind in _DATE_FILTERABLE_KINDS:
+            min_d, max_d, init_start, init_end = _backfill_date_bounds(
+                cov.kind, cov.expected_keys
+            )
+            builder = _FIGURE_BUILDERS.get(cov.kind)
+            if (
+                min_d is not None
+                and max_d is not None
+                and init_start is not None
+                and init_end is not None
+                and builder is not None
+            ):
+                backfill_section.append(dcc.Store(id="bf-job-name", data=job_name))
+                backfill_section.append(dcc.Store(id="bf-kind", data=cov.kind))
+                backfill_section.append(
+                    dbc.Row(
+                        dbc.Col(
+                            dcc.DatePickerRange(
+                                id="bf-date-range",
+                                start_date=init_start.isoformat(),
+                                end_date=init_end.isoformat(),
+                                min_date_allowed=min_d.isoformat(),
+                                max_date_allowed=max_d.isoformat(),
+                                className="mb-3",
+                            ),
+                            width="auto",
+                        ),
+                    )
+                )
+                _, build_fn = builder
+                fig = build_fn(cov, start_date=init_start, end_date=init_end)
+                if fig is not None:
+                    backfill_section.append(dcc.Graph(id="bf-graph", figure=fig))
+        elif builder := _FIGURE_BUILDERS.get(cov.kind):
             _, build_fn = builder
             fig = build_fn(cov)
             if fig is not None:

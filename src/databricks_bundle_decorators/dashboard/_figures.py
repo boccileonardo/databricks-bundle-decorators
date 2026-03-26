@@ -82,11 +82,18 @@ def _build_daily_calendar(
     expected_keys: set[str],
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> Any:
     """Build a Plotly heatmap calendar for daily backfill keys.
 
     Renders a GitHub-contribution-graph-style grid: rows are
     weekdays (Mon–Sun) and columns are weeks.
+
+    When ``start_date`` / ``end_date`` are given, only days in that
+    range are rendered.  Defaults to the most recent 90 days of data
+    when the total span exceeds 180 days.
     """
     expected_dates: set[whenever.Date] = set()
     for key in expected_keys:
@@ -104,6 +111,27 @@ def _build_daily_calendar(
             completed_dates.add(whenever.Date.parse_iso(key))
         except ValueError:
             continue
+
+    # Apply date-range filter
+    _MAX_UNFILTERED_DAYS = 180
+    _DEFAULT_WINDOW_DAYS = 90
+    if start_date is not None or end_date is not None:
+        lo = (
+            whenever.Date.from_py_date(start_date)
+            if start_date
+            else min(expected_dates)
+        )
+        hi = whenever.Date.from_py_date(end_date) if end_date else max(expected_dates)
+        expected_dates = {d for d in expected_dates if lo <= d <= hi}
+        completed_dates = {d for d in completed_dates if lo <= d <= hi}
+    elif len(expected_dates) > _MAX_UNFILTERED_DAYS:
+        sorted_all = sorted(expected_dates)
+        cutoff = sorted_all[-_DEFAULT_WINDOW_DAYS]
+        expected_dates = {d for d in expected_dates if d >= cutoff}
+        completed_dates = {d for d in completed_dates if d >= cutoff}
+
+    if not expected_dates:
+        return None
 
     min_d = min(expected_dates)
     max_d = max(expected_dates)
@@ -161,10 +189,6 @@ def _build_daily_calendar(
         )
     )
     xaxis_opts: dict[str, Any] = dict(tickvals=month_ticks, ticktext=month_labels)
-    # Show at most ~26 weeks (6 months) initially; user can pan to see more
-    _MAX_VISIBLE_WEEKS = 26
-    if num_weeks > _MAX_VISIBLE_WEEKS:
-        xaxis_opts["range"] = [num_weeks - _MAX_VISIBLE_WEEKS - 0.5, num_weeks - 0.5]
 
     fig.update_layout(
         height=230,
@@ -184,10 +208,17 @@ def _build_weekly_calendar(
     expected_keys: set[str],
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> Any:
     """Build a Plotly heatmap for weekly backfill keys.
 
     Renders a year x week grid (rows=years, columns=W01-W53).
+
+    When ``start_date`` / ``end_date`` are given, only weeks whose
+    Monday falls in that range are shown.  Defaults to the most
+    recent 52 weeks when the total span exceeds 104 weeks.
     """
     week_re = re.compile(r"^(\d{4})-W(\d{2})$")
 
@@ -205,6 +236,33 @@ def _build_weekly_calendar(
         m = week_re.match(key)
         if m:
             completed_parsed.add((int(m.group(1)), int(m.group(2))))
+
+    # Apply date-range filter (uses the Monday of each ISO week)
+    _MAX_UNFILTERED_WEEKS = 104
+    _DEFAULT_WINDOW_WEEKS = 52
+    if start_date is not None or end_date is not None:
+        min_yw = min(expected)
+        max_yw = max(expected)
+        lo = start_date or date.fromisocalendar(min_yw[0], min_yw[1], 1)
+        hi = end_date or date.fromisocalendar(max_yw[0], max_yw[1], 1)
+        expected = {
+            k: v
+            for k, v in expected.items()
+            if lo <= date.fromisocalendar(k[0], k[1], 1) <= hi
+        }
+        completed_parsed = {
+            k
+            for k in completed_parsed
+            if lo <= date.fromisocalendar(k[0], k[1], 1) <= hi
+        }
+    elif len(expected) > _MAX_UNFILTERED_WEEKS:
+        sorted_keys = sorted(expected)
+        keep = set(sorted_keys[-_DEFAULT_WINDOW_WEEKS:])
+        expected = {k: v for k, v in expected.items() if k in keep}
+        completed_parsed = {k for k in completed_parsed if k in keep}
+
+    if not expected:
+        return None
 
     min_year = min(y for y, _ in expected)
     max_year = max(y for y, _ in expected)
@@ -260,10 +318,17 @@ def _build_monthly_calendar(
     expected_keys: set[str],
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> Any:
     """Build a Plotly heatmap for monthly backfill keys.
 
     Renders a year x month grid (rows=years, columns=Jan-Dec).
+
+    When ``start_date`` / ``end_date`` are given, only months whose
+    first day falls in that range are shown.  Defaults to the most
+    recent 24 months when the total span exceeds 48 months.
     """
     expected: dict[tuple[int, int], str] = {}
     for key in expected_keys:
@@ -283,6 +348,27 @@ def _build_monthly_calendar(
             completed_parsed.add((d.year, d.month))
         except ValueError:
             continue
+
+    # Apply date-range filter
+    _MAX_UNFILTERED_MONTHS = 48
+    _DEFAULT_WINDOW_MONTHS = 24
+    if start_date is not None or end_date is not None:
+        lo = start_date or date(min(expected)[0], min(expected)[1], 1)
+        hi = end_date or date(max(expected)[0], max(expected)[1], 1)
+        expected = {
+            k: v for k, v in expected.items() if lo <= date(k[0], k[1], 1) <= hi
+        }
+        completed_parsed = {
+            k for k in completed_parsed if lo <= date(k[0], k[1], 1) <= hi
+        }
+    elif len(expected) > _MAX_UNFILTERED_MONTHS:
+        sorted_keys = sorted(expected)
+        keep = set(sorted_keys[-_DEFAULT_WINDOW_MONTHS:])
+        expected = {k: v for k, v in expected.items() if k in keep}
+        completed_parsed = {k for k in completed_parsed if k in keep}
+
+    if not expected:
+        return None
 
     min_year = min(y for y, _ in expected)
     max_year = max(y for y, _ in expected)
@@ -337,10 +423,17 @@ def _build_hourly_calendar(
     expected_keys: set[str],
     completed_keys: set[str],
     key_run_info: _KeyRunInfo | None = None,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> Any:
     """Build a Plotly heatmap for hourly backfill keys.
 
     Renders a date x hour grid (rows=dates, columns=00-23).
+
+    When ``start_date`` / ``end_date`` are given, only days in that
+    range are rendered.  Defaults to the most recent 7 days of data
+    when the total span exceeds 14 days.
     """
     _FMT = "%Y-%m-%dT%H"
 
@@ -364,6 +457,19 @@ def _build_hourly_calendar(
             continue
 
     all_days = sorted({d for d, _ in expected})
+
+    # Apply date range filter
+    _MAX_UNFILTERED_DAYS = 14
+    if start_date is not None or end_date is not None:
+        lo = start_date or all_days[0]
+        hi = end_date or all_days[-1]
+        all_days = [d for d in all_days if lo <= d <= hi]
+    elif len(all_days) > _MAX_UNFILTERED_DAYS:
+        # Default: show last 7 days of data
+        all_days = all_days[-7:]
+
+    if not all_days:
+        return None
 
     z: list[list[int]] = []
     hover: list[list[str]] = []
@@ -404,19 +510,9 @@ def _build_hourly_calendar(
         )
     )
 
-    # Show at most 14 days initially; user can pan/zoom to see more
-    _MAX_VISIBLE_DAYS = 14
-    yaxis_opts: dict[str, Any] = {}
-    if len(all_days) > _MAX_VISIBLE_DAYS:
-        yaxis_opts["range"] = [
-            len(all_days) - _MAX_VISIBLE_DAYS - 0.5,
-            len(all_days) - 0.5,
-        ]
-
     fig.update_layout(
-        height=max(150, min(len(all_days), _MAX_VISIBLE_DAYS) * 30 + 80),
+        height=max(150, len(all_days) * 30 + 80),
         margin=dict(l=80, r=20, t=10, b=60),
-        yaxis=yaxis_opts,
     )
     _add_coverage_legend(fig)
     return fig

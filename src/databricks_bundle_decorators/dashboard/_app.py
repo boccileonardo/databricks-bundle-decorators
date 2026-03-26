@@ -24,6 +24,7 @@ from databricks_bundle_decorators.dashboard._fetch import (
     resolve_job_ids,
 )
 from databricks_bundle_decorators.dashboard._pages import (
+    _FIGURE_BUILDERS,
     _page_backfills,
     _page_job_detail,
     _page_jobs,
@@ -143,7 +144,7 @@ def run_app(
     # --- Build Dash app ---
     app = dash.Dash(
         __name__,
-        external_stylesheets=[dbc.themes.COSMO],
+        external_stylesheets=[dbc.themes.FLATLY],
         suppress_callback_exceptions=True,
     )
     app.title = "Pipeline Observability"
@@ -289,5 +290,44 @@ def run_app(
             f"Page not found: {pathname}",
             color="warning",
         )
+
+    # --- Backfill date-range callback ---
+
+    @app.callback(
+        Output("bf-graph", "figure"),
+        [
+            Input("bf-date-range", "start_date"),
+            Input("bf-date-range", "end_date"),
+        ],
+        [
+            dash.State("bf-job-name", "data"),
+            dash.State("bf-kind", "data"),
+        ],
+        prevent_initial_call=True,
+    )
+    def _update_bf_calendar(
+        start_date_str: str | None,
+        end_date_str: str | None,
+        job_name: str | None,
+        kind: str | None,
+    ) -> Any:
+        from datetime import date as _date
+
+        if not job_name or not kind:
+            return dash.no_update
+        cov = _data["coverages"].get(job_name)
+        if cov is None:
+            return dash.no_update
+        builder = _FIGURE_BUILDERS.get(kind)
+        if builder is None:
+            return dash.no_update
+        sd = _date.fromisoformat(start_date_str) if start_date_str else None
+        ed = _date.fromisoformat(end_date_str) if end_date_str else None
+        _, build_fn = builder
+        fig = build_fn(cov, start_date=sd, end_date=ed)
+        return fig or {}
+
+    # Prefetch data so the first page load is instant
+    _refresh_data(None, None)
 
     app.run(host=host, port=port, debug=debug)

@@ -50,6 +50,12 @@ from databricks_bundle_decorators.dashboard._polars_helpers import (
     _tasks_to_records as _tasks_to_records,
 )
 
+# Page helpers
+from databricks_bundle_decorators.dashboard._pages import (
+    _backfill_date_bounds as _backfill_date_bounds,
+    _hourly_date_bounds as _hourly_date_bounds,
+)
+
 # App entry point
 from databricks_bundle_decorators.dashboard._app import (
     APP_TEMPLATE as APP_TEMPLATE,
@@ -85,6 +91,9 @@ __all__ = [
     "_overviews_to_records",
     "_runs_to_records",
     "_tasks_to_records",
+    # Page helpers
+    "_backfill_date_bounds",
+    "_hourly_date_bounds",
     # App
     "APP_TEMPLATE",
     "run_app",
