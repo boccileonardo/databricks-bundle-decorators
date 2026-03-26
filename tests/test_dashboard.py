@@ -1502,7 +1502,7 @@ class TestOverviewsToRecords:
         assert r["Status"] == "SUCCESS"
         assert r["Runs"] == "10  (8 \u2713 / 2 \u2717)"
         assert r["Success %"] == "80%"
-        assert r["Avg Dur."] == "45s"
+        assert r["Avg Duration"] == "45s"
         assert r["Completeness"] == ""
 
     def test_no_runs_shows_dash(self) -> None:
@@ -1511,7 +1511,7 @@ class TestOverviewsToRecords:
         r = records[0]
         assert r["Success %"] == "\u2014"
         assert r["Status"] == "\u2014"
-        assert r["Avg Dur."] == "\u2014"
+        assert r["Avg Duration"] == "\u2014"
         assert r["Runs"] == "\u2014"
 
     def test_workspace_url_adds_links(self) -> None:
@@ -1550,7 +1550,7 @@ class TestOverviewsToRecords:
             "Status",
             "Runs",
             "Success %",
-            "Avg Dur.",
+            "Avg Duration",
             "Completeness",
         }
         assert set(records[0].keys()) == expected_cols

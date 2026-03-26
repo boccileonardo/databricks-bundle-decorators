@@ -251,10 +251,10 @@ def _page_overview(
             "minWidth": 180,
         },
         {"field": "Status", "cellStyle": _STATUS_CELL_STYLE, "maxWidth": 140},
-        {"field": "Runs", "minWidth": 160},
-        {"field": "Success %", "maxWidth": 140},
-        {"field": "Avg Dur.", "maxWidth": 140},
-        {"field": "Completeness", "cellRenderer": "markdown", "maxWidth": 140},
+        {"field": "Runs", "maxWidth": 160},
+        {"field": "Success %", "maxWidth": 120},
+        {"field": "Avg Duration", "maxWidth": 140},
+        {"field": "Completeness", "cellRenderer": "markdown", "maxWidth": 160},
     ]
 
     job_grid = dag.AgGrid(

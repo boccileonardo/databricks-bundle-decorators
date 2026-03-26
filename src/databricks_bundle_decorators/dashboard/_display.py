@@ -81,7 +81,7 @@ def _overviews_to_records(
                 "Status": status,
                 "Runs": runs_cell,
                 "Success %": rate_cell,
-                "Avg Dur.": avg_dur,
+                "Avg Duration": avg_dur,
                 "Completeness": cov_cell,
             }
         )
@@ -208,7 +208,7 @@ def _coverages_to_records(
 
         # Key status squares
         squares = _build_key_squares(c, max_squares)
-        keys_cell = "".join(squares) if squares else "\u2014"
+        keys_cell = " ".join(squares) if squares else "\u2014"
 
         rec: dict[str, Any] = {
             "Job": c.job_name,
