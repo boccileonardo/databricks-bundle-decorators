@@ -1501,17 +1501,17 @@ class TestOverviewsToRecords:
         assert r["Job"] == "etl"
         assert r["Status"] == "SUCCESS"
         assert r["Runs"] == "10  (8 \u2713 / 2 \u2717)"
-        assert r["Success Rate"] == "80%"
-        assert r["Avg Duration"] == "45s"
-        assert r["Coverage"] == ""
+        assert r["Success %"] == "80%"
+        assert r["Avg Dur."] == "45s"
+        assert r["Completeness"] == ""
 
     def test_no_runs_shows_dash(self) -> None:
         o = JobOverview(job_name="j", job_id=None)
         records = _overviews_to_records([o])
         r = records[0]
-        assert r["Success Rate"] == "\u2014"
+        assert r["Success %"] == "\u2014"
         assert r["Status"] == "\u2014"
-        assert r["Avg Duration"] == "\u2014"
+        assert r["Avg Dur."] == "\u2014"
         assert r["Runs"] == "\u2014"
 
     def test_workspace_url_adds_links(self) -> None:
@@ -1540,7 +1540,7 @@ class TestOverviewsToRecords:
             kind="static",
         )
         records = _overviews_to_records([o], coverages={"etl": cov})
-        assert records[0]["Coverage"] == "[50.0%](/backfills/etl)"
+        assert records[0]["Completeness"] == "[50.0%](/backfills/etl)"
 
     def test_only_expected_columns(self) -> None:
         o = JobOverview(job_name="etl", job_id=42)
@@ -1549,9 +1549,9 @@ class TestOverviewsToRecords:
             "Job",
             "Status",
             "Runs",
-            "Success Rate",
-            "Avg Duration",
-            "Coverage",
+            "Success %",
+            "Avg Dur.",
+            "Completeness",
         }
         assert set(records[0].keys()) == expected_cols
 
@@ -1567,7 +1567,7 @@ class TestOverviewsToRecords:
         )
         records = _overviews_to_records([o])
         # 7 successes / 7 terminal = 100%, not 87.5% (7/8)
-        assert records[0]["Success Rate"] == "100%"
+        assert records[0]["Success %"] == "100%"
 
 
 class TestCoveragesToRecords:
@@ -1586,8 +1586,8 @@ class TestCoveragesToRecords:
         records = _coverages_to_records({"j": cov})
         assert len(records) == 1
         assert records[0]["Job"] == "j"
-        assert "50.0%" in records[0]["Coverage"]
-        assert "1 / 2" in records[0]["Coverage"]
+        assert "50.0%" in records[0]["Completeness"]
+        assert "1 / 2" in records[0]["Completeness"]
 
     def test_static_squares_failed_first(self) -> None:
         cov = BackfillCoverage(

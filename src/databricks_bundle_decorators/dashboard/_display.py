@@ -5,10 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from databricks_bundle_decorators.dashboard._data import (
-    COLOR_COMPLETED,
-    COLOR_FAILED,
-    COLOR_IN_PROGRESS,
-    COLOR_MISSING,
     BackfillCoverage,
     JobOverview,
 )
@@ -22,7 +18,7 @@ def _overviews_to_records(
     """Convert job overviews to display-ready table records.
 
     Produces a unified table with optional workspace links and
-    backfill coverage columns merged in.
+    backfill completeness columns merged in.
 
     Parameters
     ----------
@@ -30,7 +26,7 @@ def _overviews_to_records(
         Job overview objects.
     coverages:
         Optional backfill coverages, keyed by job name.
-        When provided, a *Coverage* column is added with a
+        When provided, a *Completeness* column is added with a
         clickable link to ``/backfills/<name>``.
     workspace_url:
         Databricks workspace base URL.  When provided, job
@@ -72,7 +68,7 @@ def _overviews_to_records(
         else:
             avg_dur = "\u2014"
 
-        # Coverage — link to backfill detail when available
+        # Completeness — link to backfill detail when available
         cov = cov_map.get(o.job_name)
         if cov is not None:
             cov_cell = f"[{cov.coverage_pct}%](/backfills/{o.job_name})"
@@ -84,9 +80,9 @@ def _overviews_to_records(
                 "Job": job_cell,
                 "Status": status,
                 "Runs": runs_cell,
-                "Success Rate": rate_cell,
-                "Avg Duration": avg_dur,
-                "Coverage": cov_cell,
+                "Success %": rate_cell,
+                "Avg Dur.": avg_dur,
+                "Completeness": cov_cell,
             }
         )
 
@@ -107,20 +103,11 @@ def _fmt_duration(seconds: float) -> str:
 
 _TIME_BASED_KINDS = frozenset({"daily", "weekly", "monthly", "hourly"})
 
-# HTML color squares matching the heatmap colorscale in ``_figures.py``.
-_SQ_STYLE = (
-    "display:inline-block;width:14px;height:14px;border-radius:2px;margin-right:3px"
-)
-_SQ_COMPLETED = (
-    f'<span style="{_SQ_STYLE};background:{COLOR_COMPLETED}" title="Completed"></span>'
-)
-_SQ_IN_PROGRESS = f'<span style="{_SQ_STYLE};background:{COLOR_IN_PROGRESS}" title="In progress"></span>'
-_SQ_FAILED = (
-    f'<span style="{_SQ_STYLE};background:{COLOR_FAILED}" title="Failed"></span>'
-)
-_SQ_MISSING = (
-    f'<span style="{_SQ_STYLE};background:{COLOR_MISSING}" title="Missing"></span>'
-)
+# Unicode squares for key status display in AG Grid cells.
+_SQ_COMPLETED = "\U0001f7e9"  # green square
+_SQ_IN_PROGRESS = "\U0001f7e6"  # blue square
+_SQ_FAILED = "\U0001f7e5"  # red square
+_SQ_MISSING = "\U0001f7e8"  # yellow square
 
 
 def _build_key_squares(cov: BackfillCoverage, max_squares: int) -> list[str]:
@@ -216,7 +203,7 @@ def _coverages_to_records(
         )
         errored = len(c.errored_keys) if c.errored_keys else 0
 
-        # Coverage column: "45 / 90  (50%)"
+        # Completeness column: "45 / 90  (50%)"
         cov_cell = f"{done} / {due}  ({c.coverage_pct}%)"
 
         # Key status squares
@@ -226,7 +213,7 @@ def _coverages_to_records(
         rec: dict[str, Any] = {
             "Job": c.job_name,
             "Type": c.kind.title(),
-            "Coverage": cov_cell,
+            "Completeness": cov_cell,
             "Keys": keys_cell,
         }
         if errored:

@@ -206,9 +206,9 @@ def _page_overview(
 ) -> Any:
     """Build the Overview page — KPI cards + unified job table.
 
-    The table merges job stats and backfill coverage into a single
+    The table merges job stats and backfill completeness into a single
     view.  Job names link to the Databricks workspace when
-    ``workspace_url`` is available; the Coverage column links to
+    ``workspace_url`` is available; the Completeness column links to
     the backfill detail page.
     """
     total_jobs = len(overviews)
@@ -238,7 +238,7 @@ def _page_overview(
         className="mb-4 g-3",
     )
 
-    # Unified job table with workspace links and backfill coverage
+    # Unified job table with workspace links and backfill completeness
     records = _overviews_to_records(
         overviews, coverages=coverages, workspace_url=workspace_url
     )
@@ -252,9 +252,9 @@ def _page_overview(
         },
         {"field": "Status", "cellStyle": _STATUS_CELL_STYLE, "maxWidth": 140},
         {"field": "Runs", "minWidth": 160},
-        {"field": "Success Rate", "maxWidth": 120},
-        {"field": "Avg Duration", "maxWidth": 120},
-        {"field": "Coverage", "cellRenderer": "markdown", "maxWidth": 120},
+        {"field": "Success %", "maxWidth": 140},
+        {"field": "Avg Dur.", "maxWidth": 140},
+        {"field": "Completeness", "cellRenderer": "markdown", "maxWidth": 140},
     ]
 
     job_grid = dag.AgGrid(
@@ -310,18 +310,18 @@ def _page_backfills(
     cov_cols = [
         {"field": "Job", "cellRenderer": "markdown", "minWidth": 160},
         {"field": "Type", "maxWidth": 100},
-        {"field": "Coverage", "minWidth": 140},
-        {"field": "Errors", "maxWidth": 80},
-        {"field": "Keys", "cellRenderer": "markdown", "minWidth": 120},
+        {"field": "Completeness", "minWidth": 140},
+        {"field": "Errors", "maxWidth": 100},
+        {"field": "Keys", "minWidth": 120},
     ]
 
     return html.Div(
         [
-            html.H4("Backfill Coverage", className="mb-3"),
+            html.H4("Backfill Completeness", className="mb-3"),
             html.P(
-                "Coverage shows completed / due keys. "
+                "Completeness shows completed / due keys. "
                 "Errors are keys with only failed runs. "
-                "Click a job name for the coverage heatmap.",
+                "Click a job name for the completeness heatmap.",
                 className="text-muted",
             ),
             dag.AgGrid(
@@ -343,7 +343,7 @@ def _page_backfills(
 
 
 # ---------------------------------------------------------------------------
-# Page: Backfill Detail (coverage heatmap for a specific job)
+# Page: Backfill Detail (completeness heatmap for a specific job)
 # ---------------------------------------------------------------------------
 
 
@@ -353,9 +353,9 @@ def _page_backfill_detail(
     workspace_url: str | None = None,
     job_id: int | None = None,
 ) -> Any:
-    """Build the Backfill Detail page — coverage heatmap for a job.
+    """Build the Backfill Detail page — completeness heatmap for a job.
 
-    Shows the backfill coverage chart with date-range picker for
+    Shows the backfill completeness chart with date-range picker for
     time-based backfills.  Includes a link to the Databricks
     workspace job page when ``workspace_url`` is available.
     """
@@ -381,7 +381,7 @@ def _page_backfill_detail(
 
     header_children.append(
         html.P(
-            f"{cov.coverage_pct}% coverage "
+            f"{cov.coverage_pct}% completeness "
             f"({len(cov.completed_keys)}/{len(cov.expected_keys)} keys)",
             className="text-muted",
         )

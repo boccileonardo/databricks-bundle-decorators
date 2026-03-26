@@ -1,6 +1,6 @@
 # Observability Dashboard
 
-A Dash-based dashboard that shows job KPIs and backfill coverage for
+A Dash-based dashboard that shows job KPIs and backfill completeness for
 all jobs deployed from the current bundle.
 
 For run history, task DAGs, and task-level details, the dashboard links
@@ -41,21 +41,21 @@ The landing page provides:
   rate, deployment status, and backfill indicator.  When the Databricks
   workspace URL is available, job names link directly to the workspace
   job page.
-- **Backfill summary table** — quick coverage overview for all
+- **Backfill summary table** — quick completeness overview for all
   backfill-enabled jobs, with links to per-job backfill detail.
 
 ### Backfills
 
-Summary table of backfill coverage across all jobs.  Click a job name
-to see the per-job coverage heatmap.
+Summary table of backfill completeness across all jobs.  Click a job name
+to see the per-job completeness heatmap.
 
 ### Backfill Detail (`/backfills/<name>`)
 
-Drill-down view for a specific job's backfill coverage:
+Drill-down view for a specific job's backfill completeness:
 
-- Coverage percentage and key counts.
+- Completeness percentage and key counts.
 - Link to the Databricks workspace job page (when available).
-- Backfill coverage chart with date-range picker for time-based
+- Backfill completeness chart with date-range picker for time-based
   backfills.
 - Expandable list of missing (not-launched) keys.
 
@@ -103,7 +103,7 @@ job_ids = resolve_job_ids(target="dev")
 # Fetch runs for a specific job
 runs = fetch_job_runs(job_ids["my_etl"], profile="work")
 
-# Compute backfill coverage
+# Compute backfill completeness
 coverage = compute_backfill_coverage(
     "my_etl", runs, expected_keys=["2024-01-01", "2024-01-02"]
 )
