@@ -32,6 +32,13 @@ optional-dependencies.gcp = [
   "fsspec",
   "gcsfs",
 ]
+optional-dependencies.observability = [
+  "dash>=2.14",
+  "dash-ag-grid>=31",
+  "dash-bootstrap-components>=1.5",
+  "plotly>=5.18",
+  "polars",
+]
 optional-dependencies.polars = [
   "polars",
 ]
@@ -44,9 +51,13 @@ scripts.dbxdec-run = "databricks_bundle_decorators.runtime:main"
 
 [dependency-groups]
 dev = [
+  "dash>=2.14",
+  "dash-ag-grid>=31",
+  "dash-bootstrap-components>=1.5",
   "databricks-bundle-decorators",
   "delta-spark>=3.2,<4",
   "deltalake",
+  "plotly>=5.18",
   "polars",
   "prek>=0.3.3",
   "pyarrow>=23.0.1",

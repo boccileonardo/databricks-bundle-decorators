@@ -13,6 +13,7 @@ nav = [
         "guides/index.md",
         { "Backfilling & Partitioning" = "guides/partitioning.md" },
         { "Docker Deployment" = "guides/docker-deployment.md" },
+        { "Observability Dashboard" = "guides/observability.md" },
     ]},
     { "Examples" = [
         "examples/index.md",

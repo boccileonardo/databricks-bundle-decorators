@@ -69,6 +69,7 @@ from databricks_bundle_decorators.registry import (
 from databricks_bundle_decorators.sdk_types import ClusterConfig as ClusterConfig
 from databricks_bundle_decorators.sdk_types import JobConfig as JobConfig
 from databricks_bundle_decorators.sdk_types import TaskConfig as TaskConfig
+from databricks_bundle_decorators.dashboard import run_app as run_app
 from databricks_bundle_decorators.task_values import get_task_value as get_task_value
 from databricks_bundle_decorators.task_values import set_task_value as set_task_value
 from databricks_bundle_decorators.task_values import TaskValue as TaskValue
@@ -104,4 +105,5 @@ __all__ = [
     "StaticBackfill",
     "get_backfill_key",
     "get_run_logical_date",
+    "run_app",
 ]

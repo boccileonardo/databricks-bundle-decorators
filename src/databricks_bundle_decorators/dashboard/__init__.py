@@ -1,0 +1,48 @@
+"""Observability dashboard for framework-managed pipeline jobs."""
+
+from __future__ import annotations
+
+# Data classes
+from databricks_bundle_decorators.dashboard._data import (
+    BackfillCoverage as BackfillCoverage,
+    JobOverview as JobOverview,
+    RunInfo as RunInfo,
+)
+
+# CLI data fetching
+from databricks_bundle_decorators.dashboard._fetch import (
+    fetch_job_runs as fetch_job_runs,
+    resolve_bundle_targets as resolve_bundle_targets,
+    resolve_job_ids as resolve_job_ids,
+    resolve_workspace_url as resolve_workspace_url,
+)
+
+# Pure computation
+from databricks_bundle_decorators.dashboard._compute import (
+    build_job_overview as build_job_overview,
+    compute_backfill_coverage as compute_backfill_coverage,
+)
+
+# App entry point
+from databricks_bundle_decorators.dashboard._app import (
+    APP_TEMPLATE as APP_TEMPLATE,
+    run_app as run_app,
+)
+
+__all__ = [
+    # Data classes
+    "BackfillCoverage",
+    "JobOverview",
+    "RunInfo",
+    # Fetch
+    "fetch_job_runs",
+    "resolve_bundle_targets",
+    "resolve_job_ids",
+    "resolve_workspace_url",
+    # Compute
+    "build_job_overview",
+    "compute_backfill_coverage",
+    # App
+    "APP_TEMPLATE",
+    "run_app",
+]

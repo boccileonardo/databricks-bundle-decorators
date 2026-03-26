@@ -1,0 +1,81 @@
+"""Data classes for the observability dashboard.
+
+Stdlib-only — no external dependencies required.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+# ---------------------------------------------------------------------------
+# Shared color palette — single source of truth for heatmaps,
+# status indicators, and legend entries.
+# ---------------------------------------------------------------------------
+
+COLOR_COMPLETED = "#2fb380"
+COLOR_FAILED = "#e5484d"
+COLOR_IN_PROGRESS = "#3459e6"
+COLOR_MISSING = "#f2a20d"
+COLOR_NOT_STARTED = "#d0e8ff"
+COLOR_NOT_IN_RANGE = "#f0f1f4"
+
+
+@dataclass(frozen=True)
+class RunInfo:
+    """Summary of a single job run from the Jobs API."""
+
+    run_id: int
+    result_state: str | None
+    start_time_ms: int | None
+    end_time_ms: int | None
+    duration_seconds: float | None
+    backfill_key: str | None = None
+    life_cycle_state: str | None = None
+    state_message: str | None = None
+
+
+@dataclass
+class JobOverview:
+    """Aggregated stats for a job over recent runs."""
+
+    job_name: str
+    job_id: int | None = None
+    total_runs: int = 0
+    successes: int = 0
+    failures: int = 0
+    in_progress: int = 0
+    last_run_time_ms: int | None = None
+    last_run_state: str | None = None
+    avg_duration_seconds: float | None = None
+    has_backfill: bool = False
+
+
+@dataclass(frozen=True)
+class BackfillCoverage:
+    """Expected-vs-actual backfill key comparison.
+
+    Uses exact key-level matching from run parameters — not
+    approximate counts like system table queries would give.
+    """
+
+    job_name: str
+    expected_keys: list[str]
+    completed_keys: list[str]
+    missing_keys: list[str]
+    coverage_pct: float
+    kind: str = "static"
+    tz: str = "UTC"
+    completed_key_runs: dict[str, tuple[int, int | None]] | None = None
+    """Mapping of completed backfill key to ``(run_id, start_time_ms)``
+    for the most recent successful run targeting that key.
+    ``None`` when run info is unavailable."""
+    errored_keys: list[str] | None = None
+    """Keys that were attempted but only have failed runs (no
+    successful run yet).  ``None`` when error tracking is
+    unavailable."""
+    in_progress_keys: list[str] | None = None
+    """Keys with an active (running/pending) run but no
+    successful run yet."""
+    due_keys: list[str] | None = None
+    """Expected keys filtered to exclude future periods.
+    Populated by `compute_backfill_coverage`."""
