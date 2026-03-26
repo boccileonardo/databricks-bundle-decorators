@@ -22,21 +22,21 @@ from databricks_bundle_decorators.dashboard._data import TaskRunInfo
 
 #: Discrete 3-state colorscale: 0=not-in-range, 1=not-launched, 2=completed.
 _COVERAGE_COLORSCALE: list[list[object]] = [
-    [0.0, "#f3f4f6"],
-    [0.25, "#f3f4f6"],
-    [0.25, "#f59e0b"],
-    [0.75, "#f59e0b"],
-    [0.75, "#22c55e"],
-    [1.0, "#22c55e"],
+    [0.0, "#f0f1f4"],
+    [0.25, "#f0f1f4"],
+    [0.25, "#f2a20d"],
+    [0.75, "#f2a20d"],
+    [0.75, "#2fb380"],
+    [1.0, "#2fb380"],
 ]
 
 
 def _add_coverage_legend(fig: Any) -> None:
     """Add a green/amber/gray legend to a coverage heatmap figure."""
     for label, color in [
-        ("Completed", "#22c55e"),
-        ("Not launched", "#f59e0b"),
-        ("Not in range", "#f3f4f6"),
+        ("Completed", "#2fb380"),
+        ("Not launched", "#f2a20d"),
+        ("Not in range", "#f0f1f4"),
     ]:
         fig.add_trace(
             go.Scatter(
@@ -569,7 +569,7 @@ def _build_partition_grid(
         xaxis=xaxis_opts,
     )
     # Static grid only has completed/not-launched — no "not in range"
-    for label, color in [("Completed", "#22c55e"), ("Not launched", "#f59e0b")]:
+    for label, color in [("Completed", "#2fb380"), ("Not launched", "#f2a20d")]:
         fig.add_trace(
             go.Scatter(
                 x=[None],
@@ -643,16 +643,16 @@ def _build_task_dag_figure(task_runs: list[TaskRunInfo]) -> Any:
             y = (i + 1) / (len(keys) + 1)
             positions[key] = (x, y)
 
-    # Color map
+    # Color map — aligned with Zephyr theme
     _STATE_COLORS = {
-        "SUCCESS": "#22c55e",
-        "FAILED": "#ef4444",
-        "RUNNING": "#3b82f6",
-        "PENDING": "#a3a3a3",
-        "CANCELED": "#f59e0b",
-        "TIMED_OUT": "#f59e0b",
-        "INTERNAL_ERROR": "#ef4444",
-        "SKIPPED": "#a3a3a3",
+        "SUCCESS": "#2fb380",
+        "FAILED": "#cf3257",
+        "RUNNING": "#3459e6",
+        "PENDING": "#5b6b79",
+        "CANCELED": "#f2a20d",
+        "TIMED_OUT": "#f2a20d",
+        "INTERNAL_ERROR": "#cf3257",
+        "SKIPPED": "#5b6b79",
     }
 
     # Draw edges
@@ -672,7 +672,7 @@ def _build_task_dag_figure(task_runs: list[TaskRunInfo]) -> Any:
             x=edge_x,
             y=edge_y,
             mode="lines",
-            line=dict(width=1, color="#d1d5db"),
+            line=dict(width=1, color="#ced4da"),
             hoverinfo="none",
             showlegend=False,
         )
@@ -683,7 +683,7 @@ def _build_task_dag_figure(task_runs: list[TaskRunInfo]) -> Any:
     node_y = [positions[t.task_key][1] for t in task_runs]
     node_colors = [
         _STATE_COLORS.get(
-            _effective_state(t.result_state, t.life_cycle_state), "#a3a3a3"
+            _effective_state(t.result_state, t.life_cycle_state), "#5b6b79"
         )
         for t in task_runs
     ]

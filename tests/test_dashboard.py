@@ -1296,7 +1296,7 @@ class TestHourlyDateBounds:
         min_d, max_d, start, end = _hourly_date_bounds(keys)
         assert min_d == date(2024, 1, 1)
         assert max_d == date(2024, 1, 30)
-        assert start == date(2024, 1, 24)  # last 7 days
+        assert start == date(2024, 1, 23)  # max_d - 7 days
         assert end == max_d
 
 
@@ -1348,6 +1348,26 @@ class TestBackfillDateBounds:
 
     def test_unknown_kind_returns_none_tuple(self) -> None:
         assert _backfill_date_bounds("custom", ["a", "b"]) == (None, None, None, None)
+
+    def test_init_end_anchored_to_today(self) -> None:
+        from datetime import date, timedelta
+
+        today = date.today()
+        # Keys span from 1 year ago to 1 year from now
+        start = today - timedelta(days=365)
+        keys = [(start + timedelta(days=i)).isoformat() for i in range(730)]
+        min_d, max_d, init_start, init_end = _backfill_date_bounds("daily", keys)
+        assert init_end == today
+        assert init_start == today - timedelta(days=90)
+
+    def test_init_end_clamps_to_max_d_when_data_in_past(self) -> None:
+        from datetime import date
+
+        keys = [f"2020-01-{d:02d}" for d in range(1, 15)]
+        _, max_d, _, init_end = _backfill_date_bounds("daily", keys)
+        # Data ends in 2020, today is later — clamp to max_d
+        assert init_end == max_d
+        assert init_end == date(2020, 1, 14)
 
 
 # ---------------------------------------------------------------------------

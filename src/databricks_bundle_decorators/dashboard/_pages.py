@@ -5,7 +5,7 @@ Each ``_page_*`` function returns a component tree — no side effects.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import dash_ag_grid as dag
@@ -90,19 +90,19 @@ _STATUS_CELL_STYLE = {
     "styleConditions": [
         {
             "condition": "params.value == 'SUCCESS'",
-            "style": {"color": "#198754", "fontWeight": "bold"},
+            "style": {"color": "#2fb380", "fontWeight": "bold"},
         },
         {
             "condition": "params.value == 'FAILED'",
-            "style": {"color": "#dc3545", "fontWeight": "bold"},
+            "style": {"color": "#cf3257", "fontWeight": "bold"},
         },
         {
             "condition": "params.value == 'RUNNING'",
-            "style": {"color": "#0d6efd", "fontWeight": "bold"},
+            "style": {"color": "#3459e6", "fontWeight": "bold"},
         },
         {
             "condition": "params.value == 'INTERNAL_ERROR'",
-            "style": {"color": "#dc3545", "fontWeight": "bold"},
+            "style": {"color": "#cf3257", "fontWeight": "bold"},
         },
     ],
 }
@@ -127,12 +127,14 @@ def _default_col_def() -> dict[str, Any]:
 # Backfill date-range helpers
 # ---------------------------------------------------------------------------
 
-#: (max_unfiltered, default_window) thresholds per backfill kind.
-_DATE_THRESHOLDS: dict[str, tuple[int, int]] = {
-    "daily": (180, 90),
-    "weekly": (104, 52),
-    "monthly": (48, 24),
-    "hourly": (14, 7),
+#: (max_span_days, default_window_delta) thresholds per backfill kind.
+#: When the date span exceeds max_span_days the initial date picker
+#: range is set to [max_date - window, max_date].
+_DATE_THRESHOLDS: dict[str, tuple[int, timedelta]] = {
+    "daily": (180, timedelta(days=90)),
+    "weekly": (730, timedelta(weeks=52)),
+    "monthly": (1460, timedelta(days=730)),  # ~24 months
+    "hourly": (14, timedelta(days=7)),
 }
 
 #: Kinds that support date-range filtering via a DatePickerRange.
@@ -183,12 +185,16 @@ def _backfill_date_bounds(
     unique = sorted(set(dates))
     min_d = unique[0]
     max_d = unique[-1]
-    max_unfiltered, default_window = _DATE_THRESHOLDS.get(kind, (180, 90))
-    if len(unique) > max_unfiltered:
-        init_start = unique[-default_window]
+    today = date.today()
+    # Anchor the visible window to today (clamped to the data range)
+    init_end = min(today, max_d) if today >= min_d else max_d
+    span_days = (max_d - min_d).days
+    max_span, window_delta = _DATE_THRESHOLDS.get(kind, (180, timedelta(days=90)))
+    if span_days > max_span:
+        init_start = max(min_d, init_end - window_delta)
     else:
         init_start = min_d
-    return min_d, max_d, init_start, max_d
+    return min_d, max_d, init_start, init_end
 
 
 # Keep old name available for backwards compat / existing tests

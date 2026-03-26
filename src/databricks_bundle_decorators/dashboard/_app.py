@@ -144,7 +144,7 @@ def run_app(
     # --- Build Dash app ---
     app = dash.Dash(
         __name__,
-        external_stylesheets=[dbc.themes.FLATLY],
+        external_stylesheets=[dbc.themes.ZEPHYR],
         suppress_callback_exceptions=True,
     )
     app.title = "Pipeline Observability"
@@ -207,7 +207,7 @@ def run_app(
             ],
             fluid=True,
         ),
-        color="dark",
+        color="primary",
         dark=True,
         className="mb-4",
     )
