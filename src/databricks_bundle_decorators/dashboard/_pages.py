@@ -332,7 +332,7 @@ def _page_backfills(
         {"field": "Type", "maxWidth": 100},
         {"field": "Coverage", "minWidth": 140},
         {"field": "Errors", "maxWidth": 80},
-        {"field": "Keys", "minWidth": 120},
+        {"field": "Keys", "cellRenderer": "markdown", "minWidth": 120},
     ]
 
     return html.Div(
@@ -349,6 +349,7 @@ def _page_backfills(
                 rowData=cov_records,
                 columnDefs=cov_cols,
                 defaultColDef=_default_col_def(),
+                dangerously_allow_code=True,
                 dashGridOptions={
                     "pagination": True,
                     "paginationPageSize": 25,

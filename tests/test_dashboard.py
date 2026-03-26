@@ -29,6 +29,9 @@ from databricks_bundle_decorators.dashboard._compute import (
     _is_terminal_failure,
 )
 from databricks_bundle_decorators.dashboard._display import (
+    _SQ_COMPLETED,
+    _SQ_FAILED,
+    _SQ_MISSING,
     _coverages_to_records,
     _fmt_duration,
     _overviews_to_records,
@@ -1565,8 +1568,8 @@ class TestCoveragesToRecords:
         records = _coverages_to_records({"j": cov})
         keys_cell = records[0]["Keys"]
         # Failed (red) should come before success (green)
-        red_pos = keys_cell.index("\U0001f7e5")
-        green_pos = keys_cell.index("\U0001f7e9")
+        red_pos = keys_cell.index(_SQ_FAILED)
+        green_pos = keys_cell.index(_SQ_COMPLETED)
         assert red_pos < green_pos
 
     def test_time_based_last_n_periods(self) -> None:
@@ -1580,12 +1583,13 @@ class TestCoveragesToRecords:
         )
         records = _coverages_to_records({"j": cov})
         keys_cell = records[0]["Keys"]
-        # Last 5 periods: days 6-10, so 3 green + 2 white
-        squares = keys_cell.split()
-        assert len(squares) == 5
-        # Last two should be white (missing)
-        assert squares[-1] == "\u2b1c"
-        assert squares[-2] == "\u2b1c"
+        # Last 5 periods: days 6-10, so 3 completed + 2 missing
+        assert keys_cell.count(_SQ_COMPLETED) == 3
+        assert keys_cell.count(_SQ_MISSING) == 2
+        # Latest date (missing) should be rightmost
+        last_completed = keys_cell.rindex(_SQ_COMPLETED)
+        first_missing = keys_cell.index(_SQ_MISSING)
+        assert last_completed < first_missing
 
     def test_static_caps_at_max(self) -> None:
         cov = BackfillCoverage(
@@ -1597,8 +1601,7 @@ class TestCoveragesToRecords:
             kind="static",
         )
         records = _coverages_to_records({"j": cov})
-        squares = records[0]["Keys"].split()
-        assert len(squares) == 5
+        assert records[0]["Keys"].count(_SQ_COMPLETED) == 5
 
     def test_errored_keys_column(self) -> None:
         cov = BackfillCoverage(

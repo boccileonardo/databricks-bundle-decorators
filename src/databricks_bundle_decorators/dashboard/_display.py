@@ -103,6 +103,19 @@ def _fmt_duration(seconds: float) -> str:
 
 _TIME_BASED_KINDS = frozenset({"daily", "weekly", "monthly", "hourly"})
 
+# HTML color squares matching the heatmap colorscale in ``_figures.py``.
+_SQ_STYLE = (
+    "display:inline-block;width:14px;height:14px;border-radius:2px;margin-right:3px"
+)
+_SQ_COMPLETED = (
+    f'<span style="{_SQ_STYLE};background:#2fb380" title="Completed"></span>'
+)
+_SQ_IN_PROGRESS = (
+    f'<span style="{_SQ_STYLE};background:#3459e6" title="In progress"></span>'
+)
+_SQ_FAILED = f'<span style="{_SQ_STYLE};background:#e5484d" title="Failed"></span>'
+_SQ_MISSING = f'<span style="{_SQ_STYLE};background:#f2a20d" title="Missing"></span>'
+
 
 def _build_key_squares(cov: BackfillCoverage, max_squares: int) -> list[str]:
     """Build colored-square strings from backfill coverage keys.
@@ -148,13 +161,13 @@ def _build_key_squares(cov: BackfillCoverage, max_squares: int) -> list[str]:
     squares: list[str] = []
     for k in selected:
         if k in completed_set:
-            squares.append("\U0001f7e9")  # green square
+            squares.append(_SQ_COMPLETED)
         elif k in in_progress_set:
-            squares.append("\U0001f7e6")  # blue square
+            squares.append(_SQ_IN_PROGRESS)
         elif k in errored_set:
-            squares.append("\U0001f7e5")  # red square
+            squares.append(_SQ_FAILED)
         else:
-            squares.append("\u2b1c")  # white square (missing)
+            squares.append(_SQ_MISSING)
     return squares
 
 
@@ -201,7 +214,7 @@ def _coverages_to_records(
 
         # Key status squares
         squares = _build_key_squares(c, max_squares)
-        keys_cell = " ".join(squares) if squares else "\u2014"
+        keys_cell = "".join(squares) if squares else "\u2014"
 
         rec: dict[str, Any] = {
             "Job": c.job_name,
