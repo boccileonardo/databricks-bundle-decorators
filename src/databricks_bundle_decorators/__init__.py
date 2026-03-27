@@ -51,6 +51,9 @@ from databricks_bundle_decorators.discovery import (
 from databricks_bundle_decorators.io_manager import InputContext as InputContext
 from databricks_bundle_decorators.io_manager import IoManager as IoManager
 from databricks_bundle_decorators.io_manager import OutputContext as OutputContext
+from databricks_bundle_decorators.codegen import (
+    generate_resources as generate_resources,
+)
 from databricks_bundle_decorators.backfill import (
     get_backfill_key as get_backfill_key,
     get_run_logical_date as get_run_logical_date,
@@ -106,4 +109,5 @@ __all__ = [
     "get_backfill_key",
     "get_run_logical_date",
     "run_app",
+    "generate_resources",
 ]

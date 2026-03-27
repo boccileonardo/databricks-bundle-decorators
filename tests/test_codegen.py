@@ -109,6 +109,66 @@ class TestGenerateResources:
         assert len(task_obj.libraries) == 1
         assert task_obj.libraries[0].pypi.package == "requests"
 
+    def test_default_libraries_override(self):
+        """Passing default_libraries overrides the hardcoded dist/*.whl."""
+        from databricks.bundles.jobs import Library
+
+        @job
+        def my_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(
+            package_name="test_pkg",
+            default_libraries=[Library(whl="artifacts/*.whl")],
+        )
+        task_obj = resources["my_job"].tasks[0]
+        assert len(task_obj.libraries) == 1
+        assert task_obj.libraries[0].whl == "artifacts/*.whl"
+
+    def test_default_libraries_empty_suppresses(self):
+        """Passing default_libraries=[] suppresses the default wheel."""
+
+        @job
+        def my_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(
+            package_name="test_pkg",
+            default_libraries=[],
+        )
+        task_obj = resources["my_job"].tasks[0]
+        assert not task_obj.libraries
+
+    def test_job_libraries_override_default_libraries(self):
+        """Job-level libraries take precedence over default_libraries."""
+        from databricks.bundles.jobs import Library, PythonPyPiLibrary
+
+        custom_lib = Library(pypi=PythonPyPiLibrary(package="pandas"))
+
+        @job(libraries=[custom_lib])
+        def my_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(
+            package_name="test_pkg",
+            default_libraries=[Library(whl="artifacts/*.whl")],
+        )
+        task_obj = resources["my_job"].tasks[0]
+        assert len(task_obj.libraries) == 1
+        assert task_obj.libraries[0].pypi.package == "pandas"
+
 
 class TestForEachCodegen:
     """Tests for for_each_task codegen output."""

@@ -62,13 +62,18 @@ before running the task.  Setting `libraries=[]` tells the framework to
 **skip** library installation entirely because the package is already
 available in the container.
 
-**`libraries` parameter reference**
+**`libraries` parameter reference (per-job)**
 
 | Value | Behavior |
 |-------|----------|
-| `None` (default) | Attach `dist/*.whl` — standard wheel deployment |
+| `None` (default) | Use `default_libraries` from `generate_resources()` (defaults to `dist/*.whl`) |
 | `[]` | No libraries — package pre-installed in Docker image |
 | `[Library(...)]` | Custom libraries — e.g. PyPI packages, Maven JARs |
+
+!!! tip
+    If **all** your jobs use a non-standard wheel location, set
+    `default_libraries` on `generate_resources()` instead of repeating
+    `libraries=` on every `@job`.  See [Bundle Configuration](../examples/bundle-config.md#customising-the-default-wheel-path).
 
 ## Dockerfile example
 

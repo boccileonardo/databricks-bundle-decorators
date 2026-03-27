@@ -17,7 +17,10 @@ from databricks_bundle_decorators.registry import (
 )
 
 
-def generate_resources(package_name: str = "databricks_bundle_decorators") -> dict:
+def generate_resources(
+    package_name: str = "databricks_bundle_decorators",
+    default_libraries: list[object] | None = None,
+) -> dict:
     """Build ``{resource_key: Job}`` from the global registries.
 
     Parameters
@@ -25,6 +28,11 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
     package_name:
         The Python package name used in ``PythonWheelTask``.  Must match
         the ``[project.name]`` in *pyproject.toml*.
+    default_libraries:
+        Libraries attached to every task whose ``@job`` does *not* set
+        ``libraries`` explicitly.  When ``None`` (the default), uses
+        ``[Library(whl="dist/*.whl")]``.  Pass an empty list to suppress
+        the default wheel library.
     """
     from databricks.bundles.jobs import (
         ClusterSpec,
@@ -38,7 +46,9 @@ def generate_resources(package_name: str = "databricks_bundle_decorators") -> di
         TaskDependency,
     )
 
-    _default_libraries = [Library(whl="dist/*.whl")]
+    _default_libraries: list[object] | None = (
+        [Library(whl="dist/*.whl")] if default_libraries is None else default_libraries
+    )
 
     jobs: dict[str, Job] = {}
 
