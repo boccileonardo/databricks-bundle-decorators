@@ -59,3 +59,27 @@ def load_resources(bundle: Bundle) -> Resources:
 ```
 
 `load_resources` is the entry point called by `databricks bundle deploy`. It discovers all pipeline modules (via the `databricks_bundle_decorators.pipelines` entry-point group), populates the registries, and generates `Job` resources.
+
+### Customising the default wheel path
+
+By default every task gets `Library(whl="dist/*.whl")`.  If your build
+outputs wheels to a different location, pass `default_libraries`:
+
+```python
+from databricks.bundles.jobs import Library
+
+for resource_key, job in generate_resources(
+    default_libraries=[Library(whl="artifacts/dist/*.whl")],
+).items():
+    resources.add_resource(resource_key, job)
+```
+
+Jobs that set their own `libraries` (e.g. `@job(libraries=[])` for
+Docker) are **not** affected — `default_libraries` only applies when the
+job does not specify libraries explicitly.
+
+| `default_libraries` value | Behaviour |
+|---|---|
+| `None` (default) | Attach `dist/*.whl` — standard wheel deployment |
+| `[Library(...)]` | Custom default libraries for all jobs |
+| `[]` | No libraries by default |
