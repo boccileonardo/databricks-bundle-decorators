@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from databricks_bundle_decorators.backfill import BACKFILL_TAG, _serialize_backfill_tag
 from databricks_bundle_decorators.registry import (
     _JOB_REGISTRY,
     _TASK_REGISTRY,
@@ -179,6 +180,14 @@ def generate_resources(
             JobParameterDefinition(name=k, default=v)
             for k, v in job_meta.params.items()
         ]
+
+        # ----- backfill tag -----------------------------------------------
+        if job_meta.backfill is not None:
+            existing_tags: dict[str, str] = job_meta.sdk_config.get("tags", {})
+            job_meta.sdk_config["tags"] = {
+                **existing_tags,
+                BACKFILL_TAG: _serialize_backfill_tag(job_meta.backfill),
+            }
 
         job_obj = Job(
             name=job_name,

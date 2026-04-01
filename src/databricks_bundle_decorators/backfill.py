@@ -18,12 +18,13 @@ parses it as a datetime via `get_run_logical_date`::
 
 from __future__ import annotations
 
+import json
 import logging
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import whenever
 
@@ -31,6 +32,38 @@ _logger = logging.getLogger(__name__)
 
 #: The fixed job-parameter name that carries the backfill key.
 BACKFILL_KEY_PARAM: str = "backfill_key"
+
+#: Tag key used to store the serialised backfill definition on
+#: the deployed Databricks job.
+BACKFILL_TAG: str = "dbxdec.backfill"
+
+
+def _serialize_backfill_tag(defn: BackfillDef) -> str:
+    """Serialise a `BackfillDef` to a compact JSON string for a job tag.
+
+    Only the fields relevant to the concrete type are included.
+    """
+    d: dict[str, Any]
+    if isinstance(defn, StaticBackfill):
+        d = {"type": "static", "keys": defn._keys}
+    elif isinstance(
+        defn, (DailyBackfill, WeeklyBackfill, MonthlyBackfill, HourlyBackfill)
+    ):
+        type_map = {
+            DailyBackfill: "daily",
+            WeeklyBackfill: "weekly",
+            MonthlyBackfill: "monthly",
+            HourlyBackfill: "hourly",
+        }
+        d = {"type": type_map[type(defn)], "start_date": defn.start_date}
+        if defn.end_date is not None:
+            d["end_date"] = defn.end_date
+        if defn.tz != "UTC":
+            d["tz"] = defn.tz
+    else:
+        msg = f"Unsupported BackfillDef type: {type(defn).__name__}"
+        raise TypeError(msg)
+    return json.dumps(d, separators=(",", ":"))
 
 
 class BackfillDef(ABC):

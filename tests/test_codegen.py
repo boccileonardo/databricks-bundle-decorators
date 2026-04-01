@@ -1,5 +1,15 @@
 """Tests for codegen helpers."""
 
+import json
+
+from databricks_bundle_decorators.backfill import (
+    BACKFILL_TAG,
+    DailyBackfill,
+    HourlyBackfill,
+    MonthlyBackfill,
+    StaticBackfill,
+    WeeklyBackfill,
+)
 from databricks_bundle_decorators.codegen import generate_resources
 from databricks_bundle_decorators.decorators import (
     for_each_task,
@@ -310,3 +320,165 @@ class TestForEachCodegen:
         inner = resources["fe_inherit_job"].tasks[0].for_each_task.task
 
         assert inner.job_cluster_key == "shared"
+
+
+class TestBackfillTagCodegen:
+    """Tests for backfill definition tag injection."""
+
+    def setup_method(self):
+        reset_registries()
+
+    def test_daily_backfill_tag(self):
+        """DailyBackfill produces a tag with type and start_date."""
+
+        @job(backfill=DailyBackfill(start_date="2024-01-01"))
+        def daily_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(package_name="test_pkg")
+        tag = json.loads(resources["daily_job"].tags[BACKFILL_TAG])
+        assert tag == {"type": "daily", "start_date": "2024-01-01"}
+
+    def test_daily_backfill_tag_with_end_and_tz(self):
+        """DailyBackfill with end_date and non-UTC tz includes all fields."""
+
+        @job(
+            backfill=DailyBackfill(
+                start_date="2024-01-01", end_date="2024-12-31", tz="US/Eastern"
+            )
+        )
+        def daily_full_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(package_name="test_pkg")
+        tag = json.loads(resources["daily_full_job"].tags[BACKFILL_TAG])
+        assert tag == {
+            "type": "daily",
+            "start_date": "2024-01-01",
+            "end_date": "2024-12-31",
+            "tz": "US/Eastern",
+        }
+
+    def test_weekly_backfill_tag(self):
+        """WeeklyBackfill produces a tag with type weekly."""
+
+        @job(backfill=WeeklyBackfill(start_date="2024-W01"))
+        def weekly_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(package_name="test_pkg")
+        tag = json.loads(resources["weekly_job"].tags[BACKFILL_TAG])
+        assert tag == {"type": "weekly", "start_date": "2024-W01"}
+
+    def test_monthly_backfill_tag(self):
+        """MonthlyBackfill produces a tag with type monthly."""
+
+        @job(backfill=MonthlyBackfill(start_date="2024-01-01"))
+        def monthly_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(package_name="test_pkg")
+        tag = json.loads(resources["monthly_job"].tags[BACKFILL_TAG])
+        assert tag == {"type": "monthly", "start_date": "2024-01-01"}
+
+    def test_hourly_backfill_tag(self):
+        """HourlyBackfill produces a tag with type hourly."""
+
+        @job(backfill=HourlyBackfill(start_date="2024-01-01T00", tz="America/New_York"))
+        def hourly_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(package_name="test_pkg")
+        tag = json.loads(resources["hourly_job"].tags[BACKFILL_TAG])
+        assert tag == {
+            "type": "hourly",
+            "start_date": "2024-01-01T00",
+            "tz": "America/New_York",
+        }
+
+    def test_static_backfill_tag(self):
+        """StaticBackfill produces a tag with keys list."""
+
+        @job(backfill=StaticBackfill(keys=["us", "eu", "jp"]))
+        def static_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(package_name="test_pkg")
+        tag = json.loads(resources["static_job"].tags[BACKFILL_TAG])
+        assert tag == {"type": "static", "keys": ["us", "eu", "jp"]}
+
+    def test_backfill_tag_merges_with_user_tags(self):
+        """Backfill tag is merged alongside user-provided tags."""
+
+        @job(
+            backfill=DailyBackfill(start_date="2024-01-01"),
+            tags={"team": "data", "env": "prod"},
+        )
+        def tagged_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(package_name="test_pkg")
+        tags = resources["tagged_job"].tags
+        assert tags["team"] == "data"
+        assert tags["env"] == "prod"
+        assert BACKFILL_TAG in tags
+        tag = json.loads(tags[BACKFILL_TAG])
+        assert tag["type"] == "daily"
+
+    def test_no_backfill_no_tag(self):
+        """Jobs without backfill don't get a backfill tag."""
+
+        @job
+        def plain_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(package_name="test_pkg")
+        tags = resources["plain_job"].tags
+        assert tags is None or BACKFILL_TAG not in tags
+
+    def test_daily_backfill_utc_omits_tz(self):
+        """DailyBackfill with default tz='UTC' omits tz from tag."""
+
+        @job(backfill=DailyBackfill(start_date="2024-06-01", tz="UTC"))
+        def utc_job():
+            @task
+            def noop():
+                pass
+
+            noop()
+
+        resources = generate_resources(package_name="test_pkg")
+        tag = json.loads(resources["utc_job"].tags[BACKFILL_TAG])
+        assert "tz" not in tag
