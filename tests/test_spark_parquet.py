@@ -35,6 +35,23 @@ class TestSparkParquetConstruction:
         io = SparkParquetIoManager(base_path="/data/lake/")
         assert io.base_path == "/data/lake"
 
+    def test_base_path_as_callable(self):
+        io = SparkParquetIoManager(base_path=lambda: "/data/lake/")
+        assert io.base_path == "/data/lake"
+
+    def test_base_path_callable_invoked_each_time(self):
+        call_count = 0
+
+        def _factory() -> str:
+            nonlocal call_count
+            call_count += 1
+            return f"/data/{call_count}"
+
+        io = SparkParquetIoManager(base_path=_factory)
+        assert io.base_path == "/data/1"
+        assert io.base_path == "/data/2"
+        assert call_count == 2
+
     def test_spark_configs_default_none(self):
         io = SparkParquetIoManager(base_path="/data")
         assert io.spark_configs is None
@@ -75,6 +92,10 @@ class TestSparkParquetConstruction:
 class TestSparkServerlessParquetConstruction:
     def test_strips_trailing_slash(self):
         io = SparkServerlessParquetIoManager(base_path="/data/lake/")
+        assert io.base_path == "/data/lake"
+
+    def test_base_path_as_callable(self):
+        io = SparkServerlessParquetIoManager(base_path=lambda: "/data/lake/")
         assert io.base_path == "/data/lake"
 
 

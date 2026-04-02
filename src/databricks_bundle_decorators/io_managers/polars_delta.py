@@ -44,11 +44,21 @@ class PolarsDeltaIoManager(IoManager):
 
     Parameters
     ----------
-    base_path : str
+    base_path : str | Callable[[], str]
         Root URI for Delta tables.  Each task creates a sub-directory
         named after its task key.  Can be a local path, an Azure URI
         (``abfss://…``), an S3 URI (``s3://…``), a GCS URI (``gs://…``),
         or any other URI scheme supported by ``deltalake``.
+
+        Can also be a **callable** that returns a string, resolved lazily
+        at runtime.  Use this for multi-environment deployments where the
+        path depends on job parameters::
+
+            from databricks_bundle_decorators import params
+
+            io = PolarsDeltaIoManager(
+                base_path=lambda: f"abfss://lake@{params['env']}account.dfs.core.windows.net/data",
+            )
     storage_options : dict[str, str] | Callable[[], dict[str, str]] | None
         Credentials / options forwarded to Polars and ``deltalake`` I/O
         calls.  Can be a plain dict, a **callable** that returns a dict
@@ -117,7 +127,7 @@ class PolarsDeltaIoManager(IoManager):
 
     def __init__(
         self,
-        base_path: str,
+        base_path: str | Callable[[], str],
         storage_options: dict[str, str] | Callable[[], dict[str, str]] | None = None,
         write_options: dict[str, Any] | None = None,
         read_options: dict[str, Any] | None = None,
@@ -125,12 +135,19 @@ class PolarsDeltaIoManager(IoManager):
         *,
         auto_filter: bool = True,
     ) -> None:
-        self.base_path = base_path.rstrip("/")
+        self._base_path = base_path
         self._storage_options = storage_options
         self._write_options = write_options or {}
         self._read_options = read_options or {}
         self._mode = mode
         self.auto_filter = auto_filter
+
+    @property
+    def base_path(self) -> str:
+        """Resolve *base_path*, calling it first if it is a callable."""
+        if isinstance(self._base_path, str):
+            return self._base_path.rstrip("/")
+        return self._base_path().rstrip("/")
 
     @property
     def storage_options(self) -> dict[str, str] | None:

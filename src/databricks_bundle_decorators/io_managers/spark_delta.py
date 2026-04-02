@@ -35,18 +35,25 @@ class _SparkDeltaBase(IoManager):
 
     def __init__(
         self,
-        base_path: str,
+        base_path: str | Callable[[], str],
         write_options: dict[str, str] | None = None,
         read_options: dict[str, str] | None = None,
         mode: str = "error",
         *,
         auto_filter: bool = True,
     ) -> None:
-        self.base_path = base_path.rstrip("/")
+        self._base_path = base_path
         self._write_options = write_options or {}
         self._read_options = read_options or {}
         self._mode = mode
         self.auto_filter = auto_filter
+
+    @property
+    def base_path(self) -> str:
+        """Resolve *base_path*, calling it first if it is a callable."""
+        if isinstance(self._base_path, str):
+            return self._base_path.rstrip("/")
+        return self._base_path().rstrip("/")
 
     def _uri(self, key: str) -> str:
         return f"{self.base_path}/{key}"
@@ -142,10 +149,20 @@ class SparkDeltaIoManager(_SparkDeltaBase):
 
     Parameters
     ----------
-    base_path : str
+    base_path : str | Callable[[], str]
         Root URI for Delta tables.  Each task creates a sub-directory
         named after its task key (e.g.
         ``abfss://container@account.dfs.core.windows.net/staging``).
+
+        Can also be a **callable** that returns a string, resolved lazily
+        at runtime.  Use this for multi-environment deployments where the
+        path depends on job parameters::
+
+            from databricks_bundle_decorators import params
+
+            io = SparkDeltaIoManager(
+                base_path=lambda: f"abfss://lake@{params['env']}account.dfs.core.windows.net/data",
+            )
     spark_configs : dict[str, str] | Callable[[], dict[str, str]] | None
         Key-value pairs applied via ``spark.conf.set()`` before the
         first read or write.  Can be a plain dict, a **callable** that
@@ -215,7 +232,7 @@ class SparkDeltaIoManager(_SparkDeltaBase):
 
     def __init__(
         self,
-        base_path: str,
+        base_path: str | Callable[[], str],
         spark_configs: dict[str, str] | Callable[[], dict[str, str]] | None = None,
         write_options: dict[str, str] | None = None,
         read_options: dict[str, str] | None = None,
@@ -266,10 +283,13 @@ class SparkServerlessDeltaIoManager(_SparkDeltaBase):
 
     Parameters
     ----------
-    base_path : str
+    base_path : str | Callable[[], str]
         Root URI for Delta tables.  Must be a path governed by a
         Unity Catalog external location (e.g.
         ``abfss://container@account.dfs.core.windows.net/staging``).
+
+        Can also be a **callable** that returns a string, resolved lazily
+        at runtime.
     write_options : dict[str, str] | None
         Extra Spark writer options applied via ``.option(k, v)``.
     read_options : dict[str, str] | None

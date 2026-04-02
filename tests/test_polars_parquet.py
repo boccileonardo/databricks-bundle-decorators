@@ -47,6 +47,23 @@ class TestConstruction:
         io = PolarsParquetIoManager(base_path="/data/lake/")
         assert io.base_path == "/data/lake"
 
+    def test_base_path_as_callable(self) -> None:
+        io = PolarsParquetIoManager(base_path=lambda: "/data/lake/")
+        assert io.base_path == "/data/lake"
+
+    def test_base_path_callable_invoked_each_time(self) -> None:
+        call_count = 0
+
+        def _factory() -> str:
+            nonlocal call_count
+            call_count += 1
+            return f"/data/{call_count}"
+
+        io = PolarsParquetIoManager(base_path=_factory)
+        assert io.base_path == "/data/1"
+        assert io.base_path == "/data/2"
+        assert call_count == 2
+
     def test_storage_options_default_none(self) -> None:
         io = PolarsParquetIoManager(base_path="/data")
         assert io.storage_options is None
