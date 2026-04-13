@@ -4,26 +4,26 @@ Provides ready-to-use IoManagers for common storage backends.
 
 Polars
 ------
-- `PolarsParquetIoManager` – Parquet files
-- `PolarsDeltaIoManager` – Delta tables (requires ``deltalake``)
-- `PolarsJsonIoManager` – NDJSON files
-- `PolarsCsvIoManager` – CSV files
+- `PolarsParquetIoManager` - Parquet files
+- `PolarsDeltaIoManager` - Delta tables (requires ``deltalake``)
+- `PolarsJsonIoManager` - NDJSON files
+- `PolarsCsvIoManager` - CSV files
 
 Spark (classic compute)
 -----------------------
-- `SparkDeltaIoManager` – Delta tables with ``spark.conf.set()`` credentials
-- `SparkParquetIoManager` – Parquet files with ``spark.conf.set()`` credentials
+- `SparkDeltaIoManager` - Delta tables with ``spark.conf.set()`` credentials
+- `SparkParquetIoManager` - Parquet files with ``spark.conf.set()`` credentials
 
 Spark (serverless compute)
 --------------------------
-- `SparkServerlessDeltaIoManager` – Delta tables (Unity Catalog ext. location auth)
-- `SparkServerlessParquetIoManager` – Parquet files (Unity Catalog ext. location auth)
+- `SparkServerlessDeltaIoManager` - Delta tables (Unity Catalog ext. location auth)
+- `SparkServerlessParquetIoManager` - Parquet files (Unity Catalog ext. location auth)
 
 Spark (Unity Catalog)
 ---------------------
-- `SparkUCTableIoManager` – managed Delta tables via three‑level namespace
-- `SparkUCVolumeDeltaIoManager` – Delta tables in UC Volumes
-- `SparkUCVolumeParquetIoManager` – Parquet files in UC Volumes
+- `SparkUCTableIoManager` - managed Delta tables via three-level namespace
+- `SparkUCVolumeDeltaIoManager` - Delta tables in UC Volumes
+- `SparkUCVolumeParquetIoManager` - Parquet files in UC Volumes
 """
 
 from databricks_bundle_decorators.io_managers.polars_csv import (
@@ -40,15 +40,23 @@ from databricks_bundle_decorators.io_managers.polars_parquet import (
 )
 from databricks_bundle_decorators.io_managers.spark_delta import (
     SparkDeltaIoManager as SparkDeltaIoManager,
+)
+from databricks_bundle_decorators.io_managers.spark_delta import (
     SparkServerlessDeltaIoManager as SparkServerlessDeltaIoManager,
 )
 from databricks_bundle_decorators.io_managers.spark_parquet import (
     SparkParquetIoManager as SparkParquetIoManager,
+)
+from databricks_bundle_decorators.io_managers.spark_parquet import (
     SparkServerlessParquetIoManager as SparkServerlessParquetIoManager,
 )
 from databricks_bundle_decorators.io_managers.spark_uc import (
     SparkUCTableIoManager as SparkUCTableIoManager,
+)
+from databricks_bundle_decorators.io_managers.spark_uc import (
     SparkUCVolumeDeltaIoManager as SparkUCVolumeDeltaIoManager,
+)
+from databricks_bundle_decorators.io_managers.spark_uc import (
     SparkUCVolumeParquetIoManager as SparkUCVolumeParquetIoManager,
 )
 

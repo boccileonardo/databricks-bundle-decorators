@@ -6,7 +6,7 @@ Calendar heatmaps and partition grid visualisations.
 from __future__ import annotations
 
 import calendar as _calendar
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 import plotly.graph_objects as go
@@ -33,7 +33,7 @@ from databricks_bundle_decorators.dashboard._data import (
 #:   0=not-in-range, 1=missing, 2=completed,
 #:   3=not started (future), 4=in progress, 5=failed.
 #:
-#: z values are integers 0–5 with zmin=0, zmax=5, so normalised positions
+#: z values are integers 0-5 with zmin=0, zmax=5, so normalised positions
 #: are 0, 0.2, 0.4, 0.6, 0.8, 1.  Boundaries sit at midpoints (0.1, 0.3,
 #: 0.5, 0.7, 0.9) so each z value falls squarely inside its colour band.
 _COVERAGE_COLORSCALE: list[list[object]] = [
@@ -61,6 +61,19 @@ _LEGEND_ITEMS: list[tuple[str, str]] = [
     ("Not in range", COLOR_NOT_IN_RANGE),
 ]
 
+# ---------------------------------------------------------------------------
+# Figure builder thresholds
+# ---------------------------------------------------------------------------
+
+_MAX_UNFILTERED_DAYS = 180
+_DEFAULT_WINDOW_DAYS = 90
+_MAX_UNFILTERED_WEEKS = 104
+_DEFAULT_WINDOW_WEEKS = 52
+_MAX_UNFILTERED_MONTHS = 48
+_DEFAULT_WINDOW_MONTHS = 24
+_MAX_UNFILTERED_HOURLY_DAYS = 14
+_MAX_VISIBLE_KEYS = 50
+
 
 def _add_coverage_legend(
     fig: Any,
@@ -82,21 +95,21 @@ def _add_coverage_legend(
                 x=[None],
                 y=[None],
                 mode="markers",
-                marker=dict(size=10, color=color, symbol="square"),
+                marker={"size": 10, "color": color, "symbol": "square"},
                 name=label,
                 showlegend=True,
             )
         )
     fig.update_layout(
-        legend=dict(
-            orientation="h",
-            yanchor="top",
-            y=-0.15,
-            xanchor="left",
-            x=0,
-            itemclick=False,
-            itemdoubleclick=False,
-        ),
+        legend={
+            "orientation": "h",
+            "yanchor": "top",
+            "y": -0.15,
+            "xanchor": "left",
+            "x": 0,
+            "itemclick": False,
+            "itemdoubleclick": False,
+        },
     )
 
 
@@ -113,7 +126,7 @@ def _hover_completed(key: str, key_run_info: _KeyRunInfo | None) -> str:
     if key_run_info is not None and key in key_run_info:
         run_id, start_ms = key_run_info[key]
         if start_ms:
-            dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
+            dt = datetime.fromtimestamp(start_ms / 1000, tz=UTC)
             ts = dt.strftime("%Y-%m-%d %H:%M UTC")
             return f"{key}: Completed<br>Run {run_id} \u00b7 {ts}"
         return f"{key}: Completed<br>Run {run_id}"
@@ -169,7 +182,7 @@ def _build_daily_calendar(
     """Build a Plotly heatmap calendar for daily backfill keys.
 
     Renders a GitHub-contribution-graph-style grid: rows are
-    weekdays (Mon–Sun) and columns are weeks.
+    weekdays (Mon-Sun) and columns are weeks.
     """
     expected_dates: set[whenever.Date] = set()
     for key in expected_keys:
@@ -189,8 +202,6 @@ def _build_daily_calendar(
             continue
 
     # Apply date-range filter
-    _MAX_UNFILTERED_DAYS = 180
-    _DEFAULT_WINDOW_DAYS = 90
     if start_date is not None or end_date is not None:
         lo = (
             whenever.Date.from_py_date(start_date)
@@ -271,16 +282,16 @@ def _build_daily_calendar(
             ygap=2,
         )
     )
-    xaxis_opts: dict[str, Any] = dict(tickvals=month_ticks, ticktext=month_labels)
+    xaxis_opts: dict[str, Any] = {"tickvals": month_ticks, "ticktext": month_labels}
 
     fig.update_layout(
         height=230,
-        margin=dict(l=50, r=20, t=10, b=60),
-        yaxis=dict(
-            tickvals=list(range(7)),
-            ticktext=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-            autorange="reversed",
-        ),
+        margin={"l": 50, "r": 20, "t": 10, "b": 60},
+        yaxis={
+            "tickvals": list(range(7)),
+            "ticktext": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+            "autorange": "reversed",
+        },
         xaxis=xaxis_opts,
     )
     _add_coverage_legend(fig)
@@ -322,8 +333,6 @@ def _build_weekly_calendar(
             completed_parsed.add((int(m.group(1)), int(m.group(2))))
 
     # Apply date-range filter (uses the Monday of each ISO week)
-    _MAX_UNFILTERED_WEEKS = 104
-    _DEFAULT_WINDOW_WEEKS = 52
     if start_date is not None or end_date is not None:
         min_yw = min(expected)
         max_yw = max(expected)
@@ -350,7 +359,7 @@ def _build_weekly_calendar(
 
     min_year = min(y for y, _ in expected)
     max_year = max(y for y, _ in expected)
-    week_cols = max(max(w for _, w in expected), 52)
+    week_cols = max(*(w for _, w in expected), 52)
 
     years = list(range(min_year, max_year + 1))
     z: list[list[int]] = []
@@ -400,8 +409,8 @@ def _build_weekly_calendar(
     )
     fig.update_layout(
         height=max(150, len(years) * 50 + 80),
-        margin=dict(l=50, r=20, t=10, b=60),
-        xaxis=dict(dtick=4),
+        margin={"l": 50, "r": 20, "t": 10, "b": 60},
+        xaxis={"dtick": 4},
     )
     _add_coverage_legend(fig)
     return fig
@@ -446,8 +455,6 @@ def _build_monthly_calendar(
             continue
 
     # Apply date-range filter
-    _MAX_UNFILTERED_MONTHS = 48
-    _DEFAULT_WINDOW_MONTHS = 24
     if start_date is not None or end_date is not None:
         lo = start_date or date(min(expected)[0], min(expected)[1], 1)
         hi = end_date or date(max(expected)[0], max(expected)[1], 1)
@@ -518,7 +525,7 @@ def _build_monthly_calendar(
     )
     fig.update_layout(
         height=max(150, len(years) * 50 + 80),
-        margin=dict(l=50, r=20, t=10, b=60),
+        margin={"l": 50, "r": 20, "t": 10, "b": 60},
     )
     _add_coverage_legend(fig)
     return fig
@@ -543,12 +550,10 @@ def _build_hourly_calendar(
     range are rendered.  Defaults to the most recent 7 days of data
     when the total span exceeds 14 days.
     """
-    _FMT = _HOURLY_FMT
-
     expected: dict[tuple[date, int], str] = {}
     for key in expected_keys:
         try:
-            parsed = datetime.strptime(key, _FMT)
+            parsed = datetime.strptime(key, _HOURLY_FMT)  # noqa: DTZ007
             expected[(parsed.date(), parsed.hour)] = key
         except ValueError:
             continue
@@ -559,7 +564,7 @@ def _build_hourly_calendar(
     completed_parsed: set[tuple[date, int]] = set()
     for key in completed_keys:
         try:
-            parsed = datetime.strptime(key, _FMT)
+            parsed = datetime.strptime(key, _HOURLY_FMT)  # noqa: DTZ007
             completed_parsed.add((parsed.date(), parsed.hour))
         except ValueError:
             continue
@@ -567,12 +572,11 @@ def _build_hourly_calendar(
     all_days = sorted({d for d, _ in expected})
 
     # Apply date range filter
-    _MAX_UNFILTERED_DAYS = 14
     if start_date is not None or end_date is not None:
         lo = start_date or all_days[0]
         hi = end_date or all_days[-1]
         all_days = [d for d in all_days if lo <= d <= hi]
-    elif len(all_days) > _MAX_UNFILTERED_DAYS:
+    elif len(all_days) > _MAX_UNFILTERED_HOURLY_DAYS:
         # Default: show last 7 days of data
         all_days = all_days[-7:]
 
@@ -631,7 +635,7 @@ def _build_hourly_calendar(
 
     fig.update_layout(
         height=max(150, len(all_days) * 30 + 80),
-        margin=dict(l=80, r=20, t=10, b=60),
+        margin={"l": 80, "r": 20, "t": 10, "b": 60},
     )
     _add_coverage_legend(fig)
     return fig
@@ -694,14 +698,13 @@ def _build_partition_grid(
     )
 
     # Show at most 50 keys initially; user can pan to see more
-    _MAX_VISIBLE_KEYS = 50
     xaxis_opts: dict[str, Any] = {}
     if len(expected_keys) > _MAX_VISIBLE_KEYS:
         xaxis_opts["range"] = [-0.5, _MAX_VISIBLE_KEYS - 0.5]
 
     fig.update_layout(
         height=120,
-        margin=dict(l=20, r=20, t=10, b=60),
+        margin={"l": 20, "r": 20, "t": 10, "b": 60},
         xaxis=xaxis_opts,
     )
     # Static grid only has completed/in-progress/failed/missing
@@ -715,14 +718,14 @@ def _build_partition_grid(
         ],
     )
     fig.update_layout(
-        legend=dict(
-            orientation="h",
-            yanchor="top",
-            y=-0.3,
-            xanchor="left",
-            x=0,
-            itemclick=False,
-            itemdoubleclick=False,
-        ),
+        legend={
+            "orientation": "h",
+            "yanchor": "top",
+            "y": -0.3,
+            "xanchor": "left",
+            "x": 0,
+            "itemclick": False,
+            "itemdoubleclick": False,
+        },
     )
     return fig

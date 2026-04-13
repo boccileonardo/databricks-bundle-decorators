@@ -81,8 +81,8 @@ def run_app(
         Enable Dash debug mode with hot-reloading.
     """
     try:
-        import dash
-        import dash_bootstrap_components as dbc
+        import dash  # noqa: PLC0415
+        import dash_bootstrap_components as dbc  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
             "dash and dash-bootstrap-components are required for the "
@@ -90,9 +90,9 @@ def run_app(
             "Install with: uv add databricks-bundle-decorators[observability]"
         ) from exc
 
-    from dash import Input, Output, State, dcc, html
+    from dash import Input, Output, State, dcc, html  # noqa: PLC0415
 
-    from databricks_bundle_decorators.registry import _JOB_REGISTRY
+    from databricks_bundle_decorators.registry import _JOB_REGISTRY  # noqa: PLC0415
 
     job_names = sorted(_JOB_REGISTRY.keys())
     if not job_names:
@@ -268,7 +268,7 @@ def run_app(
         _n_clicks: int | None,
         target: str | None,
     ) -> tuple[Any, Any]:
-        target_val = target if target else None
+        target_val = target or None
         slot = _get_slot(target_val)
 
         # Re-fetch when refresh is clicked, target changes, or first load.
@@ -332,7 +332,7 @@ def run_app(
         job_name: str | None,
         kind: str | None,
     ) -> Any:
-        from datetime import date as _date
+        from datetime import date as _date  # noqa: PLC0415
 
         if not job_name or not kind:
             return dash.no_update

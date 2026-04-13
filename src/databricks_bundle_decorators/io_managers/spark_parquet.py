@@ -2,9 +2,9 @@
 
 Reads and writes PySpark DataFrames as Parquet files.
 
-- `SparkParquetIoManager` – for **classic compute**; supports
+- `SparkParquetIoManager` - for **classic compute**; supports
   credential injection via ``spark.conf.set()``.
-- `SparkServerlessParquetIoManager` – for **serverless compute**;
+- `SparkServerlessParquetIoManager` - for **serverless compute**;
   relies on Unity Catalog or environment-based auth (no
   ``spark.conf.set()``).
 
@@ -68,7 +68,7 @@ class _SparkParquetBase(IoManager):
 
         # Inject backfill_key column if it's a partition column
         if _needs_backfill_key_col(partition_by):
-            from pyspark.sql import functions as F
+            from pyspark.sql import functions as F  # noqa: N812, PLC0415
 
             bk = _resolve_backfill_key(context.backfill_key)
             obj = obj.withColumn("backfill_key", F.lit(bk))
@@ -108,7 +108,7 @@ class _SparkParquetBase(IoManager):
             and _needs_backfill_key_col(context.partition_by)
             and not context.all_partitions
         ):
-            from pyspark.sql import functions as F
+            from pyspark.sql import functions as F  # noqa: N812, PLC0415
 
             result = result.filter(
                 F.col("backfill_key") == _resolve_backfill_key(context.backfill_key)
@@ -150,12 +150,14 @@ class SparkParquetIoManager(_SparkParquetBase):
 
             from databricks_bundle_decorators import get_dbutils
 
+
             def _configs() -> dict[str, str]:
                 dbutils = get_dbutils()
                 key = dbutils.secrets.get(scope="kv", key="storage-key")
                 return {
                     "fs.azure.account.key.myaccount.dfs.core.windows.net": key,
                 }
+
 
             io = SparkParquetIoManager(
                 base_path="abfss://lake@myaccount.dfs.core.windows.net/staging",
@@ -179,6 +181,7 @@ class SparkParquetIoManager(_SparkParquetBase):
                 "fs.azure.account.key.myaccount.dfs.core.windows.net": "***",
             },
         )
+
 
         @task(io_manager=io)
         def extract():
@@ -207,12 +210,12 @@ class SparkParquetIoManager(_SparkParquetBase):
     def spark_configs(self) -> dict[str, str] | None:
         """Resolve *spark_configs*, calling it first if it is a callable."""
         if callable(self._spark_configs):
-            return cast(Callable[[], dict[str, str]], self._spark_configs)()
+            return cast("Callable[[], dict[str, str]]", self._spark_configs)()
         return self._spark_configs
 
     def setup(self) -> None:
         """Obtain the active SparkSession and apply ``spark_configs``."""
-        from pyspark.sql import SparkSession
+        from pyspark.sql import SparkSession  # noqa: PLC0415
 
         self._spark = SparkSession.getActiveSession()
         if self._spark is None:
@@ -261,6 +264,7 @@ class SparkServerlessParquetIoManager(_SparkParquetBase):
             base_path="abfss://lake@myaccount.dfs.core.windows.net/staging",
         )
 
+
         @task(io_manager=io)
         def extract():
             spark = SparkSession.getActiveSession()
@@ -269,7 +273,7 @@ class SparkServerlessParquetIoManager(_SparkParquetBase):
 
     def setup(self) -> None:
         """Obtain the active SparkSession (no config injection)."""
-        from pyspark.sql import SparkSession
+        from pyspark.sql import SparkSession  # noqa: PLC0415
 
         self._spark = SparkSession.getActiveSession()
         if self._spark is None:

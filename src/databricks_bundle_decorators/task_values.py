@@ -55,8 +55,10 @@ def set_task_value(key: str, value: TaskValue) -> None:
     if _is_databricks_runtime():
         # On Databricks: let any API/permission error propagate so that
         # real runtime failures are visible rather than silently swallowed.
-        from pyspark.dbutils import DBUtils  # type: ignore[import-not-found]  # Databricks-only
-        from pyspark.sql import SparkSession
+        from pyspark.dbutils import (  # noqa: PLC0415  # ty: ignore[unresolved-import]
+            DBUtils,  # Databricks-only
+        )
+        from pyspark.sql import SparkSession  # noqa: PLC0415
 
         spark = SparkSession.builder.getOrCreate()
         dbutils = DBUtils(spark)
@@ -80,11 +82,12 @@ def get_task_value(task_key: str, key: str) -> Any:
     """
     if _is_databricks_runtime():
         # On Databricks: let any API/permission error propagate.
-        from pyspark.dbutils import DBUtils  # type: ignore[import-not-found]  # Databricks-only
-        from pyspark.sql import SparkSession
+        from pyspark.dbutils import (  # noqa: PLC0415  # ty: ignore[unresolved-import]
+            DBUtils,  # Databricks-only
+        )
+        from pyspark.sql import SparkSession  # noqa: PLC0415
 
         spark = SparkSession.builder.getOrCreate()
         dbutils = DBUtils(spark)
         return dbutils.jobs.taskValues.get(taskKey=task_key, key=key)
-    else:
-        return _local_task_values.get(task_key, {}).get(key)
+    return _local_task_values.get(task_key, {}).get(key)

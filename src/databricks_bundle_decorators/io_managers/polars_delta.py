@@ -20,9 +20,9 @@ from databricks_bundle_decorators.io_manager import (
     OutputContext,
     _build_replace_where,
     _needs_backfill_key_col,
-    _resolve_backfill_key,
     _polars_apply_partition_filter,
     _polars_extract_partition_values,
+    _resolve_backfill_key,
 )
 
 
@@ -75,11 +75,15 @@ class PolarsDeltaIoManager(IoManager):
 
             from databricks_bundle_decorators import get_dbutils
 
+
             def _storage_options() -> dict[str, str]:
                 dbutils = get_dbutils()
                 key = dbutils.secrets.get(scope="kv", key="storage-key")
-                return {"AZURE_STORAGE_ACCOUNT_NAME": "myaccount",
-                        "AZURE_STORAGE_ACCOUNT_KEY": key}
+                return {
+                    "AZURE_STORAGE_ACCOUNT_NAME": "myaccount",
+                    "AZURE_STORAGE_ACCOUNT_KEY": key,
+                }
+
 
             io = PolarsDeltaIoManager(
                 base_path="abfss://lake@myaccount.dfs.core.windows.net/staging",
@@ -116,9 +120,11 @@ class PolarsDeltaIoManager(IoManager):
             base_path="abfss://lake@myaccount.dfs.core.windows.net/staging",
         )
 
+
         @task(io_manager=io)
         def extract() -> pl.DataFrame:
             return pl.DataFrame({"a": [1, 2]})
+
 
         @task
         def transform(df: pl.LazyFrame):  # scan_delta on read
@@ -153,7 +159,7 @@ class PolarsDeltaIoManager(IoManager):
     def storage_options(self) -> dict[str, str] | None:
         """Resolve *storage_options*, calling it first if it is a callable."""
         if callable(self._storage_options):
-            return cast(Callable[[], dict[str, str]], self._storage_options)()
+            return cast("Callable[[], dict[str, str]]", self._storage_options)()
         return self._storage_options
 
     def _uri(self, key: str) -> str:
@@ -173,7 +179,7 @@ class PolarsDeltaIoManager(IoManager):
         # check avoids requiring deltalake at import time).
         _merger_cls: type | None = None
         try:
-            from deltalake.table import TableMerger
+            from deltalake.table import TableMerger  # noqa: PLC0415
 
             _merger_cls = TableMerger
         except ImportError:
@@ -183,7 +189,7 @@ class PolarsDeltaIoManager(IoManager):
             obj.execute()
             return
 
-        import polars as pl
+        import polars as pl  # noqa: PLC0415
 
         uri = self._uri(context.task_key)
         partition_by = context.partition_by
@@ -247,7 +253,7 @@ class PolarsDeltaIoManager(IoManager):
         dependency uses `all_partitions()` or the consuming
         task uses ``@task(all_partitions=True)``.
         """
-        import polars as pl
+        import polars as pl  # noqa: PLC0415
 
         uri = self._uri(context.upstream_task_key)
 

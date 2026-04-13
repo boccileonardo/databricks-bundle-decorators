@@ -28,7 +28,7 @@ def _input_ctx(upstream: str = "producer", **kwargs) -> InputContext:
 
 
 # ---------------------------------------------------------------------------
-# SparkDeltaIoManager – construction
+# SparkDeltaIoManager - construction
 # ---------------------------------------------------------------------------
 
 

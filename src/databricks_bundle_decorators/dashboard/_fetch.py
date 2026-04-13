@@ -37,7 +37,7 @@ def resolve_bundle_targets() -> list[str]:
     in_targets = False
     for line in text.splitlines():
         stripped = line.rstrip()
-        if stripped == "targets:" or stripped == "targets: ":
+        if stripped in {"targets:", "targets: "}:
             in_targets = True
             continue
         if in_targets:
@@ -89,7 +89,7 @@ def resolve_job_ids(
     if profile:
         cmd += ["--profile", profile]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)  # noqa: PLW1510, S603
     if result.returncode != 0:
         err = result.stderr.strip() or result.stdout.strip()
         print(
@@ -137,7 +137,7 @@ def fetch_job_runs(
     if profile:
         cmd += ["--profile", profile]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)  # noqa: PLW1510, S603
     if result.returncode != 0:
         return []
 
@@ -193,7 +193,7 @@ def resolve_workspace_url(
     if profile:
         cmd += ["--profile", profile]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)  # noqa: PLW1510, S603
     if result.returncode != 0:
         return None
 

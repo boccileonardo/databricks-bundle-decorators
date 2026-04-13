@@ -1,10 +1,14 @@
 """Tests for the CLI scaffolding command (dbxdec init)."""
 
+import importlib
+import json
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from databricks_bundle_decorators.backfill import DailyBackfill
 from databricks_bundle_decorators.cli import (
     _cmd_backfill,
     _cmd_backfill_catchup,
@@ -14,7 +18,10 @@ from databricks_bundle_decorators.cli import (
     _get_launched_backfill_keys,
     _read_pyproject,
     dashboard,
+    main,
 )
+from databricks_bundle_decorators.decorators import job, task
+from databricks_bundle_decorators.registry import reset_registries
 
 
 class TestReadPyproject:
@@ -217,7 +224,6 @@ class TestMainCli:
         self._make_project(tmp_path)
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["dbxdec", "init"])
-        from databricks_bundle_decorators.cli import main
 
         main()
 
@@ -230,7 +236,6 @@ class TestMainCli:
         self._make_project(tmp_path)
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["dbxdec", "init", "--docker"])
-        from databricks_bundle_decorators.cli import main
 
         main()
 
@@ -242,7 +247,6 @@ class TestMainCli:
 
     def test_no_subcommand_exits(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(sys, "argv", ["dbxdec"])
-        from databricks_bundle_decorators.cli import main
 
         with pytest.raises(SystemExit):
             main()
@@ -253,10 +257,9 @@ class TestMainCli:
         """main() prints the exception message instead of silently exiting."""
         monkeypatch.setattr(sys, "argv", ["dbxdec", "backfill", "some_job"])
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: (_ for _ in ()).throw(RuntimeError("boom")),
         )
-        from databricks_bundle_decorators.cli import main
 
         with pytest.raises(SystemExit):
             main()
@@ -280,16 +283,10 @@ class TestBackfillCmd:
     """Tests for the ``dbxdec backfill`` subcommand."""
 
     def setup_method(self):
-        from databricks_bundle_decorators.registry import (
-            reset_registries,
-        )
-
         reset_registries()
 
     def _make_job_with_partition(self):
         """Register a job with a daily backfill in the registry."""
-        from databricks_bundle_decorators.decorators import job, task
-        from databricks_bundle_decorators.backfill import DailyBackfill
 
         @job(backfill=DailyBackfill(start_date="2024-01-01", end_date="2024-01-05"))
         def test_pipeline():
@@ -298,8 +295,6 @@ class TestBackfillCmd:
                 pass
 
     def _make_job_without_partition(self):
-        from databricks_bundle_decorators.decorators import job, task
-
         @job
         def no_part_job():
             @task
@@ -310,11 +305,9 @@ class TestBackfillCmd:
         """--dry-run prints partition keys without submitting."""
         self._make_job_with_partition()
 
-        from databricks_bundle_decorators.cli import _cmd_backfill
-
         # Monkeypatch discover_pipelines to no-op (registry already populated)
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
 
@@ -333,7 +326,7 @@ class TestBackfillCmd:
         self._make_job_with_partition()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
 
@@ -353,7 +346,7 @@ class TestBackfillCmd:
         self._make_job_with_partition()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
 
@@ -372,19 +365,17 @@ class TestBackfillCmd:
     def test_job_not_found_exits(self, monkeypatch):
         """Exit with error when job name is not in the registry."""
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
 
         with pytest.raises(SystemExit):
-            from databricks_bundle_decorators.cli import _cmd_backfill
-
             _cmd_backfill(job_name="nonexistent")
 
     def test_job_not_found_empty_registry_hint(self, monkeypatch, capsys):
         """When no jobs are discovered at all, show a helpful hint."""
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
 
@@ -400,13 +391,11 @@ class TestBackfillCmd:
         self._make_job_without_partition()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
 
         with pytest.raises(SystemExit):
-            from databricks_bundle_decorators.cli import _cmd_backfill
-
             _cmd_backfill(job_name="no_part_job")
 
     def test_explicit_keys_on_unpartitioned_job(self, monkeypatch, capsys):
@@ -414,11 +403,9 @@ class TestBackfillCmd:
         self._make_job_without_partition()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
-
-        from databricks_bundle_decorators.cli import _cmd_backfill
 
         _cmd_backfill(
             job_name="no_part_job",
@@ -435,13 +422,11 @@ class TestBackfillCmd:
         self._make_job_with_partition()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
 
         with pytest.raises(SystemExit):
-            from databricks_bundle_decorators.cli import _cmd_backfill
-
             _cmd_backfill(
                 job_name="test_pipeline",
                 keys=",,,",
@@ -449,12 +434,10 @@ class TestBackfillCmd:
 
     def test_submit_runs_via_bundle_run(self, monkeypatch, capsys):
         """Non-dry-run submits via ``databricks bundle run``."""
-        import subprocess
-
         self._make_job_with_partition()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
         monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
@@ -484,12 +467,10 @@ class TestBackfillCmd:
 
     def test_submit_with_target_and_profile(self, monkeypatch, capsys):
         """--target and --profile are forwarded to ``databricks bundle run``."""
-        import subprocess
-
         self._make_job_with_partition()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
         monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
@@ -518,12 +499,10 @@ class TestBackfillCmd:
 
     def test_wait_omits_no_wait_flag(self, monkeypatch, capsys):
         """--wait causes ``databricks bundle run`` to block (no --no-wait)."""
-        import subprocess
-
         self._make_job_with_partition()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
         monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
@@ -553,7 +532,7 @@ class TestBackfillCmd:
         self._make_job_with_partition()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
         monkeypatch.setattr("shutil.which", lambda _name: None)
@@ -574,14 +553,10 @@ class TestBackfillCatchupCmd:
     """Tests for the ``dbxdec catchup`` subcommand."""
 
     def setup_method(self):
-        from databricks_bundle_decorators.registry import reset_registries
-
         reset_registries()
 
     def _make_job_with_backfill(self):
         """Register a job with a daily backfill (5 days)."""
-        from databricks_bundle_decorators.backfill import DailyBackfill
-        from databricks_bundle_decorators.decorators import job, task
 
         @job(backfill=DailyBackfill(start_date="2024-01-01", end_date="2024-01-05"))
         def test_pipeline():
@@ -590,8 +565,6 @@ class TestBackfillCatchupCmd:
                 pass
 
     def _make_job_without_backfill(self):
-        from databricks_bundle_decorators.decorators import job, task
-
         @job
         def no_backfill_job():
             @task
@@ -601,9 +574,6 @@ class TestBackfillCatchupCmd:
     @staticmethod
     def _fake_bundle_summary(job_id: str = "12345"):
         """Return a fake subprocess handler for ``databricks bundle summary``."""
-        import json
-        import subprocess
-
         summary = {
             "resources": {
                 "jobs": {
@@ -622,8 +592,6 @@ class TestBackfillCatchupCmd:
     @staticmethod
     def _fake_list_runs(runs: list[dict]):
         """Return a fake subprocess handler for ``databricks jobs list-runs``."""
-        import json
-        import subprocess
 
         def handler(cmd, *, capture_output=False, text=False):
             return subprocess.CompletedProcess(
@@ -654,7 +622,7 @@ class TestBackfillCatchupCmd:
         self._make_job_with_backfill()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
         monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
@@ -692,7 +660,7 @@ class TestBackfillCatchupCmd:
         self._make_job_with_backfill()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
         monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
@@ -728,7 +696,7 @@ class TestBackfillCatchupCmd:
         self._make_job_with_backfill()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
         monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
@@ -768,7 +736,7 @@ class TestBackfillCatchupCmd:
         self._make_job_with_backfill()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
         monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
@@ -799,7 +767,7 @@ class TestBackfillCatchupCmd:
         self._make_job_without_backfill()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
 
@@ -809,7 +777,7 @@ class TestBackfillCatchupCmd:
     def test_job_not_found_exits(self, monkeypatch):
         """Exit when job name is not in the registry."""
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
 
@@ -819,7 +787,7 @@ class TestBackfillCatchupCmd:
     def test_job_not_found_empty_registry_hint(self, monkeypatch, capsys):
         """When no jobs are discovered at all, show a helpful hint."""
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
 
@@ -832,12 +800,10 @@ class TestBackfillCatchupCmd:
 
     def test_submits_missing_keys(self, monkeypatch, capsys):
         """Non-dry-run submits only missing keys via ``databricks bundle run``."""
-        import subprocess
-
         self._make_job_with_backfill()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
         monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
@@ -867,9 +833,11 @@ class TestBackfillCatchupCmd:
                 )
             if "bundle" in cmd and "run" in cmd:
                 # Extract the backfill_key from --params
-                for arg in cmd:
-                    if arg.startswith("backfill_key="):
-                        submitted_keys.append(arg.split("=", 1)[1])
+                submitted_keys.extend(
+                    arg.split("=", 1)[1]
+                    for arg in cmd
+                    if arg.startswith("backfill_key=")
+                )
                 return subprocess.CompletedProcess(cmd, 0, stdout="Run submitted\n")
             raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -886,7 +854,7 @@ class TestBackfillCatchupCmd:
         self._make_job_with_backfill()
 
         monkeypatch.setattr(
-            "databricks_bundle_decorators.discovery.discover_pipelines",
+            "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
         monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
@@ -940,9 +908,6 @@ class TestGetLaunchedBackfillKeys:
 
     def test_includes_active_runs(self, monkeypatch):
         """Active runs (no result_state) are counted as launched."""
-        import json
-        import subprocess
-
         runs = [
             {
                 "state": {"life_cycle_state": "RUNNING"},
@@ -967,9 +932,6 @@ class TestGetLaunchedBackfillKeys:
 
     def test_excludes_failed_runs(self, monkeypatch):
         """Failed/canceled runs are not counted as launched."""
-        import json
-        import subprocess
-
         runs = [
             {
                 "state": {"result_state": "SUCCESS"},
@@ -1012,8 +974,6 @@ class TestDashboardCmd:
     ):
         monkeypatch.chdir(tmp_path)
         self._write_pyproject(tmp_path)
-
-        import importlib
 
         orig_import = importlib.import_module
 

@@ -10,7 +10,6 @@ import pytest
 from databricks_bundle_decorators.io_manager import InputContext, OutputContext
 from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

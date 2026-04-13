@@ -2,13 +2,13 @@
 
 import pytest
 
+import databricks_bundle_decorators.task_values as _tv
 from databricks_bundle_decorators.task_values import (
     _is_databricks_runtime,
     _local_task_values,
     get_task_value,
     set_task_value,
 )
-import databricks_bundle_decorators.task_values as _tv
 
 
 class TestSetTaskValue:
@@ -28,7 +28,7 @@ class TestSetTaskValue:
         assert _local_task_values["__current__"]["ratio"] == 3.14
 
     def test_set_bool(self):
-        set_task_value("flag", True)
+        set_task_value("flag", True)  # noqa: FBT003
         assert _local_task_values["__current__"]["flag"] is True
 
     def test_set_none(self):

@@ -77,6 +77,70 @@ docs = [
 [tool.uv]
 sources.databricks-bundle-decorators = { workspace = true }
 
+[tool.ruff]
+format.docstring-code-format = true
+lint.extend-select = [
+  "A",    # flake8-builtins (shadowing builtins)
+  "ARG",  # flake8-unused-arguments
+  "B",    # flake8-bugbear (common bugs)
+  "BLE",  # flake8-blind-except
+  "C4",   # flake8-comprehensions
+  "DTZ",  # flake8-datetimez
+  "FBT",  # flake8-boolean-trap
+  "FLY",  # flynt
+  "FURB", # refurb
+  "G",    # flake8-logging-format
+  "I",    # isort (import sorting)
+  "ICN",  # flake8-import-conventions
+  "ISC",  # flake8-implicit-str-concat
+  "LOG",  # flake8-logging
+  "N",    # pep8-naming
+  "PERF", # perflint
+  "PIE",  # flake8-pie
+  "PL",   # pylint
+  "PT",   # flake8-pytest-style
+  "PTH",  # flake8-use-pathlib
+  "RET",  # flake8-return
+  "RSE",  # flake8-raise
+  "RUF",  # ruff-specific rules
+  "S",    # flake8-bandit (security)
+  "SIM",  # flake8-simplify
+  "T20",  # flake8-print (catch stray prints)
+  "TRY",  # tryceratops (exception handling)
+  "UP",   # pyupgrade (modernize syntax for 3.12+)
+  "W",    # pycodestyle warnings
+]
+lint.ignore = [
+  "ISC001",  # conflicts with ruff formatter
+  "PLR0913", # too many arguments (decorator **kwargs pattern)
+  "PLR2004", # magic value comparison (noisy)
+  "S101",    # assert is fine (tests + runtime guards)
+  "TRY003",  # long exception messages outside class (too strict)
+]
+lint.per-file-ignores."**/cli.py" = [
+  "T201", # print is the correct output method for CLI
+]
+lint.per-file-ignores."**/dashboard/**" = [
+  "T201", # print used for dashboard logging
+]
+lint.per-file-ignores."__init__.py" = [
+  "F401", # unused imports (re-exports)
+]
+lint.per-file-ignores."tests/**" = [
+  "ARG001",  # unused function argument (fixtures)
+  "ARG002",  # unused method argument (test helpers)
+  "ARG005",  # unused lambda argument (test stubs)
+  "B017",    # broad pytest.raises is acceptable in tests
+  "PLR0904", # too many public methods (test classes)
+  "PT011",   # broad pytest.raises match is acceptable in tests
+  "PT012",   # multi-statement pytest.raises is acceptable in tests
+  "RUF012",  # mutable class var without ClassVar (test classes)
+  "SLF001",  # private member access (testing internals)
+  "T201",    # print (debugging in tests)
+]
+lint.pylint.max-branches = 20
+lint.pylint.max-statements = 90
+
 [tool.pytest]
 ini_options.testpaths = [ "tests" ]
 

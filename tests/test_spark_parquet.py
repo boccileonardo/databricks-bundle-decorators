@@ -26,7 +26,7 @@ def _input_ctx(upstream: str = "producer", **kwargs) -> InputContext:
 
 
 # ---------------------------------------------------------------------------
-# SparkParquetIoManager – construction
+# SparkParquetIoManager - construction
 # ---------------------------------------------------------------------------
 
 

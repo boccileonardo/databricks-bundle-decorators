@@ -18,9 +18,9 @@ from databricks_bundle_decorators.io_manager import (
     IoManager,
     OutputContext,
     _needs_backfill_key_col,
-    _resolve_backfill_key,
     _polars_apply_partition_filter,
     _polars_extract_partition_values,
+    _resolve_backfill_key,
 )
 
 
@@ -64,10 +64,12 @@ class PolarsCsvIoManager(IoManager):
 
             from databricks_bundle_decorators import get_dbutils
 
+
             def _storage_options() -> dict[str, str]:
                 dbutils = get_dbutils()
                 key = dbutils.secrets.get(scope="kv", key="storage-key")
                 return {"account_name": "myaccount", "account_key": key}
+
 
             io = PolarsCsvIoManager(
                 base_path="abfss://lake@myaccount.dfs.core.windows.net/staging",
@@ -96,9 +98,11 @@ class PolarsCsvIoManager(IoManager):
             base_path="abfss://lake@myaccount.dfs.core.windows.net/staging",
         )
 
+
         @task(io_manager=io)
-        def extract() -> pl.LazyFrame:    # sink_csv on write
+        def extract() -> pl.LazyFrame:  # sink_csv on write
             return pl.LazyFrame({"a": [1, 2]})
+
 
         @task
         def transform(df: pl.LazyFrame):  # scan_csv on read
@@ -131,7 +135,7 @@ class PolarsCsvIoManager(IoManager):
     def storage_options(self) -> dict[str, str] | None:
         """Resolve *storage_options*, calling it first if it is a callable."""
         if callable(self._storage_options):
-            return cast(Callable[[], dict[str, str]], self._storage_options)()
+            return cast("Callable[[], dict[str, str]]", self._storage_options)()
         return self._storage_options
 
     def _uri(self, key: str) -> str:
@@ -148,7 +152,7 @@ class PolarsCsvIoManager(IoManager):
         to Hive-style partitioned directories using
         ``pl.PartitionBy``.
         """
-        import polars as pl
+        import polars as pl  # noqa: PLC0415
 
         base_uri = self._uri(context.task_key)
         partition_by = context.partition_by
@@ -214,7 +218,7 @@ class PolarsCsvIoManager(IoManager):
         upstream dependency or ``@task(all_partitions=True)`` on
         the consuming task to read all partitions.
         """
-        import polars as pl
+        import polars as pl  # noqa: PLC0415
 
         base_uri = self._uri(context.upstream_task_key)
         partition_by = context.partition_by

@@ -35,7 +35,7 @@ def discover_pipelines() -> None:
         try:
             ep.load()  # imports the module, triggering decorator registration
         except Exception as exc:
-            print(
+            print(  # noqa: T201
                 f"Error: Failed to load pipeline entry point '{ep.name}' "
                 f"({ep.value}): {exc}",
                 file=sys.stderr,

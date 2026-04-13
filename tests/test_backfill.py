@@ -3,20 +3,26 @@
 from __future__ import annotations
 
 import warnings
+from datetime import UTC, datetime
 
 import pytest
 import whenever
 
-from databricks_bundle_decorators.context import _populate_params
 from databricks_bundle_decorators.backfill import (
+    BackfillDef,
     DailyBackfill,
     HourlyBackfill,
     MonthlyBackfill,
-    BackfillDef,
     StaticBackfill,
     WeeklyBackfill,
     _parse_logical_date_str,
     get_run_logical_date,
+)
+from databricks_bundle_decorators.context import _populate_params
+from databricks_bundle_decorators.registry import (
+    _JOB_REGISTRY,
+    JobMeta,
+    reset_registries,
 )
 
 
@@ -185,34 +191,29 @@ class TestGetRunLogicalDate:
     def test_reads_from_params(self):
         _populate_params({"backfill_key": "2024-01-15T00:00:00+00:00"})
         result = get_run_logical_date(validate=False)
-        from datetime import datetime, timezone
 
-        assert result == datetime(2024, 1, 15, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 15, tzinfo=UTC)
 
     def test_monthly_format_parsed(self):
         """MonthlyBackfill keys ('YYYY-MM-01') should be parseable."""
         _populate_params({"backfill_key": "2024-01-01"})
         result = get_run_logical_date(validate=False)
-        from datetime import datetime, timezone
 
-        assert result == datetime(2024, 1, 1, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 1, tzinfo=UTC)
 
     def test_weekly_format_parsed(self):
         """WeeklyBackfill keys ('YYYY-WNN') should be parseable."""
         _populate_params({"backfill_key": "2024-W03"})
         result = get_run_logical_date(validate=False)
-        from datetime import datetime, timezone
 
         # 2024-W03 Monday = 2024-01-15
-        assert result == datetime(2024, 1, 15, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 15, tzinfo=UTC)
 
     def test_daily_format_parsed(self):
         """DailyBackfill keys ('YYYY-MM-DD') should work."""
         _populate_params({"backfill_key": "2024-06-15"})
         result = get_run_logical_date(validate=False)
-        from datetime import datetime, timezone
-
-        assert result == datetime(2024, 6, 15, tzinfo=timezone.utc)
+        assert result == datetime(2024, 6, 15, tzinfo=UTC)
 
     def test_unparseable_raises(self):
         _populate_params({"backfill_key": "not-a-date"})
@@ -251,16 +252,12 @@ class TestParseLogicalDateStr:
     """Tests for the _parse_logical_date_str helper."""
 
     def test_iso_full_tz(self):
-        from datetime import datetime, timezone
-
         dt = _parse_logical_date_str("2024-01-15T00:00:00+00:00")
-        assert dt == datetime(2024, 1, 15, tzinfo=timezone.utc)
+        assert dt == datetime(2024, 1, 15, tzinfo=UTC)
 
     def test_iso_date_only(self):
-        from datetime import datetime, timezone
-
         dt = _parse_logical_date_str("2024-06-15")
-        assert dt == datetime(2024, 6, 15, tzinfo=timezone.utc)
+        assert dt == datetime(2024, 6, 15, tzinfo=UTC)
 
     def test_invalid_raises_value_error(self):
         with pytest.raises(ValueError, match="Cannot parse"):
@@ -271,8 +268,6 @@ class TestGetRunLogicalDateValidation:
     """Tests for boundary validation in get_run_logical_date."""
 
     def setup_method(self):
-        from databricks_bundle_decorators.registry import reset_registries
-
         reset_registries()
 
     def teardown_method(self):
@@ -280,8 +275,6 @@ class TestGetRunLogicalDateValidation:
 
     def _register_job(self, backfill_def):
         """Register a minimal job with the given backfill def."""
-        from databricks_bundle_decorators.registry import JobMeta, _JOB_REGISTRY
-
         _JOB_REGISTRY["test_job"] = JobMeta(
             fn=lambda: None,
             name="test_job",
@@ -373,8 +366,6 @@ class TestGetRunLogicalDateValidation:
 
     def test_no_backfill_def_skips_validation(self):
         """Jobs without backfill= skip validation."""
-        from databricks_bundle_decorators.registry import JobMeta, _JOB_REGISTRY
-
         _JOB_REGISTRY["test_job"] = JobMeta(fn=lambda: None, name="test_job")
         _populate_params({"backfill_key": "2024-01-01", "__job_name__": "test_job"})
         dt = get_run_logical_date()

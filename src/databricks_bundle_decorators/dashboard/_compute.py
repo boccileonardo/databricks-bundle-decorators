@@ -272,7 +272,7 @@ def compute_backfill_coverage(
 
 def _backfill_kind(backfill: Any) -> str:
     """Map a ``BackfillDef`` subclass to a kind string."""
-    from databricks_bundle_decorators.backfill import (
+    from databricks_bundle_decorators.backfill import (  # noqa: PLC0415
         DailyBackfill,
         HourlyBackfill,
         MonthlyBackfill,
