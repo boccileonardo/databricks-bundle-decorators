@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import warnings
 from datetime import UTC, datetime
 
@@ -16,6 +17,7 @@ from databricks_bundle_decorators.backfill import (
     StaticBackfill,
     WeeklyBackfill,
     _parse_logical_date_str,
+    get_backfill_key,
     get_run_logical_date,
 )
 from databricks_bundle_decorators.context import _populate_params
@@ -54,7 +56,7 @@ class TestDailyBackfill:
 
     def test_default_end_is_today(self):
         today = whenever.ZonedDateTime.now("UTC").date()
-        key = today.py_date().strftime("%Y-%m-%d")
+        key = today.format("YYYY-MM-DD")
         p = DailyBackfill(start_date=key)
         keys = p.keys()
         assert keys == [key]
@@ -213,6 +215,7 @@ class TestGetRunLogicalDate:
         """DailyBackfill keys ('YYYY-MM-DD') should work."""
         _populate_params({"backfill_key": "2024-06-15"})
         result = get_run_logical_date(validate=False)
+
         assert result == datetime(2024, 6, 15, tzinfo=UTC)
 
     def test_unparseable_raises(self):
@@ -252,10 +255,12 @@ class TestParseLogicalDateStr:
     """Tests for the _parse_logical_date_str helper."""
 
     def test_iso_full_tz(self):
+
         dt = _parse_logical_date_str("2024-01-15T00:00:00+00:00")
         assert dt == datetime(2024, 1, 15, tzinfo=UTC)
 
     def test_iso_date_only(self):
+
         dt = _parse_logical_date_str("2024-06-15")
         assert dt == datetime(2024, 6, 15, tzinfo=UTC)
 
@@ -275,6 +280,7 @@ class TestGetRunLogicalDateValidation:
 
     def _register_job(self, backfill_def):
         """Register a minimal job with the given backfill def."""
+
         _JOB_REGISTRY["test_job"] = JobMeta(
             fn=lambda: None,
             name="test_job",
@@ -366,6 +372,7 @@ class TestGetRunLogicalDateValidation:
 
     def test_no_backfill_def_skips_validation(self):
         """Jobs without backfill= skip validation."""
+
         _JOB_REGISTRY["test_job"] = JobMeta(fn=lambda: None, name="test_job")
         _populate_params({"backfill_key": "2024-01-01", "__job_name__": "test_job"})
         dt = get_run_logical_date()
@@ -377,3 +384,138 @@ class TestGetRunLogicalDateValidation:
         _populate_params({"backfill_key": "2024-01-01", "__job_name__": "test_job"})
         with pytest.raises(ValueError, match="before the backfill start_date"):
             get_run_logical_date()
+
+
+class TestCurrentKey:
+    """Tests for BackfillDef.current_key() method."""
+
+    def test_daily_returns_today(self):
+        p = DailyBackfill(start_date="2024-01-01")
+        key = p.current_key()
+        today = whenever.ZonedDateTime.now("UTC").date().format("YYYY-MM-DD")
+        assert key == today
+
+    def test_weekly_returns_current_week(self):
+        p = WeeklyBackfill(start_date="2024-W01")
+        key = p.current_key()
+        iwd = whenever.ZonedDateTime.now("UTC").date().iso_week_date()
+        today = f"{iwd.year}-W{iwd.week:02d}"
+        assert key == today
+
+    def test_monthly_returns_current_month(self):
+        p = MonthlyBackfill(start_date="2024-01-01")
+        key = p.current_key()
+        today = whenever.ZonedDateTime.now("UTC").date()
+        expected = today.replace(day=1).format("YYYY-MM-DD")
+        assert key == expected
+
+    def test_hourly_returns_current_hour(self):
+        p = HourlyBackfill(start_date="2024-01-01T00")
+        key = p.current_key()
+        now = whenever.ZonedDateTime.now("UTC")
+        expected = now.replace(minute=0, second=0, nanosecond=0).format(
+            "YYYY-MM-DD'T'hh"
+        )
+        assert key == expected
+
+    def test_static_returns_none(self):
+        p = StaticBackfill(keys=["us", "eu"])
+        assert p.current_key() is None
+
+    def test_daily_respects_timezone(self):
+        p = DailyBackfill(start_date="2024-01-01", tz="Pacific/Auckland")
+        key = p.current_key()
+        expected = (
+            whenever.ZonedDateTime.now("Pacific/Auckland").date().format("YYYY-MM-DD")
+        )
+        assert key == expected
+
+
+class TestAutoDerive:
+    """Tests for auto-deriving backfill_key when not explicitly provided."""
+
+    def setup_method(self):
+
+        reset_registries()
+
+    def teardown_method(self):
+        _populate_params({})
+
+    def _register_job(self, backfill_def):
+
+        _JOB_REGISTRY["test_job"] = JobMeta(
+            fn=lambda: None,
+            name="test_job",
+            backfill=backfill_def,
+        )
+
+    def test_daily_auto_derive(self):
+        self._register_job(DailyBackfill(start_date="2024-01-01"))
+        _populate_params({"backfill_key": "", "__job_name__": "test_job"})
+        key = get_backfill_key(validate=False)
+        today = whenever.ZonedDateTime.now("UTC").date().format("YYYY-MM-DD")
+        assert key == today
+
+    def test_missing_param_auto_derive(self):
+        self._register_job(DailyBackfill(start_date="2024-01-01"))
+        _populate_params({"__job_name__": "test_job"})
+        key = get_backfill_key(validate=False)
+        today = whenever.ZonedDateTime.now("UTC").date().format("YYYY-MM-DD")
+        assert key == today
+
+    def test_static_still_raises(self):
+        self._register_job(StaticBackfill(keys=["us", "eu"]))
+        _populate_params({"backfill_key": "", "__job_name__": "test_job"})
+        with pytest.raises(RuntimeError, match="backfill_key is not set"):
+            get_backfill_key()
+
+    def test_no_backfill_def_still_raises(self):
+
+        _JOB_REGISTRY["test_job"] = JobMeta(fn=lambda: None, name="test_job")
+        _populate_params({"backfill_key": "", "__job_name__": "test_job"})
+        with pytest.raises(RuntimeError, match="backfill_key is not set"):
+            get_backfill_key()
+
+    def test_no_job_name_still_raises(self):
+        _populate_params({"backfill_key": ""})
+        with pytest.raises(RuntimeError, match="backfill_key is not set"):
+            get_backfill_key()
+
+    def test_explicit_key_not_overridden(self):
+        self._register_job(DailyBackfill(start_date="2024-01-01"))
+        _populate_params({"backfill_key": "2024-06-15", "__job_name__": "test_job"})
+        key = get_backfill_key(validate=False)
+        assert key == "2024-06-15"
+
+    def test_auto_derive_logs_warning(self, caplog):
+        self._register_job(DailyBackfill(start_date="2024-01-01"))
+        _populate_params({"backfill_key": "", "__job_name__": "test_job"})
+        with caplog.at_level(logging.WARNING):
+            get_backfill_key(validate=False)
+        assert "auto-assigned" in caplog.text
+
+    def test_hourly_auto_derive(self):
+        self._register_job(HourlyBackfill(start_date="2024-01-01T00"))
+        _populate_params({"backfill_key": "", "__job_name__": "test_job"})
+        key = get_backfill_key(validate=False)
+        now = whenever.ZonedDateTime.now("UTC")
+        expected = now.replace(minute=0, second=0, nanosecond=0).format(
+            "YYYY-MM-DD'T'hh"
+        )
+        assert key == expected
+
+    def test_weekly_auto_derive(self):
+        self._register_job(WeeklyBackfill(start_date="2024-W01"))
+        _populate_params({"backfill_key": "", "__job_name__": "test_job"})
+        key = get_backfill_key(validate=False)
+        iwd = whenever.ZonedDateTime.now("UTC").date().iso_week_date()
+        today = f"{iwd.year}-W{iwd.week:02d}"
+        assert key == today
+
+    def test_monthly_auto_derive(self):
+        self._register_job(MonthlyBackfill(start_date="2024-01-01"))
+        _populate_params({"backfill_key": "", "__job_name__": "test_job"})
+        key = get_backfill_key(validate=False)
+        today = whenever.ZonedDateTime.now("UTC").date()
+        expected = today.replace(day=1).format("YYYY-MM-DD")
+        assert key == expected

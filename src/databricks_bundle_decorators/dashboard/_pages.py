@@ -154,7 +154,7 @@ def _backfill_date_bounds(
     unique = sorted(set(dates))
     min_d = unique[0]
     max_d = unique[-1]
-    today = whenever.ZonedDateTime.now(tz).date().py_date()
+    today = whenever.ZonedDateTime.now(tz).date().to_stdlib()
     # Anchor the visible window to today (clamped to the data range)
     init_end = min(today, max_d) if today >= min_d else max_d
     span_days = (max_d - min_d).days

@@ -40,6 +40,9 @@ _ACTIVE_LIFECYCLE_STATES = frozenset(
 #: Pre-compiled regex for ISO week keys (``YYYY-WNN``).
 _WEEK_KEY_RE: re.Pattern[str] = re.compile(r"^(\d{4})-W(\d{2})$")
 
+#: ``whenever`` format for hourly backfill keys.
+_HOURLY_FMT: str = "YYYY-MM-DD'T'hh"
+
 #: ``strftime`` / ``strptime`` format for hourly backfill keys.
 _HOURLY_FMT: str = "%Y-%m-%dT%H"
 
@@ -149,8 +152,8 @@ def _filter_past_keys(keys: list[str], kind: str, tz: str = "UTC") -> list[str]:
 
     if kind == "weekly":
         # Include the current ISO week — its data should be materializable.
-        cur_iso = today.py_date().isocalendar()
-        cutoff_year, cutoff_week = cur_iso[0], cur_iso[1]
+        cur_iwd = today.iso_week_date()
+        cutoff_year, cutoff_week = cur_iwd.year, cur_iwd.week
         result = []
         for k in keys:
             m = _WEEK_KEY_RE.match(k)
@@ -164,7 +167,7 @@ def _filter_past_keys(keys: list[str], kind: str, tz: str = "UTC") -> list[str]:
 
     if kind == "monthly":
         # Include the current month — its data should be materializable.
-        first_of_month = today.replace(day=1).py_date()
+        first_of_month = today.replace(day=1).to_stdlib()
         result = []
         for k in keys:
             try:
@@ -179,7 +182,9 @@ def _filter_past_keys(keys: list[str], kind: str, tz: str = "UTC") -> list[str]:
     if kind == "hourly":
         # Include the current hour — its data should be materializable.
         now_zdt = whenever.ZonedDateTime.now(tz)
-        cutoff_str = now_zdt.py_datetime().strftime(_HOURLY_FMT)
+        cutoff_str = now_zdt.replace(minute=0, second=0, nanosecond=0).format(
+            _HOURLY_FMT
+        )
         result = []
         for k in keys:
             if k <= cutoff_str:

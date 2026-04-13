@@ -477,7 +477,7 @@ class TestFilterPastKeys:
 
     def test_daily_includes_today(self) -> None:
         today = whenever.ZonedDateTime.now("UTC").date()
-        key = today.py_date().isoformat()
+        key = today.to_stdlib().isoformat()
         result = _filter_past_keys([key], "daily")
         assert key in result
 
@@ -493,8 +493,8 @@ class TestFilterPastKeys:
 
     def test_weekly_includes_current_week(self) -> None:
         today = whenever.ZonedDateTime.now("UTC").date()
-        iso = today.py_date().isocalendar()
-        key = f"{iso[0]}-W{iso[1]:02d}"
+        iwd = today.iso_week_date()
+        key = f"{iwd.year}-W{iwd.week:02d}"
         result = _filter_past_keys([key], "weekly")
         assert key in result
 
@@ -505,7 +505,7 @@ class TestFilterPastKeys:
 
     def test_monthly_includes_current_month(self) -> None:
         today = whenever.ZonedDateTime.now("UTC").date()
-        first = today.replace(day=1).py_date().isoformat()
+        first = today.replace(day=1).to_stdlib().isoformat()
         result = _filter_past_keys([first], "monthly")
         assert first in result
 
@@ -516,7 +516,7 @@ class TestFilterPastKeys:
 
     def test_hourly_includes_current_hour(self) -> None:
         now = whenever.ZonedDateTime.now("UTC")
-        key = now.py_datetime().strftime("%Y-%m-%dT%H")
+        key = now.replace(minute=0, second=0, nanosecond=0).format("YYYY-MM-DD'T'hh")
         result = _filter_past_keys([key], "hourly")
         assert key in result
 
@@ -1295,7 +1295,7 @@ class TestBackfillDateBounds:
         assert start == min_d  # no clipping
 
     def test_hourly_large_range_clips_to_last_7(self) -> None:
-        today = whenever.ZonedDateTime.now("UTC").date().py_date()
+        today = whenever.ZonedDateTime.now("UTC").date().to_stdlib()
         keys = [f"2024-01-{d:02d}T10" for d in range(1, 31)]
         min_d, max_d, start, end = _backfill_date_bounds("hourly", keys)
         assert min_d is not None
@@ -1322,7 +1322,7 @@ class TestBackfillDateBounds:
         assert _backfill_date_bounds("custom", ["a", "b"]) == (None, None, None, None)
 
     def test_init_end_anchored_to_today(self) -> None:
-        today = whenever.ZonedDateTime.now("UTC").date().py_date()
+        today = whenever.ZonedDateTime.now("UTC").date().to_stdlib()
         # Keys span from 1 year ago to 1 year from now
         start = today - timedelta(days=365)
         keys = [(start + timedelta(days=i)).isoformat() for i in range(730)]

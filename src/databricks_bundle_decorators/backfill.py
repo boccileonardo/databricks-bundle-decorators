@@ -93,6 +93,19 @@ class BackfillDef(ABC):
         """
         ...
 
+    def current_key(self) -> str | None:
+        """Return the backfill key for the current point in time.
+
+        Used as a fallback when a job with a backfill definition is
+        triggered without an explicit ``backfill_key`` (e.g. by a cron
+        schedule or file-arrival trigger).
+
+        Time-based subclasses return the key matching "now" in their
+        configured timezone.  `StaticBackfill` returns ``None``
+        because there is no sensible default.
+        """
+        return None
+
 
 @dataclass(frozen=True)
 class DailyBackfill(BackfillDef):
@@ -111,14 +124,18 @@ class DailyBackfill(BackfillDef):
         Used to determine "yesterday" when *end_date* is omitted.
     """
 
-    _FMT: ClassVar[str] = "%Y-%m-%d"
+    _FMT: ClassVar[str] = "YYYY-MM-DD"
 
     start_date: str
     end_date: str | None = None
     tz: str = "UTC"
 
     def _parse(self, key: str) -> whenever.Date:
-        return whenever.Date.from_py_date(datetime.strptime(key, self._FMT).date())  # noqa: DTZ007
+        return whenever.Date.parse(key, format=self._FMT)
+
+    def current_key(self) -> str:
+        """Today's date in the configured timezone."""
+        return whenever.ZonedDateTime.now(self.tz).date().format(self._FMT)
 
     def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
         s = self._parse(start or self.start_date)
@@ -131,7 +148,7 @@ class DailyBackfill(BackfillDef):
 
         keys: list[str] = []
         while s <= e:
-            keys.append(s.py_date().strftime(self._FMT))
+            keys.append(s.format(self._FMT))
             s = s.add(days=1)
         return keys
 
@@ -156,17 +173,26 @@ class WeeklyBackfill(BackfillDef):
         *end_date* is omitted.
     """
 
-    _FMT: ClassVar[str] = "%G-W%V"
-
     start_date: str
     end_date: str | None = None
     tz: str = "UTC"
 
+    @staticmethod
+    def _fmt_iso_week(date: whenever.Date) -> str:
+        """Format a ``Date`` as ``YYYY-WNN``."""
+        iwd = date.iso_week_date()
+        return f"{iwd.year}-W{iwd.week:02d}"
+
     def _parse_iso_week(self, key: str) -> whenever.Date:
         """Parse an ISO-week key into a Monday ``Date``."""
-        return whenever.Date.from_py_date(
-            datetime.strptime(key + "-1", self._FMT + "-%u").date()  # noqa: DTZ007
+        return whenever.Date(
+            datetime.strptime(key + "-1", "%G-W%V-%u").date()  # noqa: DTZ007
         )
+
+    def current_key(self) -> str:
+        """Current ISO week in the configured timezone."""
+        today = whenever.ZonedDateTime.now(self.tz).date()
+        return self._fmt_iso_week(today)
 
     def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
         s = self._parse_iso_week(start or self.start_date)
@@ -182,7 +208,7 @@ class WeeklyBackfill(BackfillDef):
 
         keys: list[str] = []
         while s <= e:
-            keys.append(s.py_date().strftime(self._FMT))
+            keys.append(self._fmt_iso_week(s))
             s = s.add(weeks=1)
         return keys
 
@@ -205,7 +231,7 @@ class MonthlyBackfill(BackfillDef):
         *end_date* is omitted.
     """
 
-    _FMT: ClassVar[str] = "%Y-%m-01"
+    _FMT: ClassVar[str] = "YYYY-MM-DD"
 
     start_date: str
     end_date: str | None = None
@@ -213,8 +239,13 @@ class MonthlyBackfill(BackfillDef):
 
     def _parse_month(self, key: str) -> whenever.Date:
         """Parse a month key into the first day of that month."""
-        d = datetime.strptime(key, self._FMT).date()  # noqa: DTZ007
-        return whenever.Date(d.year, d.month, 1)
+        d = whenever.Date.parse(key, format=self._FMT)
+        return d.replace(day=1)
+
+    def current_key(self) -> str:
+        """First day of the current month in the configured timezone."""
+        today = whenever.ZonedDateTime.now(self.tz).date()
+        return today.replace(day=1).format(self._FMT)
 
     def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
         s = self._parse_month(start or self.start_date)
@@ -229,7 +260,7 @@ class MonthlyBackfill(BackfillDef):
 
         keys: list[str] = []
         while s <= e:
-            keys.append(s.py_date().strftime(self._FMT))
+            keys.append(s.format(self._FMT))
             s = s.add(months=1)
         return keys
 
@@ -257,7 +288,7 @@ class HourlyBackfill(BackfillDef):
         Defaults to ``"UTC"`` to sidestep daylight-saving issues.
     """
 
-    _FMT: ClassVar[str] = "%Y-%m-%dT%H"
+    _FMT: ClassVar[str] = "YYYY-MM-DD'T'hh"
 
     start_date: str
     end_date: str | None = None
@@ -269,10 +300,15 @@ class HourlyBackfill(BackfillDef):
         Ambiguous wall-clock times (e.g. the repeated hour during a
         fall-back DST transition) resolve to the *first* occurrence.
         """
-        naive = datetime.strptime(key, self._FMT)  # noqa: DTZ007
+        naive = datetime.strptime(key, "%Y-%m-%dT%H")  # noqa: DTZ007
         return whenever.ZonedDateTime(
             naive.year, naive.month, naive.day, naive.hour, tz=self.tz
         )
+
+    def current_key(self) -> str:
+        """Current hour in the configured timezone."""
+        now = whenever.ZonedDateTime.now(self.tz)
+        return now.replace(minute=0, second=0, nanosecond=0).format(self._FMT)
 
     def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
         s = self._parse_hour(start or self.start_date)
@@ -289,7 +325,7 @@ class HourlyBackfill(BackfillDef):
         seen: set[str] = set()
         cur = s
         while cur <= e:
-            key = cur.py_datetime().strftime(self._FMT)
+            key = cur.format(self._FMT)
             if key not in seen:
                 keys.append(key)
                 seen.add(key)
@@ -335,6 +371,12 @@ def get_backfill_key(*, validate: bool = True) -> str:
     Reads the ``backfill_key`` job parameter and optionally validates
     it against the job's `BackfillDef` boundaries.
 
+    When the parameter is missing or empty **and** the job has a
+    time-based `BackfillDef`, the key is auto-derived from the
+    current time (e.g. today's date for `DailyBackfill`) and a
+    warning is logged.  This allows cron-triggered and file-arrival
+    runs to work without explicitly supplying the key.
+
     For time-based backfills the key is an ISO-8601 date/time string;
     for `StaticBackfill` it is one of the declared keys (e.g.
     ``"us"``, ``"eu"``).
@@ -350,9 +392,9 @@ def get_backfill_key(*, validate: bool = True) -> str:
     Raises
     ------
     RuntimeError
-        If ``backfill_key`` is missing or empty.  This indicates the
-        job has no backfill definition and was not started via the
-        backfill CLI.
+        If ``backfill_key`` is missing or empty and no automatic
+        key can be derived (e.g. the job has no backfill definition,
+        or uses `StaticBackfill`).
     ValueError
         If *validate* is ``True`` and the backfill key is outside the
         backfill definition's boundaries.
@@ -364,17 +406,46 @@ def get_backfill_key(*, validate: bool = True) -> str:
     """
     raw = params.get(BACKFILL_KEY_PARAM, "")
     if not raw:
-        raise RuntimeError(
-            "backfill_key is not set. "
-            "This usually means the job was not invoked with a "
-            "backfill_key parameter. Use @job(backfill=...) and "
-            "the backfill CLI, or pass backfill_key explicitly."
-        )
+        raw = _auto_derive_backfill_key()
     if validate:
         job_name: str | None = params.get("__job_name__")
         _validate_backfill_key(raw, job_name)
 
     return raw
+
+
+def _auto_derive_backfill_key() -> str:
+    """Try to derive a backfill key from the job's `BackfillDef`.
+
+    Returns the derived key string or raises `RuntimeError` if no
+    automatic derivation is possible.
+    """
+
+    job_name: str | None = params.get("__job_name__")
+    backfill: BackfillDef | None = None
+    if job_name is not None:
+        job_meta = _JOB_REGISTRY.get(job_name)
+        if job_meta is not None:
+            backfill = job_meta.backfill
+
+    if backfill is not None:
+        key = backfill.current_key()
+        if key is not None:
+            _logger.warning(
+                "backfill_key was not provided for this run; "
+                "auto-assigned to %r based on the current time. "
+                "To set it explicitly, use the backfill CLI or "
+                "pass backfill_key as a job parameter.",
+                key,
+            )
+            return key
+
+    raise RuntimeError(
+        "backfill_key is not set. "
+        "This usually means the job was not invoked with a "
+        "backfill_key parameter. Use @job(backfill=...) and "
+        "the backfill CLI, or pass backfill_key explicitly."
+    )
 
 
 def get_run_logical_date(*, validate: bool = True) -> datetime:
