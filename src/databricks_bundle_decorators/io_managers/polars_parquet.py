@@ -157,7 +157,7 @@ class PolarsParquetIoManager(IoManager):
         When ``partition_by`` is set on the ``@task`` decorator, writes
         to Hive-style partitioned directories.
         """
-        import polars as pl
+        import polars as pl  # noqa: PLC0415
 
         base_uri = self._uri(context.task_key)
         partition_by = context.partition_by
@@ -225,7 +225,7 @@ class PolarsParquetIoManager(IoManager):
         ``@task(all_partitions=True)`` on the consuming task to read
         all partitions.
         """
-        import polars as pl
+        import polars as pl  # noqa: PLC0415
 
         base_uri = self._uri(context.upstream_task_key)
         partition_by = context.partition_by

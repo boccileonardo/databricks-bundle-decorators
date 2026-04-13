@@ -179,7 +179,7 @@ class PolarsDeltaIoManager(IoManager):
         # check avoids requiring deltalake at import time).
         _merger_cls: type | None = None
         try:
-            from deltalake.table import TableMerger
+            from deltalake.table import TableMerger  # noqa: PLC0415
 
             _merger_cls = TableMerger
         except ImportError:
@@ -189,7 +189,7 @@ class PolarsDeltaIoManager(IoManager):
             obj.execute()
             return
 
-        import polars as pl
+        import polars as pl  # noqa: PLC0415
 
         uri = self._uri(context.task_key)
         partition_by = context.partition_by
@@ -253,7 +253,7 @@ class PolarsDeltaIoManager(IoManager):
         dependency uses `all_partitions()` or the consuming
         task uses ``@task(all_partitions=True)``.
         """
-        import polars as pl
+        import polars as pl  # noqa: PLC0415
 
         uri = self._uri(context.upstream_task_key)
 

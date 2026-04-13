@@ -2,6 +2,8 @@
 
 import json
 
+from databricks.bundles.jobs import Library, PythonPyPiLibrary
+
 from databricks_bundle_decorators.backfill import (
     BACKFILL_TAG,
     DailyBackfill,
@@ -102,8 +104,6 @@ class TestGenerateResources:
 
     def test_libraries_custom_forwarded(self):
         """Custom Library objects are forwarded to generated tasks."""
-        from databricks.bundles.jobs import Library, PythonPyPiLibrary
-
         custom_lib = Library(pypi=PythonPyPiLibrary(package="requests"))
 
         @job(libraries=[custom_lib])
@@ -121,7 +121,6 @@ class TestGenerateResources:
 
     def test_default_libraries_override(self):
         """Passing default_libraries overrides the hardcoded dist/*.whl."""
-        from databricks.bundles.jobs import Library
 
         @job
         def my_job():
@@ -159,8 +158,6 @@ class TestGenerateResources:
 
     def test_job_libraries_override_default_libraries(self):
         """Job-level libraries take precedence over default_libraries."""
-        from databricks.bundles.jobs import Library, PythonPyPiLibrary
-
         custom_lib = Library(pypi=PythonPyPiLibrary(package="pandas"))
 
         @job(libraries=[custom_lib])

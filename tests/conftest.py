@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 from delta import configure_spark_with_delta_pip
@@ -19,7 +19,7 @@ def spark() -> Generator[SparkSession]:
         .config("spark.sql.shuffle.partitions", "2")
         .config("spark.default.parallelism", "2")
         .config("spark.ui.enabled", "false")
-        .config("spark.sql.warehouse.dir", os.path.join(os.getcwd(), "spark-warehouse"))
+        .config("spark.sql.warehouse.dir", str(Path.cwd() / "spark-warehouse"))
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config(
             "spark.sql.catalog.spark_catalog",

@@ -1,9 +1,11 @@
 """Tests for the runtime task runner."""
 
+import logging
 from typing import Any
 
 import pytest
 
+from databricks_bundle_decorators.backfill import StaticBackfill
 from databricks_bundle_decorators.context import params
 from databricks_bundle_decorators.io_manager import (
     InputContext,
@@ -11,7 +13,9 @@ from databricks_bundle_decorators.io_manager import (
     OutputContext,
 )
 from databricks_bundle_decorators.registry import (
+    _JOB_REGISTRY,
     _TASK_REGISTRY,
+    JobMeta,
     TaskMeta,
     reset_registries,
 )
@@ -710,8 +714,6 @@ class TestAutoFilterRuntime:
             {"__job_name__": "j", "__task_key__": "producer"},
         )
 
-        import logging
-
         with caplog.at_level(logging.WARNING):
             run_task(
                 "consumer",
@@ -750,8 +752,6 @@ class TestAutoFilterRuntime:
             "producer",
             {"__job_name__": "j", "__task_key__": "producer"},
         )
-
-        import logging
 
         with caplog.at_level(logging.WARNING):
             run_task(
@@ -860,9 +860,6 @@ class TestStaticBackfillRuntime:
         _local_task_values.clear()
 
     def _register_static_job(self, keys: list[str]) -> None:
-        from databricks_bundle_decorators.backfill import StaticBackfill
-        from databricks_bundle_decorators.registry import _JOB_REGISTRY, JobMeta
-
         _JOB_REGISTRY["j"] = JobMeta(
             fn=lambda: None,
             name="j",

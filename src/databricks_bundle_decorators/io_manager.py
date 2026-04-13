@@ -59,7 +59,7 @@ def _polars_extract_partition_values(
     obj: Any, partition_by: list[str]
 ) -> dict[str, list[str]]:
     """Extract distinct partition values from a Polars DataFrame or LazyFrame."""
-    import polars as pl
+    import polars as pl  # noqa: PLC0415
 
     selected = obj.select(partition_by).unique()
     df = selected.collect() if isinstance(selected, pl.LazyFrame) else selected
@@ -70,7 +70,7 @@ def _polars_apply_partition_filter(
     result: Any, partition_filter: dict[str, list[str]]
 ) -> Any:
     """Filter a Polars DataFrame/LazyFrame to matching partition values."""
-    import polars as pl
+    import polars as pl  # noqa: PLC0415
 
     for col, values in partition_filter.items():
         if len(values) == 1:
@@ -92,7 +92,7 @@ def _spark_apply_partition_filter(
     result: Any, partition_filter: dict[str, list[str]]
 ) -> Any:
     """Filter a PySpark DataFrame to matching partition values."""
-    from pyspark.sql import functions as F
+    from pyspark.sql import functions as F  # noqa: N812, PLC0415
 
     for col, values in partition_filter.items():
         if len(values) == 1:
@@ -208,7 +208,7 @@ class IoManager(ABC):
     """When True, partition values are pushed via task values on write
     and used to auto-filter reads.  Set to False to disable."""
 
-    def setup(self) -> None:
+    def setup(self) -> None:  # noqa: B027
         """Initialise runtime-only resources.
 
         Override this method to perform initialisation that requires a
@@ -226,7 +226,7 @@ class IoManager(ABC):
             self.setup()
             self._is_setup = True
 
-    def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:
+    def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:  # noqa: ARG002
         """Return partition column values captured during `write`.
 
         Called by the runtime after `write` when ``auto_filter=True``

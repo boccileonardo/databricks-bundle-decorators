@@ -28,7 +28,7 @@ class TestSetTaskValue:
         assert _local_task_values["__current__"]["ratio"] == 3.14
 
     def test_set_bool(self):
-        set_task_value("flag", True)
+        set_task_value("flag", True)  # noqa: FBT003
         assert _local_task_values["__current__"]["flag"] is True
 
     def test_set_none(self):

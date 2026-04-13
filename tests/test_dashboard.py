@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -10,6 +11,13 @@ from typing import Any
 import pytest
 import whenever
 
+from databricks_bundle_decorators.backfill import (
+    DailyBackfill,
+    HourlyBackfill,
+    MonthlyBackfill,
+    StaticBackfill,
+    WeeklyBackfill,
+)
 from databricks_bundle_decorators.dashboard import (
     APP_TEMPLATE,
     BackfillCoverage,
@@ -875,32 +883,22 @@ class TestResolveWorkspaceUrl:
 
 class TestBackfillKind:
     def test_daily(self) -> None:
-        from databricks_bundle_decorators.backfill import DailyBackfill
-
         bf = DailyBackfill(start_date="2024-01-01", end_date="2024-01-31")
         assert _backfill_kind(bf) == "daily"
 
     def test_weekly(self) -> None:
-        from databricks_bundle_decorators.backfill import WeeklyBackfill
-
         bf = WeeklyBackfill(start_date="2024-W01", end_date="2024-W04")
         assert _backfill_kind(bf) == "weekly"
 
     def test_monthly(self) -> None:
-        from databricks_bundle_decorators.backfill import MonthlyBackfill
-
         bf = MonthlyBackfill(start_date="2024-01-01", end_date="2024-03-01")
         assert _backfill_kind(bf) == "monthly"
 
     def test_hourly(self) -> None:
-        from databricks_bundle_decorators.backfill import HourlyBackfill
-
         bf = HourlyBackfill(start_date="2024-01-01T00", end_date="2024-01-01T23")
         assert _backfill_kind(bf) == "hourly"
 
     def test_static(self) -> None:
-        from databricks_bundle_decorators.backfill import StaticBackfill
-
         bf = StaticBackfill(keys=["us", "eu"])
         assert _backfill_kind(bf) == "static"
 
@@ -965,8 +963,6 @@ class TestBuildDailyCalendar:
         assert any(h == "2024-01-15: Completed" for h in hover)
 
     def test_date_range_filters_days(self) -> None:
-        from datetime import date
-
         keys = {f"2024-01-{d:02d}" for d in range(1, 31)}
         fig = _build_daily_calendar(
             keys, set(), start_date=date(2024, 1, 10), end_date=date(2024, 1, 20)
@@ -977,8 +973,6 @@ class TestBuildDailyCalendar:
 
     def test_auto_clips_large_range(self) -> None:
         # >180 unique dates triggers auto-clip to last 90
-        from datetime import date, timedelta
-
         base = date(2023, 1, 1)
         keys = {(base + timedelta(days=i)).isoformat() for i in range(200)}
         fig = _build_daily_calendar(keys, set())
@@ -988,8 +982,6 @@ class TestBuildDailyCalendar:
         assert not any("2023-01-01: Missing" in h for h in hover)
 
     def test_explicit_range_overrides_auto_clip(self) -> None:
-        from datetime import date
-
         keys = {f"2024-{m:02d}-{d:02d}" for m in range(1, 13) for d in (1, 15)}
         fig = _build_daily_calendar(
             keys, set(), start_date=date(2024, 1, 1), end_date=date(2024, 12, 31)
@@ -999,8 +991,6 @@ class TestBuildDailyCalendar:
         assert any("2024-12-15" in h for h in hover)
 
     def test_empty_range_returns_none(self) -> None:
-        from datetime import date
-
         fig = _build_daily_calendar(
             {"2024-01-15"},
             set(),
@@ -1069,8 +1059,6 @@ class TestBuildWeeklyCalendar:
         assert "2024" in y_labels
 
     def test_date_range_filters_weeks(self) -> None:
-        from datetime import date
-
         keys = {f"2024-W{w:02d}" for w in range(1, 53)}
         fig = _build_weekly_calendar(
             keys, set(), start_date=date(2024, 6, 1), end_date=date(2024, 9, 30)
@@ -1090,8 +1078,6 @@ class TestBuildWeeklyCalendar:
         assert not any("2020-W01: Missing" in h for h in hover)
 
     def test_empty_range_returns_none(self) -> None:
-        from datetime import date
-
         fig = _build_weekly_calendar(
             {"2024-W03"},
             set(),
@@ -1151,8 +1137,6 @@ class TestBuildMonthlyCalendar:
         assert any("2024-03-01" in h for h in hover)
 
     def test_date_range_filters_months(self) -> None:
-        from datetime import date
-
         keys = {f"2024-{m:02d}-01" for m in range(1, 13)}
         fig = _build_monthly_calendar(
             keys, set(), start_date=date(2024, 4, 1), end_date=date(2024, 9, 30)
@@ -1170,8 +1154,6 @@ class TestBuildMonthlyCalendar:
         assert not any("2018-01-01" in h for h in hover)
 
     def test_empty_range_returns_none(self) -> None:
-        from datetime import date
-
         fig = _build_monthly_calendar(
             {"2024-03-01"},
             set(),
@@ -1222,8 +1204,6 @@ class TestBuildHourlyCalendar:
         assert any("2024-01-15T10" in h for h in hover)
 
     def test_date_range_filters_days(self) -> None:
-        from datetime import date
-
         keys = {f"2024-01-{d:02d}T10" for d in range(1, 20)}
         fig = _build_hourly_calendar(
             keys, set(), start_date=date(2024, 1, 5), end_date=date(2024, 1, 10)
@@ -1248,8 +1228,6 @@ class TestBuildHourlyCalendar:
         assert len(y_labels) == 9
 
     def test_explicit_range_overrides_auto_clip(self) -> None:
-        from datetime import date
-
         keys = {f"2024-01-{d:02d}T10" for d in range(1, 31)}
         fig = _build_hourly_calendar(
             keys, set(), start_date=date(2024, 1, 1), end_date=date(2024, 1, 30)
@@ -1258,8 +1236,6 @@ class TestBuildHourlyCalendar:
         assert len(y_labels) == 30
 
     def test_empty_range_returns_none(self) -> None:
-        from datetime import date
-
         fig = _build_hourly_calendar(
             {"2024-01-15T10"},
             set(),
@@ -1276,8 +1252,6 @@ class TestBuildHourlyCalendar:
 
 class TestBackfillDateBounds:
     def test_daily_bounds(self) -> None:
-        from datetime import date
-
         keys = [f"2024-01-{d:02d}" for d in range(1, 10)]
         min_d, max_d, start, end = _backfill_date_bounds("daily", keys)
         assert min_d == date(2024, 1, 1)
@@ -1286,8 +1260,6 @@ class TestBackfillDateBounds:
         assert end == max_d
 
     def test_weekly_bounds(self) -> None:
-        from datetime import date
-
         keys = ["2024-W01", "2024-W10", "2024-W20"]
         min_d, max_d, start, end = _backfill_date_bounds("weekly", keys)
         assert min_d == date.fromisocalendar(2024, 1, 1)
@@ -1296,10 +1268,8 @@ class TestBackfillDateBounds:
         assert end == max_d
 
     def test_monthly_bounds(self) -> None:
-        from datetime import date
-
         keys = ["2024-01-01", "2024-06-01", "2024-12-01"]
-        min_d, max_d, start, end = _backfill_date_bounds("monthly", keys)
+        min_d, max_d, start, _end = _backfill_date_bounds("monthly", keys)
         assert min_d == date(2024, 1, 1)
         assert max_d == date(2024, 12, 1)
         assert start == min_d
@@ -1311,8 +1281,6 @@ class TestBackfillDateBounds:
         assert _backfill_date_bounds("hourly", ["bad"]) == (None, None, None, None)
 
     def test_hourly_single_day(self) -> None:
-        from datetime import date
-
         min_d, max_d, start, end = _backfill_date_bounds("hourly", ["2024-01-15T10"])
         assert min_d == date(2024, 1, 15)
         assert max_d == date(2024, 1, 15)
@@ -1320,17 +1288,13 @@ class TestBackfillDateBounds:
         assert end == max_d
 
     def test_hourly_small_range_no_clip(self) -> None:
-        from datetime import date
-
         keys = [f"2024-01-{d:02d}T10" for d in range(1, 10)]
-        min_d, max_d, start, end = _backfill_date_bounds("hourly", keys)
+        min_d, max_d, start, _end = _backfill_date_bounds("hourly", keys)
         assert min_d == date(2024, 1, 1)
         assert max_d == date(2024, 1, 9)
         assert start == min_d  # no clipping
 
     def test_hourly_large_range_clips_to_last_7(self) -> None:
-        from datetime import date, timedelta
-
         today = whenever.ZonedDateTime.now("UTC").date().py_date()
         keys = [f"2024-01-{d:02d}T10" for d in range(1, 31)]
         min_d, max_d, start, end = _backfill_date_bounds("hourly", keys)
@@ -1346,10 +1310,8 @@ class TestBackfillDateBounds:
         assert end == expected_end
 
     def test_hourly_bounds(self) -> None:
-        from datetime import date
-
         keys = ["2024-01-15T10", "2024-01-16T05"]
-        min_d, max_d, start, end = _backfill_date_bounds("hourly", keys)
+        min_d, max_d, _start, _end = _backfill_date_bounds("hourly", keys)
         assert min_d == date(2024, 1, 15)
         assert max_d == date(2024, 1, 16)
 
@@ -1360,19 +1322,15 @@ class TestBackfillDateBounds:
         assert _backfill_date_bounds("custom", ["a", "b"]) == (None, None, None, None)
 
     def test_init_end_anchored_to_today(self) -> None:
-        from datetime import timedelta
-
         today = whenever.ZonedDateTime.now("UTC").date().py_date()
         # Keys span from 1 year ago to 1 year from now
         start = today - timedelta(days=365)
         keys = [(start + timedelta(days=i)).isoformat() for i in range(730)]
-        min_d, max_d, init_start, init_end = _backfill_date_bounds("daily", keys)
+        _min_d, _max_d, init_start, init_end = _backfill_date_bounds("daily", keys)
         assert init_end == today
         assert init_start == today - timedelta(days=90)
 
     def test_init_end_clamps_to_max_d_when_data_in_past(self) -> None:
-        from datetime import date
-
         keys = [f"2020-01-{d:02d}" for d in range(1, 15)]
         _, max_d, _, init_end = _backfill_date_bounds("daily", keys)
         # Data ends in 2020, today is later — clamp to max_d

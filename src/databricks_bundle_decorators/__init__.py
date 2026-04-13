@@ -1,4 +1,4 @@
-"""databricks-bundle-decorators – decorator-based Databricks job/task framework.
+"""databricks-bundle-decorators - decorator-based Databricks job/task framework.
 
 Public API
 ----------

@@ -1,4 +1,4 @@
-"""Runtime context – job parameters and Databricks utilities.
+"""Runtime context - job parameters and Databricks utilities.
 
 At runtime the entry point populates the global ``params`` dict from CLI
 arguments (parsed via ``argparse``).  Task code imports and reads it::
@@ -31,7 +31,7 @@ class _Params(dict[str, Any]):
     """
 
 
-# Global params instance – importable by user code.
+# Global params instance - importable by user code.
 params: _Params = _Params()
 
 
@@ -46,10 +46,10 @@ def get_dbutils(spark: SparkSession | None = None) -> Any:
 
     Tries multiple strategies in order:
 
-    1. **pyspark.dbutils** – works on Databricks Runtime and with
+    1. **pyspark.dbutils** - works on Databricks Runtime and with
        Databricks Connect.  If *spark* is ``None``, the active
        ``SparkSession`` is used automatically.
-    2. **IPython namespace** – fallback for interactive notebook
+    2. **IPython namespace** - fallback for interactive notebook
        environments where ``dbutils`` is injected into the user namespace.
 
     Parameters
@@ -81,22 +81,22 @@ def get_dbutils(spark: SparkSession | None = None) -> Any:
     """
     # Strategy 1: pyspark.dbutils (Databricks Runtime & Databricks Connect)
     try:
-        from pyspark.dbutils import (
-            DBUtils,  # type: ignore[import-not-found]  # Databricks-only
+        from pyspark.dbutils import (  # noqa: PLC0415  # ty: ignore[unresolved-import]
+            DBUtils,  # Databricks-only
         )
 
         if spark is None:
-            from pyspark.sql import SparkSession as _SS
+            from pyspark.sql import SparkSession as _SS  # noqa: N814, PLC0415
 
             spark = _SS.getActiveSession()
         if spark is not None:
             return DBUtils(spark)
-    except (ImportError, Exception):
+    except (ImportError, Exception):  # noqa: BLE001, S110
         pass
 
     # Strategy 2: IPython notebook namespace (dbutils injected by Databricks)
     try:
-        import IPython  # type: ignore[import-not-found]  # Databricks-only
+        import IPython  # type: ignore[import-not-found]  # Databricks-only  # noqa: PLC0415
 
         ip = IPython.get_ipython()
         if ip is not None and "dbutils" in ip.user_ns:

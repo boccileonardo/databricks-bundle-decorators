@@ -41,6 +41,8 @@ from databricks_bundle_decorators.dashboard._figures import (
 # KPI card helper
 # ---------------------------------------------------------------------------
 
+_MAX_MISSING_DISPLAY = 500
+
 
 def _kpi_card(title: str, value: str | int, color: str = "primary") -> Any:
     """Return a Bootstrap card showing a single KPI metric."""
@@ -118,7 +120,7 @@ def _backfill_date_bounds(
     Works for ``daily``, ``weekly``, ``monthly``, and ``hourly`` kinds.
     Returns four ``None`` values when no valid dates can be parsed.
     """
-    from datetime import datetime
+    from datetime import datetime  # noqa: PLC0415
 
     dates: list[date] = []
     if kind == "daily":
@@ -142,7 +144,7 @@ def _backfill_date_bounds(
     elif kind == "hourly":
         for key in expected_keys:
             try:
-                dates.append(datetime.strptime(key, _HOURLY_FMT).date())
+                dates.append(datetime.strptime(key, _HOURLY_FMT).date())  # noqa: DTZ007
             except ValueError:
                 continue
 
@@ -157,10 +159,7 @@ def _backfill_date_bounds(
     init_end = min(today, max_d) if today >= min_d else max_d
     span_days = (max_d - min_d).days
     max_span, window_delta = _DATE_THRESHOLDS.get(kind, (180, timedelta(days=90)))
-    if span_days > max_span:
-        init_start = max(min_d, init_end - window_delta)
-    else:
-        init_start = min_d
+    init_start = max(min_d, init_end - window_delta) if span_days > max_span else min_d
     return min_d, max_d, init_start, init_end
 
 
@@ -436,7 +435,6 @@ def _page_backfill_detail(
             backfill_section.append(dcc.Graph(figure=fig))
 
     if cov.missing_keys:
-        _MAX_MISSING_DISPLAY = 500
         if len(cov.missing_keys) <= _MAX_MISSING_DISPLAY:
             missing_text = "\n".join(cov.missing_keys)
         else:

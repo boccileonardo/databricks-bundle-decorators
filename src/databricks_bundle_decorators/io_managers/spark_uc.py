@@ -7,11 +7,11 @@ These IoManagers work on both classic and serverless compute because
 Unity Catalog authentication is handled by the workspace — no
 ``spark.conf.set()`` is needed.
 
-- `SparkUCTableIoManager` – managed / external Delta tables
+- `SparkUCTableIoManager` - managed / external Delta tables
   (``catalog.schema.task_key``)
-- `SparkUCVolumeDeltaIoManager` – Delta tables stored in UC Volumes
+- `SparkUCVolumeDeltaIoManager` - Delta tables stored in UC Volumes
   (``/Volumes/catalog/schema/volume/task_key``)
-- `SparkUCVolumeParquetIoManager` – Parquet files stored in UC Volumes
+- `SparkUCVolumeParquetIoManager` - Parquet files stored in UC Volumes
   (``/Volumes/catalog/schema/volume/task_key``)
 
 Requires PySpark, which is pre-installed on Databricks clusters.
@@ -103,7 +103,7 @@ class SparkUCTableIoManager(IoManager):
 
     def setup(self) -> None:
         """Obtain the active SparkSession."""
-        from pyspark.sql import SparkSession
+        from pyspark.sql import SparkSession  # noqa: PLC0415
 
         self._spark = SparkSession.getActiveSession()
         if self._spark is None:
@@ -122,7 +122,7 @@ class SparkUCTableIoManager(IoManager):
         """
         _merge_cls: type | None = None
         try:
-            from delta.tables import DeltaMergeBuilder
+            from delta.tables import DeltaMergeBuilder  # noqa: PLC0415
 
             _merge_cls = DeltaMergeBuilder
         except ImportError:
@@ -136,7 +136,7 @@ class SparkUCTableIoManager(IoManager):
 
         # Inject backfill_key column if it's a partition column
         if _needs_backfill_key_col(partition_by):
-            from pyspark.sql import functions as F
+            from pyspark.sql import functions as F  # noqa: N812, PLC0415
 
             bk = _resolve_backfill_key(context.backfill_key)
             obj = obj.withColumn("backfill_key", F.lit(bk))
@@ -178,7 +178,7 @@ class SparkUCTableIoManager(IoManager):
             and _needs_backfill_key_col(context.partition_by)
             and not context.all_partitions
         ):
-            from pyspark.sql import functions as F
+            from pyspark.sql import functions as F  # noqa: N812, PLC0415
 
             result = result.filter(
                 F.col("backfill_key") == _resolve_backfill_key(context.backfill_key)
@@ -258,7 +258,7 @@ class SparkUCVolumeDeltaIoManager(IoManager):
 
     def setup(self) -> None:
         """Obtain the active SparkSession."""
-        from pyspark.sql import SparkSession
+        from pyspark.sql import SparkSession  # noqa: PLC0415
 
         self._spark = SparkSession.getActiveSession()
         if self._spark is None:
@@ -277,7 +277,7 @@ class SparkUCVolumeDeltaIoManager(IoManager):
         """
         _merge_cls: type | None = None
         try:
-            from delta.tables import DeltaMergeBuilder
+            from delta.tables import DeltaMergeBuilder  # noqa: PLC0415
 
             _merge_cls = DeltaMergeBuilder
         except ImportError:
@@ -291,7 +291,7 @@ class SparkUCVolumeDeltaIoManager(IoManager):
 
         # Inject backfill_key column if it's a partition column
         if _needs_backfill_key_col(partition_by):
-            from pyspark.sql import functions as F
+            from pyspark.sql import functions as F  # noqa: N812, PLC0415
 
             bk = _resolve_backfill_key(context.backfill_key)
             obj = obj.withColumn("backfill_key", F.lit(bk))
@@ -335,7 +335,7 @@ class SparkUCVolumeDeltaIoManager(IoManager):
             and _needs_backfill_key_col(context.partition_by)
             and not context.all_partitions
         ):
-            from pyspark.sql import functions as F
+            from pyspark.sql import functions as F  # noqa: N812, PLC0415
 
             result = result.filter(
                 F.col("backfill_key") == _resolve_backfill_key(context.backfill_key)
@@ -408,7 +408,7 @@ class SparkUCVolumeParquetIoManager(IoManager):
 
     def setup(self) -> None:
         """Obtain the active SparkSession."""
-        from pyspark.sql import SparkSession
+        from pyspark.sql import SparkSession  # noqa: PLC0415
 
         self._spark = SparkSession.getActiveSession()
         if self._spark is None:
@@ -425,7 +425,7 @@ class SparkUCVolumeParquetIoManager(IoManager):
 
         # Inject backfill_key column if it's a partition column
         if _needs_backfill_key_col(partition_by):
-            from pyspark.sql import functions as F
+            from pyspark.sql import functions as F  # noqa: N812, PLC0415
 
             bk = _resolve_backfill_key(context.backfill_key)
             obj = obj.withColumn("backfill_key", F.lit(bk))
@@ -465,7 +465,7 @@ class SparkUCVolumeParquetIoManager(IoManager):
             and _needs_backfill_key_col(context.partition_by)
             and not context.all_partitions
         ):
-            from pyspark.sql import functions as F
+            from pyspark.sql import functions as F  # noqa: N812, PLC0415
 
             result = result.filter(
                 F.col("backfill_key") == _resolve_backfill_key(context.backfill_key)

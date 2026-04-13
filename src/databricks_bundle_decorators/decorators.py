@@ -67,7 +67,7 @@ def _validate_user_params(params: dict[str, str], context: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Job context – tracks which @job body is currently being executed
+# Job context - tracks which @job body is currently being executed
 # ---------------------------------------------------------------------------
 
 _current_job_name: str | None = None
@@ -76,7 +76,7 @@ themselves into the DAG automatically."""
 
 
 # ---------------------------------------------------------------------------
-# TaskProxy – returned by @task calls inside a @job body
+# TaskProxy - returned by @task calls inside a @job body
 # ---------------------------------------------------------------------------
 
 
@@ -260,7 +260,7 @@ def task(
         )
 
         if _current_job_name is not None:
-            # Inside a @job body – register under qualified key and
+            # Inside a @job body - register under qualified key and
             # store in the job-local tracker so the wrapper can build
             # the DAG.
             qualified_key = f"{_current_job_name}.{task_key}"
@@ -274,7 +274,7 @@ def task(
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
             if _current_job_name is not None:
-                # We're being *called* inside a @job body – return a
+                # We're being *called* inside a @job body - return a
                 # TaskProxy and record DAG edges from any proxy args.
                 if task_key in _current_job_dag:
                     raise DuplicateResourceError(
@@ -472,7 +472,7 @@ def job(
     """
 
     def decorator(fn: types.FunctionType) -> Callable[..., Any]:
-        global _current_job_name
+        global _current_job_name  # noqa: PLW0603
         job_name = fn.__name__
 
         # --- check job uniqueness -----------------------------------------
@@ -719,10 +719,9 @@ def for_each_task(
     depends_on_keys: list[str] = []
     if depends_on is not None:
         deps = depends_on if isinstance(depends_on, list) else [depends_on]
-        for dep in deps:
-            depends_on_keys.append(
-                _resolve_task_ref(dep, "@for_each_task(depends_on=...)")
-            )
+        depends_on_keys.extend(
+            _resolve_task_ref(dep, "@for_each_task(depends_on=...)") for dep in deps
+        )
 
     # Merge inputs dep into depends_on list
     all_dep_keys = list(depends_on_keys)
@@ -781,7 +780,7 @@ def for_each_task(
                 )
 
             # Map positional args to parameter names (skip 'inputs')
-            param_names = [p for p in sig.parameters.keys() if p != "inputs"]
+            param_names = [p for p in sig.parameters if p != "inputs"]
             all_call_kwargs: dict[str, Any] = {}
             for idx, arg in enumerate(args):
                 p_name = param_names[idx] if idx < len(param_names) else f"arg{idx}"

@@ -10,6 +10,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import shutil
 import subprocess
@@ -18,6 +19,11 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+
+from databricks_bundle_decorators.backfill import BACKFILL_KEY_PARAM, BackfillDef
+from databricks_bundle_decorators.dashboard import APP_TEMPLATE
+from databricks_bundle_decorators.discovery import discover_pipelines
+from databricks_bundle_decorators.registry import _JOB_REGISTRY
 
 try:
     import tomllib
@@ -84,7 +90,7 @@ from databricks.bundles.core import Bundle, Resources
 
 def load_resources(bundle: Bundle) -> Resources:
     """Entry-point called by ``databricks bundle deploy``."""
-    import {package_name}.pipelines  # noqa: F401 – triggers decorator registration
+    import {package_name}.pipelines  # noqa: F401 - triggers decorator registration
     from databricks_bundle_decorators.codegen import generate_resources
 
     resources = Resources()
@@ -132,7 +138,7 @@ targets:
 """
 
 _EXAMPLE_PIPELINE = '''\
-"""Example pipeline – demonstrates task dependencies, IoManager, and parameters.
+"""Example pipeline - demonstrates task dependencies, IoManager, and parameters.
 
 Shows the TaskFlow pattern:
 - ``@job_cluster`` for shared cluster configuration
@@ -159,7 +165,7 @@ from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
 
 # ---------------------------------------------------------------------------
-# IoManager – persist DataFrames as Parquet (works with any cloud or local path)
+# IoManager - persist DataFrames as Parquet (works with any cloud or local path)
 # ---------------------------------------------------------------------------
 
 def _storage_options() -> dict[str, str]:
@@ -192,7 +198,7 @@ default_cluster = job_cluster(
 
 
 # ---------------------------------------------------------------------------
-# Job – inline TaskFlow pattern
+# Job - inline TaskFlow pattern
 # ---------------------------------------------------------------------------
 
 
@@ -219,7 +225,7 @@ def example_job():
 
     @task
     def summarize(clean_df: pl.DataFrame) -> None:
-        """Final consumer – print the result (replace with your own logic)."""
+        """Final consumer - print the result (replace with your own logic)."""
         print(f"Loaded {len(clean_df)} rows:")
         print(clean_df)
 
@@ -269,7 +275,7 @@ default_cluster = job_cluster(
 
 
 # ---------------------------------------------------------------------------
-# Job – libraries=[] because the package is pre-installed in the image
+# Job - libraries=[] because the package is pre-installed in the image
 # ---------------------------------------------------------------------------
 
 
@@ -304,7 +310,7 @@ _DOCKER_DATABRICKS_YAML = """\
 bundle:
   name: {project_name}
 
-# No artifacts section needed – the package is pre-installed
+# No artifacts section needed - the package is pre-installed
 # in the Docker image rather than uploaded as a wheel.
 
 python:
@@ -432,10 +438,6 @@ def _cmd_backfill(
     Uses ``databricks bundle run`` under the hood, which automatically
     resolves the deployed job name (including any dev-mode prefix).
     """
-    from databricks_bundle_decorators.backfill import BackfillDef
-    from databricks_bundle_decorators.discovery import discover_pipelines
-    from databricks_bundle_decorators.registry import _JOB_REGISTRY
-
     # 1. Populate registries
     discover_pipelines()
 
@@ -510,8 +512,6 @@ def _submit_backfill_runs(
 
     Shared by ``backfill`` and ``catchup`` commands.
     """
-    from databricks_bundle_decorators.backfill import BACKFILL_KEY_PARAM
-
     if shutil.which("databricks") is None:
         print(
             "Error: 'databricks' CLI not found on PATH. "
@@ -610,7 +610,7 @@ def _get_job_id_from_bundle(
     if profile:
         cmd += ["--profile", profile]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)  # noqa: PLW1510, S603
     if result.returncode != 0:
         err = result.stderr.strip() or result.stdout.strip()
         print(
@@ -645,7 +645,7 @@ def _get_job_id_from_bundle(
 
 def _get_launched_backfill_keys(
     job_id: str,
-    target: str | None,
+    _target: str | None,
     profile: str | None,
 ) -> set[str]:
     """Return the set of ``backfill_key`` values already launched.
@@ -660,7 +660,7 @@ def _get_launched_backfill_keys(
     a JSON array.
     """
     #: Terminal result states that should NOT block a re-run.
-    _FAILED_STATES = {"FAILED", "TIMEDOUT", "TIMED_OUT", "CANCELED", "CANCELLED"}
+    _failed_states = {"FAILED", "TIMEDOUT", "TIMED_OUT", "CANCELED", "CANCELLED"}
 
     cmd: list[str] = [
         "databricks",
@@ -674,7 +674,7 @@ def _get_launched_backfill_keys(
     if profile:
         cmd += ["--profile", profile]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)  # noqa: PLW1510, S603
     if result.returncode != 0:
         err = result.stderr.strip() or result.stdout.strip()
         print(
@@ -690,7 +690,7 @@ def _get_launched_backfill_keys(
         result_state = state.get("result_state")
         # Skip terminally-failed runs so they get retried.
         # Active runs have result_state=None — we keep those.
-        if result_state in _FAILED_STATES:
+        if result_state in _failed_states:
             continue
         for param in run.get("job_parameters", []):
             if param.get("name") == "backfill_key":
@@ -714,10 +714,6 @@ def _cmd_backfill_catchup(
     the Databricks API for successful past runs, computes the
     difference, and submits the missing keys.
     """
-    from databricks_bundle_decorators.backfill import BackfillDef
-    from databricks_bundle_decorators.discovery import discover_pipelines
-    from databricks_bundle_decorators.registry import _JOB_REGISTRY
-
     # 1. Populate registries
     discover_pipelines()
 
@@ -793,7 +789,7 @@ def _cmd_backfill_catchup(
 
 @app.command("init")
 def init(
-    docker: Annotated[
+    docker: Annotated[  # noqa: FBT002
         bool,
         typer.Option(
             help="Generate a Docker-based example pipeline where the "
@@ -828,11 +824,11 @@ def backfill(
         int | None,
         typer.Option(help="Maximum number of concurrent run submissions"),
     ] = None,
-    dry_run: Annotated[
+    dry_run: Annotated[  # noqa: FBT002
         bool,
         typer.Option("--dry-run", help="Print backfill keys without submitting runs"),
     ] = False,
-    wait: Annotated[
+    wait: Annotated[  # noqa: FBT002
         bool,
         typer.Option(help="Wait for all runs to complete and report success/failure"),
     ] = False,
@@ -873,11 +869,11 @@ def catchup(
         int | None,
         typer.Option(help="Maximum number of concurrent run submissions"),
     ] = None,
-    dry_run: Annotated[
+    dry_run: Annotated[  # noqa: FBT002
         bool,
         typer.Option("--dry-run", help="Print missing keys without submitting runs"),
     ] = False,
-    wait: Annotated[
+    wait: Annotated[  # noqa: FBT002
         bool,
         typer.Option(help="Wait for all runs to complete and report success/failure"),
     ] = False,
@@ -924,8 +920,6 @@ def dashboard() -> None:
         uv add databricks-bundle-decorators[observability]
     """
     try:
-        import importlib
-
         importlib.import_module("dash")
     except ImportError:
         print(
@@ -935,8 +929,6 @@ def dashboard() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-
-    from databricks_bundle_decorators.dashboard import APP_TEMPLATE
 
     cwd = Path.cwd()
     pyproject = _read_pyproject(cwd)
@@ -950,7 +942,7 @@ def dashboard() -> None:
         )
         print(f"Created: {app_path}")
 
-    sys.exit(subprocess.call([sys.executable, str(app_path)]))
+    sys.exit(subprocess.call([sys.executable, str(app_path)]))  # noqa: S603
 
 
 # --- Main ------------------------------------------------------------------
@@ -961,7 +953,7 @@ def main() -> None:
         app(standalone_mode=False)
     except SystemExit:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         # standalone_mode=False doesn't convert click errors to SystemExit.
         # Print the error so the user can diagnose the problem.
         print(f"Error: {exc}", file=sys.stderr)

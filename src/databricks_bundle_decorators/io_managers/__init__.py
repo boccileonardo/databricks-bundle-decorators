@@ -4,26 +4,26 @@ Provides ready-to-use IoManagers for common storage backends.
 
 Polars
 ------
-- `PolarsParquetIoManager` – Parquet files
-- `PolarsDeltaIoManager` – Delta tables (requires ``deltalake``)
-- `PolarsJsonIoManager` – NDJSON files
-- `PolarsCsvIoManager` – CSV files
+- `PolarsParquetIoManager` - Parquet files
+- `PolarsDeltaIoManager` - Delta tables (requires ``deltalake``)
+- `PolarsJsonIoManager` - NDJSON files
+- `PolarsCsvIoManager` - CSV files
 
 Spark (classic compute)
 -----------------------
-- `SparkDeltaIoManager` – Delta tables with ``spark.conf.set()`` credentials
-- `SparkParquetIoManager` – Parquet files with ``spark.conf.set()`` credentials
+- `SparkDeltaIoManager` - Delta tables with ``spark.conf.set()`` credentials
+- `SparkParquetIoManager` - Parquet files with ``spark.conf.set()`` credentials
 
 Spark (serverless compute)
 --------------------------
-- `SparkServerlessDeltaIoManager` – Delta tables (Unity Catalog ext. location auth)
-- `SparkServerlessParquetIoManager` – Parquet files (Unity Catalog ext. location auth)
+- `SparkServerlessDeltaIoManager` - Delta tables (Unity Catalog ext. location auth)
+- `SparkServerlessParquetIoManager` - Parquet files (Unity Catalog ext. location auth)
 
 Spark (Unity Catalog)
 ---------------------
-- `SparkUCTableIoManager` – managed Delta tables via three‑level namespace
-- `SparkUCVolumeDeltaIoManager` – Delta tables in UC Volumes
-- `SparkUCVolumeParquetIoManager` – Parquet files in UC Volumes
+- `SparkUCTableIoManager` - managed Delta tables via three-level namespace
+- `SparkUCVolumeDeltaIoManager` - Delta tables in UC Volumes
+- `SparkUCVolumeParquetIoManager` - Parquet files in UC Volumes
 """
 
 from databricks_bundle_decorators.io_managers.polars_csv import (

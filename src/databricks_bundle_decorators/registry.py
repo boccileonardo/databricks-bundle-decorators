@@ -102,7 +102,7 @@ class JobMeta:
 
 
 # ---------------------------------------------------------------------------
-# Global registries – populated by decorators, consumed by codegen & runtime
+# Global registries - populated by decorators, consumed by codegen & runtime
 # ---------------------------------------------------------------------------
 
 # Tasks are keyed by qualified name ("job_name.task_name") when defined

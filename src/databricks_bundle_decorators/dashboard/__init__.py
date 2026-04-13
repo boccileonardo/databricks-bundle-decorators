@@ -44,19 +44,15 @@ from databricks_bundle_decorators.dashboard._fetch import (
 )
 
 __all__ = [
-    # Data classes
+    "APP_TEMPLATE",
     "BackfillCoverage",
     "JobOverview",
     "RunInfo",
-    # Fetch
+    "build_job_overview",
+    "compute_backfill_coverage",
     "fetch_job_runs",
     "resolve_bundle_targets",
     "resolve_job_ids",
     "resolve_workspace_url",
-    # Compute
-    "build_job_overview",
-    "compute_backfill_coverage",
-    # App
-    "APP_TEMPLATE",
     "run_app",
 ]

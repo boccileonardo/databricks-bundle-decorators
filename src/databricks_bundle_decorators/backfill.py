@@ -29,6 +29,9 @@ from typing import Any, ClassVar
 
 import whenever
 
+from databricks_bundle_decorators.context import params
+from databricks_bundle_decorators.registry import _JOB_REGISTRY
+
 _logger = logging.getLogger(__name__)
 
 #: The fixed job-parameter name that carries the backfill key.
@@ -115,7 +118,7 @@ class DailyBackfill(BackfillDef):
     tz: str = "UTC"
 
     def _parse(self, key: str) -> whenever.Date:
-        return whenever.Date.from_py_date(datetime.strptime(key, self._FMT).date())
+        return whenever.Date.from_py_date(datetime.strptime(key, self._FMT).date())  # noqa: DTZ007
 
     def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
         s = self._parse(start or self.start_date)
@@ -162,7 +165,7 @@ class WeeklyBackfill(BackfillDef):
     def _parse_iso_week(self, key: str) -> whenever.Date:
         """Parse an ISO-week key into a Monday ``Date``."""
         return whenever.Date.from_py_date(
-            datetime.strptime(key + "-1", self._FMT + "-%u").date()
+            datetime.strptime(key + "-1", self._FMT + "-%u").date()  # noqa: DTZ007
         )
 
     def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
@@ -210,7 +213,7 @@ class MonthlyBackfill(BackfillDef):
 
     def _parse_month(self, key: str) -> whenever.Date:
         """Parse a month key into the first day of that month."""
-        d = datetime.strptime(key, self._FMT).date()
+        d = datetime.strptime(key, self._FMT).date()  # noqa: DTZ007
         return whenever.Date(d.year, d.month, 1)
 
     def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
@@ -266,7 +269,7 @@ class HourlyBackfill(BackfillDef):
         Ambiguous wall-clock times (e.g. the repeated hour during a
         fall-back DST transition) resolve to the *first* occurrence.
         """
-        naive = datetime.strptime(key, self._FMT)
+        naive = datetime.strptime(key, self._FMT)  # noqa: DTZ007
         return whenever.ZonedDateTime(
             naive.year, naive.month, naive.day, naive.hour, tz=self.tz
         )
@@ -359,8 +362,6 @@ def get_backfill_key(*, validate: bool = True) -> str:
     str
         The raw backfill key string.
     """
-    from databricks_bundle_decorators.context import params
-
     raw = params.get(BACKFILL_KEY_PARAM, "")
     if not raw:
         raise RuntimeError(
@@ -412,8 +413,6 @@ def get_run_logical_date(*, validate: bool = True) -> datetime:
 
 def _validate_backfill_key(raw: str, job_name: str | None) -> None:
     """Check *raw* is within the current job's backfill boundaries."""
-    from databricks_bundle_decorators.registry import _JOB_REGISTRY
-
     if job_name is None:
         return
     job_meta = _JOB_REGISTRY.get(job_name)

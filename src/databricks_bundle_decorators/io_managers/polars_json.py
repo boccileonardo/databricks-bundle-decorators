@@ -158,7 +158,7 @@ class PolarsJsonIoManager(IoManager):
         to Hive-style partitioned directories using
         ``pl.PartitionBy``.
         """
-        import polars as pl
+        import polars as pl  # noqa: PLC0415
 
         base_uri = self._uri(context.task_key)
         partition_by = context.partition_by
@@ -224,7 +224,7 @@ class PolarsJsonIoManager(IoManager):
         upstream dependency or ``@task(all_partitions=True)`` on
         the consuming task to read all partitions.
         """
-        import polars as pl
+        import polars as pl  # noqa: PLC0415
 
         base_uri = self._uri(context.upstream_task_key)
         partition_by = context.partition_by

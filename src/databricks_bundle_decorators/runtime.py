@@ -17,12 +17,15 @@ import os
 import typing
 from typing import Any
 
+from databricks_bundle_decorators import task_values
 from databricks_bundle_decorators.context import _populate_params
+from databricks_bundle_decorators.discovery import discover_pipelines
 from databricks_bundle_decorators.io_manager import (
     InputContext,
     OutputContext,
 )
 from databricks_bundle_decorators.registry import _TASK_REGISTRY
+from databricks_bundle_decorators.task_values import get_task_value, set_task_value
 
 _logger = logging.getLogger(__name__)
 
@@ -90,7 +93,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
     # ---- resolve type hints for expected_type ----------------------------
     try:
         type_hints = typing.get_type_hints(task_meta.fn)
-    except Exception:  # noqa: BLE001 – graceful fallback
+    except Exception:  # noqa: BLE001 - graceful fallback
         type_hints = {}
 
     # ---- resolve upstream data via IoManager.read() ----------------------
@@ -109,8 +112,6 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 and upstream_meta.partition_by
                 and not is_all_partitions
             ):
-                from databricks_bundle_decorators.task_values import get_task_value
-
                 partition_filter = get_task_value(
                     upstream_task_key, "__partition_values__"
                 )
@@ -143,7 +144,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
             kwargs[param_name] = upstream_meta.io_manager.read(context)
         else:
             _logger.warning(
-                "Upstream task '%s' has no IoManager – "
+                "Upstream task '%s' has no IoManager - "
                 "cannot auto-load data for parameter '%s'.",
                 upstream_task_key,
                 param_name,
@@ -158,9 +159,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
             kwargs["inputs"] = for_each_input_raw
 
     # ---- execute the task function ---------------------------------------
-    from databricks_bundle_decorators import task_values as _tv
-
-    _tv._current_task_key = task_key
+    task_values._current_task_key = task_key
     try:
         result = task_meta.fn(**kwargs)
 
@@ -181,17 +180,15 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 partition_values = task_meta.io_manager._extract_partition_values(
                     context
                 )
-                from databricks_bundle_decorators.task_values import set_task_value
-
                 set_task_value("__partition_values__", partition_values)  # type: ignore[arg-type]
         elif result is not None and not task_meta.io_manager:
             _logger.warning(
-                "Task '%s' returned a value but has no IoManager – "
+                "Task '%s' returned a value but has no IoManager - "
                 "the return value will be discarded.",
                 task_key,
             )
     finally:
-        _tv._current_task_key = None
+        task_values._current_task_key = None
 
 
 def main() -> None:
@@ -202,13 +199,11 @@ def main() -> None:
     # 1. Discover and import pipeline definitions to populate registries.
     #    Pipeline packages register themselves via the 'databricks_bundle_decorators.pipelines'
     #    entry-point group in their pyproject.toml.
-    from databricks_bundle_decorators.discovery import discover_pipelines
-
     discover_pipelines()
 
     # 2. Parse CLI arguments.
     parser = argparse.ArgumentParser(description="dbxdec task runner")
-    args, remaining = parser.parse_known_args()
+    _args, remaining = parser.parse_known_args()
     cli_params = _parse_named_args(remaining)
 
     task_key = cli_params.get("__task_key__")

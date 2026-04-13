@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 from delta.tables import DeltaTable
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrameWriter, SparkSession
 
 from databricks_bundle_decorators.io_manager import InputContext, OutputContext
 from databricks_bundle_decorators.io_managers import (
@@ -40,7 +40,7 @@ def uc_schema(spark: SparkSession):
 
 
 # ===========================================================================
-# SparkUCTableIoManager – construction
+# SparkUCTableIoManager - construction
 # ===========================================================================
 
 
@@ -67,7 +67,7 @@ class TestSparkUCTableSetup:
 
 
 # ---------------------------------------------------------------------------
-# SparkUCTableIoManager – round-trip using local catalog
+# SparkUCTableIoManager - round-trip using local catalog
 #
 # OSS Delta V2 catalog does not support saveAsTable with mode("overwrite")
 # (raises "does not support truncate in batch mode").  We use mode="error"
@@ -183,7 +183,7 @@ class TestSparkUCTableMergeBuilder:
 
 
 # ===========================================================================
-# SparkUCVolumeDeltaIoManager – construction & round-trip
+# SparkUCVolumeDeltaIoManager - construction & round-trip
 # ===========================================================================
 
 
@@ -341,7 +341,7 @@ class TestSparkUCVolumeDeltaMergeBuilder:
 
 
 # ===========================================================================
-# SparkUCVolumeParquetIoManager – construction & round-trip
+# SparkUCVolumeParquetIoManager - construction & round-trip
 # ===========================================================================
 
 
@@ -458,7 +458,7 @@ class TestSparkUCVolumeParquetRoundTrip:
 
 
 # ===========================================================================
-# Partition value extraction – all UC IoManagers
+# Partition value extraction - all UC IoManagers
 # ===========================================================================
 
 
@@ -543,7 +543,7 @@ class TestPartitionValueExtraction:
 
 
 # ===========================================================================
-# Partition-scoped overwrite (backfill safety) – UC Table
+# Partition-scoped overwrite (backfill safety) - UC Table
 # ===========================================================================
 
 
@@ -559,7 +559,6 @@ class TestSparkUCTablePartitionScopedOverwrite:
         self, spark: SparkSession, uc_schema: str, monkeypatch: pytest.MonkeyPatch
     ):
         """When the table already exists, replaceWhere must be set."""
-        from pyspark.sql import DataFrameWriter
 
         io = SparkUCTableIoManager(
             catalog="spark_catalog", schema=uc_schema, mode="overwrite"
@@ -587,7 +586,6 @@ class TestSparkUCTablePartitionScopedOverwrite:
         self, spark: SparkSession, uc_schema: str, monkeypatch: pytest.MonkeyPatch
     ):
         """When the table does not exist yet, replaceWhere must NOT be set."""
-        from pyspark.sql import DataFrameWriter
 
         io = SparkUCTableIoManager(
             catalog="spark_catalog", schema=uc_schema, mode="overwrite"
@@ -616,7 +614,6 @@ class TestSparkUCTablePartitionScopedOverwrite:
         self, spark: SparkSession, uc_schema: str, monkeypatch: pytest.MonkeyPatch
     ):
         """Multiple partition values produce an IN clause."""
-        from pyspark.sql import DataFrameWriter
 
         io = SparkUCTableIoManager(
             catalog="spark_catalog", schema=uc_schema, mode="overwrite"
@@ -644,7 +641,7 @@ class TestSparkUCTablePartitionScopedOverwrite:
 
 
 # ===========================================================================
-# Partition-scoped overwrite (backfill safety) – UC Volume Delta
+# Partition-scoped overwrite (backfill safety) - UC Volume Delta
 # ===========================================================================
 
 
@@ -677,7 +674,7 @@ class TestSparkUCVolumeDeltaPartitionScopedOverwrite:
 
 
 # ===========================================================================
-# Partition-scoped overwrite (backfill safety) – UC Volume Parquet
+# Partition-scoped overwrite (backfill safety) - UC Volume Parquet
 # ===========================================================================
 
 

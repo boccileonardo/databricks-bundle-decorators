@@ -1,16 +1,24 @@
 """Tests for the decorator registry wiring (TaskFlow pattern)."""
 
 import warnings
+from typing import Any
 
 import pytest
 
 from databricks_bundle_decorators.backfill import DailyBackfill
+from databricks_bundle_decorators.codegen import generate_resources
 from databricks_bundle_decorators.decorators import (
+    all_partitions,
     for_each_task,
     job,
     job_cluster,
     task,
     task_value,
+)
+from databricks_bundle_decorators.io_manager import (
+    InputContext,
+    IoManager,
+    OutputContext,
 )
 from databricks_bundle_decorators.registry import (
     _CLUSTER_REGISTRY,
@@ -38,14 +46,6 @@ class TestTaskDecorator:
         assert my_task() == 42
 
     def test_with_io_manager(self):
-        from typing import Any
-
-        from databricks_bundle_decorators.io_manager import (
-            InputContext,
-            IoManager,
-            OutputContext,
-        )
-
         class FakeIo(IoManager):
             def write(self, context: OutputContext, obj: Any) -> None:
                 pass
@@ -588,7 +588,7 @@ class TestDuplicateTaskInvocation:
                     pass
 
                 step()
-                step()  # second call – should raise
+                step()  # second call - should raise
 
     def test_second_job_can_reuse_task_function_name(self):
         """Same task function name in a *different* job is allowed."""
@@ -657,7 +657,7 @@ class TestDependsOn:
 
         meta = _JOB_REGISTRY["dep_job"]
         assert meta.dag["work"] == ["setup"]
-        # No IoManager edge – only control-flow
+        # No IoManager edge - only control-flow
         assert meta.dag_edges.get("work", {}) == {}
 
     def test_list_depends_on(self):
@@ -767,7 +767,6 @@ class TestDependsOn:
 
     def test_depends_on_codegen(self):
         """depends_on produces TaskDependency in generated resources."""
-        from databricks_bundle_decorators.codegen import generate_resources
 
         @job
         def codegen_dep_job():
@@ -1145,7 +1144,6 @@ class TestAllPartitions:
 
     def test_all_partitions_wrapper_records_edge(self):
         """all_partitions(proxy) records the param in all_partitions_edges."""
-        from databricks_bundle_decorators.decorators import all_partitions
 
         @job
         def ap_job():
@@ -1166,7 +1164,6 @@ class TestAllPartitions:
 
     def test_all_partitions_kwarg(self):
         """all_partitions(proxy) works as a keyword argument."""
-        from databricks_bundle_decorators.decorators import all_partitions
 
         @job
         def ap_kw_job():
@@ -1211,7 +1208,6 @@ class TestAllPartitions:
 
     def test_mixed_all_partitions_and_normal(self):
         """Only the wrapped proxy is in all_partitions_edges, not the normal one."""
-        from databricks_bundle_decorators.decorators import all_partitions
 
         @job
         def mixed_ap_job():
@@ -1251,15 +1247,12 @@ class TestAllPartitions:
 
     def test_all_partitions_non_proxy_raises(self):
         """all_partitions() with a non-TaskProxy raises TypeError."""
-        from databricks_bundle_decorators.decorators import all_partitions
 
         with pytest.raises(TypeError, match="expects a TaskProxy"):
             all_partitions("not_a_proxy")  # type: ignore[arg-type]
 
     def test_all_partitions_codegen(self):
         """all_partitions edges produce __all_partitions__ named parameters."""
-        from databricks_bundle_decorators.codegen import generate_resources
-        from databricks_bundle_decorators.decorators import all_partitions
 
         @job
         def codegen_ap_job():

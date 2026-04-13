@@ -11,6 +11,18 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from databricks.bundles.jobs import (
+    ClusterSpec,
+    ForEachTask,
+    Job,
+    JobCluster,
+    JobParameterDefinition,
+    Library,
+    PythonWheelTask,
+    Task,
+    TaskDependency,
+)
+
 from databricks_bundle_decorators.backfill import BACKFILL_TAG, _serialize_backfill_tag
 from databricks_bundle_decorators.registry import (
     _JOB_REGISTRY,
@@ -35,18 +47,6 @@ def generate_resources(
         ``[Library(whl="dist/*.whl")]``.  Pass an empty list to suppress
         the default wheel library.
     """
-    from databricks.bundles.jobs import (
-        ClusterSpec,
-        ForEachTask,
-        Job,
-        JobCluster,
-        JobParameterDefinition,
-        Library,
-        PythonWheelTask,
-        Task,
-        TaskDependency,
-    )
-
     _default_libraries: list[object] | None = (
         [Library(whl="dist/*.whl")] if default_libraries is None else default_libraries
     )
