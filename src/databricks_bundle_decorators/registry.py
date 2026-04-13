@@ -7,12 +7,13 @@ and the runtime module reads them to dispatch task execution.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from databricks_bundle_decorators.io_manager import IoManager
     from databricks_bundle_decorators.backfill import BackfillDef
+    from databricks_bundle_decorators.io_manager import IoManager
 
 
 @dataclass

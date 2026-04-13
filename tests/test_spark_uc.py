@@ -30,7 +30,7 @@ def _input_ctx(upstream: str = "producer", **kwargs) -> InputContext:
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def uc_schema(spark: SparkSession):
     """Create a unique schema in the default catalog for UC table tests."""
     schema_name = f"test_{uuid.uuid4().hex[:8]}"

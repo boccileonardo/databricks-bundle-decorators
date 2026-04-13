@@ -15,7 +15,6 @@ from databricks_bundle_decorators.io_manager import (
 )
 from databricks_bundle_decorators.io_managers import PolarsDeltaIoManager
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

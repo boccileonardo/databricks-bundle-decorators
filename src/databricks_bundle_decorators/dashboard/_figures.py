@@ -6,7 +6,7 @@ Calendar heatmaps and partition grid visualisations.
 from __future__ import annotations
 
 import calendar as _calendar
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 import plotly.graph_objects as go
@@ -113,7 +113,7 @@ def _hover_completed(key: str, key_run_info: _KeyRunInfo | None) -> str:
     if key_run_info is not None and key in key_run_info:
         run_id, start_ms = key_run_info[key]
         if start_ms:
-            dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
+            dt = datetime.fromtimestamp(start_ms / 1000, tz=UTC)
             ts = dt.strftime("%Y-%m-%d %H:%M UTC")
             return f"{key}: Completed<br>Run {run_id} \u00b7 {ts}"
         return f"{key}: Completed<br>Run {run_id}"

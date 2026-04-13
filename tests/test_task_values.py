@@ -2,13 +2,13 @@
 
 import pytest
 
+import databricks_bundle_decorators.task_values as _tv
 from databricks_bundle_decorators.task_values import (
     _is_databricks_runtime,
     _local_task_values,
     get_task_value,
     set_task_value,
 )
-import databricks_bundle_decorators.task_values as _tv
 
 
 class TestSetTaskValue:

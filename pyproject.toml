@@ -77,6 +77,76 @@ docs = [
 [tool.uv]
 sources.databricks-bundle-decorators = { workspace = true }
 
+[tool.ruff]
+format.docstring-code-format = true
+lint.extend-select = [
+  "A",    # flake8-builtins (shadowing builtins)
+  "ARG",  # flake8-unused-arguments
+  "B",    # flake8-bugbear (common bugs)
+  "BLE",  # flake8-blind-except
+  "C4",   # flake8-comprehensions
+  "DTZ",  # flake8-datetimez
+  "EM",   # flake8-errmsg
+  "ERA",  # eradicate (commented-out code)
+  "FBT",  # flake8-boolean-trap
+  "FLY",  # flynt
+  "FURB", # refurb
+  "G",    # flake8-logging-format
+  "I",    # isort (import sorting)
+  "ICN",  # flake8-import-conventions
+  "ISC",  # flake8-implicit-str-concat
+  "LOG",  # flake8-logging
+  "N",    # pep8-naming
+  "PERF", # perflint
+  "PIE",  # flake8-pie
+  "PL",   # pylint
+  "PT",   # flake8-pytest-style
+  "PTH",  # flake8-use-pathlib
+  "RET",  # flake8-return
+  "RSE",  # flake8-raise
+  "RUF",  # ruff-specific rules
+  "S",    # flake8-bandit (security)
+  "SIM",  # flake8-simplify
+  "T20",  # flake8-print (catch stray prints)
+  "TC",   # flake8-type-checking
+  "TRY",  # tryceratops (exception handling)
+  "UP",   # pyupgrade (modernize syntax for 3.12+)
+  "W",    # pycodestyle warnings
+]
+lint.ignore = [
+  "ISC001",  # conflicts with ruff formatter
+  "PLR0913", # too many arguments (decorator **kwargs pattern)
+  "PLR2004", # magic value comparison (noisy)
+  "S101",    # assert is fine (tests + runtime guards)
+  "TRY003",  # long exception messages outside class (too strict)
+  # "FBT001",  # boolean positional arg (common in decorator APIs)
+  # "FBT002",  # boolean default positional arg (common in decorator APIs)
+]
+lint.per-file-ignores."**/cli.py" = [
+  "T201", # print is the correct output method for CLI
+]
+lint.per-file-ignores."**/dashboard/**" = [
+  "N806", # PySpark/Plotly CamelCase variables
+  "N812", # Plotly/Dash import conventions
+  "T201", # print used for dashboard logging
+]
+lint.per-file-ignores."**/io_managers/**" = [
+  "N806", # PySpark CamelCase variables (DataFrame, SparkSession)
+  "N812", # PySpark import conventions
+]
+lint.per-file-ignores."__init__.py" = [
+  "F401", # unused imports (re-exports)
+]
+lint.per-file-ignores."tests/**" = [
+  "ARG001",  # unused function argument (fixtures)
+  "ARG002",  # unused method argument (test helpers)
+  "ARG005",  # unused lambda argument (test stubs)
+  "PLR0904", # too many public methods (test classes)
+  "SLF001",  # private member access (testing internals)
+  "T201",    # print (debugging in tests)
+]
+lint.pylint.max-args = 8
+
 [tool.pytest]
 ini_options.testpaths = [ "tests" ]
 

@@ -67,13 +67,15 @@ class SparkUCTableIoManager(IoManager):
 
         io = SparkUCTableIoManager(catalog="main", schema="staging")
 
+
         @task(io_manager=io)
         def extract():
             spark = SparkSession.getActiveSession()
             return spark.range(10)
 
+
         @task
-        def transform(df):   # spark.table("main.staging.extract")
+        def transform(df):  # spark.table("main.staging.extract")
             df.show()
     """
 
@@ -218,8 +220,11 @@ class SparkUCVolumeDeltaIoManager(IoManager):
         )
 
         io = SparkUCVolumeDeltaIoManager(
-            catalog="main", schema="staging", volume="raw_data",
+            catalog="main",
+            schema="staging",
+            volume="raw_data",
         )
+
 
         @task(io_manager=io)
         def extract():
@@ -367,8 +372,11 @@ class SparkUCVolumeParquetIoManager(IoManager):
         )
 
         io = SparkUCVolumeParquetIoManager(
-            catalog="main", schema="staging", volume="raw_data",
+            catalog="main",
+            schema="staging",
+            volume="raw_data",
         )
+
 
         @task(io_manager=io)
         def extract():

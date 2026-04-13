@@ -268,7 +268,7 @@ def run_app(
         _n_clicks: int | None,
         target: str | None,
     ) -> tuple[Any, Any]:
-        target_val = target if target else None
+        target_val = target or None
         slot = _get_slot(target_val)
 
         # Re-fetch when refresh is clicked, target changes, or first load.

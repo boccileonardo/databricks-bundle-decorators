@@ -5,6 +5,7 @@ arguments (parsed via ``argparse``).  Task code imports and reads it::
 
     from databricks_bundle_decorators import params
 
+
     @task
     def my_task():
         url = params["url"]
@@ -80,7 +81,9 @@ def get_dbutils(spark: SparkSession | None = None) -> Any:
     """
     # Strategy 1: pyspark.dbutils (Databricks Runtime & Databricks Connect)
     try:
-        from pyspark.dbutils import DBUtils  # type: ignore[import-not-found]  # Databricks-only
+        from pyspark.dbutils import (
+            DBUtils,  # type: ignore[import-not-found]  # Databricks-only
+        )
 
         if spark is None:
             from pyspark.sql import SparkSession as _SS

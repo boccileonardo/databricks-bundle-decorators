@@ -4,22 +4,22 @@ import warnings
 
 import pytest
 
-from databricks_bundle_decorators.registry import (
-    ClusterMeta,
-    DuplicateResourceError,
-    _CLUSTER_REGISTRY,
-    _JOB_REGISTRY,
-    _TASK_REGISTRY,
-    reset_registries,
-)
+from databricks_bundle_decorators.backfill import DailyBackfill
 from databricks_bundle_decorators.decorators import (
+    for_each_task,
     job,
     job_cluster,
     task,
-    for_each_task,
     task_value,
 )
-from databricks_bundle_decorators.backfill import DailyBackfill
+from databricks_bundle_decorators.registry import (
+    _CLUSTER_REGISTRY,
+    _JOB_REGISTRY,
+    _TASK_REGISTRY,
+    ClusterMeta,
+    DuplicateResourceError,
+    reset_registries,
+)
 
 
 class TestTaskDecorator:
@@ -38,12 +38,13 @@ class TestTaskDecorator:
         assert my_task() == 42
 
     def test_with_io_manager(self):
+        from typing import Any
+
         from databricks_bundle_decorators.io_manager import (
+            InputContext,
             IoManager,
             OutputContext,
-            InputContext,
         )
-        from typing import Any
 
         class FakeIo(IoManager):
             def write(self, context: OutputContext, obj: Any) -> None:
@@ -627,7 +628,7 @@ class TestDuplicateStandaloneTask:
         with pytest.raises(DuplicateResourceError, match="Duplicate task 'my_task'"):
 
             @task
-            def my_task():  # noqa: F811 – intentional duplicate
+            def my_task():
                 return 2
 
 

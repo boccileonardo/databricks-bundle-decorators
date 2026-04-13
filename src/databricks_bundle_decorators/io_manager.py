@@ -11,7 +11,7 @@ Users implement concrete IoManagers and attach them to tasks via the
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -35,7 +35,7 @@ def _resolve_backfill_key(backfill_key: str | None) -> str:
     """Return *backfill_key*, falling back to today's date when ``None``."""
     if backfill_key is not None:
         return backfill_key
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    return datetime.now(tz=UTC).strftime("%Y-%m-%d")
 
 
 def _build_replace_where(partition_values: dict[str, list[str]]) -> str:
@@ -175,6 +175,7 @@ class IoManager(ABC):
         import polars as pl
         from databricks_bundle_decorators import IoManager, OutputContext, InputContext
 
+
         class DeltaIoManager(IoManager):
             def __init__(self, catalog: str, schema: str):
                 self.catalog = catalog
@@ -182,7 +183,8 @@ class IoManager(ABC):
 
             def setup(self) -> None:
                 # Safe here — only called at runtime on Databricks.
-                from pyspark.dbutils import DBUtils          # noqa: F401
+                from pyspark.dbutils import DBUtils  # noqa: F401
+
                 self.dbutils = DBUtils(...)
 
             def write(self, context: OutputContext, obj: Any) -> None:

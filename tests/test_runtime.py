@@ -1,7 +1,8 @@
 """Tests for the runtime task runner."""
 
-import pytest
 from typing import Any
+
+import pytest
 
 from databricks_bundle_decorators.context import params
 from databricks_bundle_decorators.io_manager import (
@@ -10,8 +11,8 @@ from databricks_bundle_decorators.io_manager import (
     OutputContext,
 )
 from databricks_bundle_decorators.registry import (
-    TaskMeta,
     _TASK_REGISTRY,
+    TaskMeta,
     reset_registries,
 )
 from databricks_bundle_decorators.runtime import run_task
@@ -860,7 +861,7 @@ class TestStaticBackfillRuntime:
 
     def _register_static_job(self, keys: list[str]) -> None:
         from databricks_bundle_decorators.backfill import StaticBackfill
-        from databricks_bundle_decorators.registry import JobMeta, _JOB_REGISTRY
+        from databricks_bundle_decorators.registry import _JOB_REGISTRY, JobMeta
 
         _JOB_REGISTRY["j"] = JobMeta(
             fn=lambda: None,

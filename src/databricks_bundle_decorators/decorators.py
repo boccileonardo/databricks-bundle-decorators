@@ -16,26 +16,24 @@ import inspect
 import json
 import types
 import warnings
-from typing import Any, Callable, Unpack, overload
+from collections.abc import Callable
+from typing import Any, Unpack, overload
 
-from databricks_bundle_decorators.io_manager import IoManager
 from databricks_bundle_decorators.backfill import BACKFILL_KEY_PARAM, BackfillDef
+from databricks_bundle_decorators.io_manager import IoManager, _normalize_partition_by
 from databricks_bundle_decorators.registry import (
+    _CLUSTER_REGISTRY,
+    _JOB_REGISTRY,
+    _TASK_REGISTRY,
     ClusterMeta,
     DuplicateResourceError,
     ForEachMeta,
     JobMeta,
     TaskMeta,
     TaskValueRef,
-    _CLUSTER_REGISTRY,
-    _JOB_REGISTRY,
-    _TASK_REGISTRY,
     _register_unique,
 )
 from databricks_bundle_decorators.sdk_types import ClusterConfig, JobConfig, TaskConfig
-
-from databricks_bundle_decorators.io_manager import _normalize_partition_by
-
 
 # ---------------------------------------------------------------------------
 # Reserved parameter namespace
@@ -142,12 +140,10 @@ def all_partitions(proxy: TaskProxy) -> _AllPartitionsProxy:
         @job(backfill=DailyBackfill(start_date="2024-01-01"))
         def my_pipeline():
             @task(io_manager=io)
-            def extract():
-                ...
+            def extract(): ...
 
             @task
-            def aggregate(data):
-                ...
+            def aggregate(data): ...
 
             data = extract()
             aggregate(all_partitions(data))
@@ -350,9 +346,8 @@ def task(
                     _current_job_all_partitions[task_key] = ap_params
 
                 return TaskProxy(task_key)
-            else:
-                # Normal execution (runtime / tests).
-                return fn(*args, **kwargs)
+            # Normal execution (runtime / tests).
+            return fn(*args, **kwargs)
 
         wrapper._task_meta = meta  # type: ignore[attr-defined]
         return wrapper

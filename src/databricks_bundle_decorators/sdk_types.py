@@ -73,6 +73,7 @@ class JobConfig(TypedDict, total=False):
 
         from databricks.bundles.jobs import CronSchedule
 
+
         @job(
             tags={"team": "data"},
             schedule=CronSchedule(
@@ -81,8 +82,7 @@ class JobConfig(TypedDict, total=False):
             ),
             max_concurrent_runs=1,
         )
-        def my_job():
-            ...
+        def my_job(): ...
     """
 
     budget_policy_id: str
@@ -118,8 +118,7 @@ class TaskConfig(TypedDict, total=False):
             timeout_seconds=1800,
             retry_on_timeout=True,
         )
-        def my_task():
-            ...
+        def my_task(): ...
     """
 
     compute: Compute
@@ -154,8 +153,7 @@ class ClusterConfig(TypedDict, total=False):
             node_type_id="Standard_DS3_v2",
             num_workers=2,
         )
-        def small_cluster():
-            ...
+        def small_cluster(): ...
     """
 
     apply_policy_default_values: bool

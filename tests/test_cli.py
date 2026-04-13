@@ -288,8 +288,8 @@ class TestBackfillCmd:
 
     def _make_job_with_partition(self):
         """Register a job with a daily backfill in the registry."""
-        from databricks_bundle_decorators.decorators import job, task
         from databricks_bundle_decorators.backfill import DailyBackfill
+        from databricks_bundle_decorators.decorators import job, task
 
         @job(backfill=DailyBackfill(start_date="2024-01-01", end_date="2024-01-05"))
         def test_pipeline():

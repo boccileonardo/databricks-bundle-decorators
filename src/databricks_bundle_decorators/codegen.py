@@ -125,9 +125,7 @@ def generate_resources(
                 if fe_meta.inputs_task_key is not None:
                     value_key = fe_meta.inputs_value_key
                     inputs_expr = (
-                        "{{"
-                        + f"tasks.{fe_meta.inputs_task_key}.values.{value_key}"
-                        + "}}"
+                        f"{{{{tasks.{fe_meta.inputs_task_key}.values.{value_key}}}}}"
                     )
                 else:
                     inputs_expr = json.dumps(fe_meta.static_inputs)

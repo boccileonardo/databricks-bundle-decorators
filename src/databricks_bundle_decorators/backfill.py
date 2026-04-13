@@ -10,6 +10,7 @@ parses it as a datetime via `get_run_logical_date`::
 
     from databricks_bundle_decorators.backfill import get_backfill_key
 
+
     @task
     def extract() -> pl.DataFrame:
         key = get_backfill_key()  # returns str, raises if unset
@@ -23,7 +24,7 @@ import logging
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 import whenever
@@ -479,5 +480,5 @@ def _parse_logical_date_str(raw: str) -> datetime:
             f"YYYY-MM-DDThh)."
         ) from None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt

@@ -18,9 +18,9 @@ from databricks_bundle_decorators.io_manager import (
     IoManager,
     OutputContext,
     _needs_backfill_key_col,
-    _resolve_backfill_key,
     _polars_apply_partition_filter,
     _polars_extract_partition_values,
+    _resolve_backfill_key,
 )
 
 
@@ -65,10 +65,12 @@ class PolarsParquetIoManager(IoManager):
 
             from databricks_bundle_decorators import get_dbutils
 
+
             def _storage_options() -> dict[str, str]:
                 dbutils = get_dbutils()
                 key = dbutils.secrets.get(scope="kv", key="storage-key")
                 return {"account_name": "myaccount", "account_key": key}
+
 
             io = PolarsParquetIoManager(
                 base_path="abfss://lake@myaccount.dfs.core.windows.net/staging",
@@ -77,7 +79,7 @@ class PolarsParquetIoManager(IoManager):
 
         A plain dict also works when credentials are known statically::
 
-            {"account_name": "...", "account_key": "..."}   # Azure
+            {"account_name": "...", "account_key": "..."}  # Azure
             {"aws_access_key_id": "...", "aws_secret_access_key": "..."}  # S3
 
     write_options : dict[str, Any] | None
@@ -103,9 +105,11 @@ class PolarsParquetIoManager(IoManager):
             storage_options={"account_name": "myaccount", "account_key": "***"},
         )
 
+
         @task(io_manager=io)
-        def extract() -> pl.LazyFrame:    # sink_parquet on write
+        def extract() -> pl.LazyFrame:  # sink_parquet on write
             return pl.LazyFrame({"a": [1, 2]})
+
 
         @task
         def transform(df: pl.LazyFrame):  # scan_parquet on read
@@ -138,7 +142,7 @@ class PolarsParquetIoManager(IoManager):
     def storage_options(self) -> dict[str, str] | None:
         """Resolve *storage_options*, calling it first if it is a callable."""
         if callable(self._storage_options):
-            return cast(Callable[[], dict[str, str]], self._storage_options)()
+            return cast("Callable[[], dict[str, str]]", self._storage_options)()
         return self._storage_options
 
     def _uri(self, key: str) -> str:

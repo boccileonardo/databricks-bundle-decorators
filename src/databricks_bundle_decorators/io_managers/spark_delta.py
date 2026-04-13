@@ -172,12 +172,14 @@ class SparkDeltaIoManager(_SparkDeltaBase):
 
             from databricks_bundle_decorators import get_dbutils
 
+
             def _configs() -> dict[str, str]:
                 dbutils = get_dbutils()
                 key = dbutils.secrets.get(scope="kv", key="storage-key")
                 return {
                     "fs.azure.account.key.myaccount.dfs.core.windows.net": key,
                 }
+
 
             io = SparkDeltaIoManager(
                 base_path="abfss://lake@myaccount.dfs.core.windows.net/staging",
@@ -253,7 +255,7 @@ class SparkDeltaIoManager(_SparkDeltaBase):
     def spark_configs(self) -> dict[str, str] | None:
         """Resolve *spark_configs*, calling it first if it is a callable."""
         if callable(self._spark_configs):
-            return cast(Callable[[], dict[str, str]], self._spark_configs)()
+            return cast("Callable[[], dict[str, str]]", self._spark_configs)()
         return self._spark_configs
 
     def setup(self) -> None:
@@ -311,6 +313,7 @@ class SparkServerlessDeltaIoManager(_SparkDeltaBase):
         io = SparkServerlessDeltaIoManager(
             base_path="abfss://lake@myaccount.dfs.core.windows.net/staging",
         )
+
 
         @task(io_manager=io)
         def extract():

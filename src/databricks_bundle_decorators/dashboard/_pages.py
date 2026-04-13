@@ -24,17 +24,17 @@ from databricks_bundle_decorators.dashboard._data import (
     BackfillCoverage,
     JobOverview,
 )
+from databricks_bundle_decorators.dashboard._display import (
+    _coverages_to_records,
+    _fmt_duration,
+    _overviews_to_records,
+)
 from databricks_bundle_decorators.dashboard._figures import (
     _build_daily_calendar,
     _build_hourly_calendar,
     _build_monthly_calendar,
     _build_partition_grid,
     _build_weekly_calendar,
-)
-from databricks_bundle_decorators.dashboard._display import (
-    _coverages_to_records,
-    _fmt_duration,
-    _overviews_to_records,
 )
 
 # ---------------------------------------------------------------------------
