@@ -71,7 +71,6 @@ from databricks_bundle_decorators.codegen import (
 )
 from databricks_bundle_decorators.context import get_dbutils as get_dbutils
 from databricks_bundle_decorators.context import params as params
-from databricks_bundle_decorators.dashboard import run_app as run_app
 from databricks_bundle_decorators.decorators import TaskProxy as TaskProxy
 from databricks_bundle_decorators.decorators import all_partitions as all_partitions
 from databricks_bundle_decorators.decorators import for_each_task as for_each_task
@@ -137,3 +136,14 @@ __all__ = [
     "task",
     "task_value",
 ]
+
+
+def __getattr__(name: str) -> object:
+    # Lazy import for run_app — the dashboard module requires optional
+    # dependencies (dash-ag-grid, etc.) that aren't always available.
+    if name == "run_app":
+        from databricks_bundle_decorators.dashboard import run_app  # noqa: PLC0415
+
+        return run_app
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)

@@ -50,7 +50,7 @@ run_app()
 APP_PYPROJECT_TEMPLATE = """\
 [project]
 name = "dbxdec-app"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 version = "0.0.0"
 dependencies = [
     "databricks-bundle-decorators[app]",
