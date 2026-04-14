@@ -82,7 +82,7 @@ def generate_app_resource(
         env.append(
             {
                 "name": env_var_name,
-                "valueFrom": resource_name,
+                "value_from": resource_name,
             }
         )
 
@@ -105,7 +105,7 @@ def generate_app_resource(
 
 def generate_app_config_yaml(
     app_name: str,
-    source_code_path: str = "./app",
+    source_code_path: str = "../app",
     *,
     permission: str = "CAN_VIEW",
 ) -> str:
@@ -116,13 +116,17 @@ def generate_app_config_yaml(
     Write the returned string to a file (e.g. ``resources/app.yml``)
     and add it to the ``include`` list in ``databricks.yaml``.
 
+    The default ``source_code_path`` is ``../app`` because the
+    generated YAML file lives under ``resources/`` and paths are
+    resolved relative to the file's location.
+
     Parameters
     ----------
     app_name:
         The Databricks App name (lowercase, alphanumeric, hyphens).
     source_code_path:
         Path to the app source code directory, relative to the
-        bundle root.
+        generated YAML file (which lives under ``resources/``).
     permission:
         Permission level to grant the app's service principal on
         each job.  Defaults to ``CAN_VIEW``.
@@ -156,7 +160,7 @@ def generate_app_config_yaml(
         lines.append("        env:")
         for env_item in definition["config"]["env"]:
             lines.append(f"          - name: {env_item['name']}")
-            lines.append(f"            valueFrom: {env_item['valueFrom']}")
+            lines.append(f"            value_from: {env_item['value_from']}")
 
     if definition["resources"]:
         lines.append("      resources:")

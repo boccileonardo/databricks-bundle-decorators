@@ -195,7 +195,7 @@ class TestGenerateAppResource:
         assert app_def["resources"] == []
         assert app_def["config"]["env"] == []
 
-    def test_env_valuefrom_matches_resource_name(self) -> None:
+    def test_env_value_from_matches_resource_name(self) -> None:
         _JOB_REGISTRY["etl_daily"] = JobMeta(
             fn=_dummy_fn,
             name="etl_daily",
@@ -206,7 +206,7 @@ class TestGenerateAppResource:
 
         app_def = result["test_app"]
         resource_name = app_def["resources"][0]["name"]
-        env_value_from = app_def["config"]["env"][0]["valueFrom"]
+        env_value_from = app_def["config"]["env"][0]["value_from"]
         assert resource_name == env_value_from
         assert resource_name == "dbxdec-job-etl-daily"
 
