@@ -1,6 +1,6 @@
 [build-system]
 build-backend = "uv_build"
-requires = [ "uv-build>=0.10.4,<0.11" ]
+requires = [ "uv-build>=0.10.4,<1" ]
 
 [project]
 name = "databricks-bundle-decorators"
