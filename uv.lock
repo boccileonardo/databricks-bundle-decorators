@@ -708,6 +708,7 @@ dev = [
     { name = "databricks-sdk" },
     { name = "delta-spark" },
     { name = "deltalake" },
+    { name = "mkdocstrings", extra = ["python"] },
     { name = "plotly" },
     { name = "polars" },
     { name = "prek" },
@@ -719,6 +720,7 @@ dev = [
     { name = "ruff" },
     { name = "ty" },
     { name = "vulture" },
+    { name = "zensical" },
 ]
 docs = [
     { name = "mkdocstrings", extra = ["python"] },
@@ -750,7 +752,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.16" },
     { name = "whenever", specifier = ">=0.10" },
 ]
-provides-extras = ["aws", "azure", "gcp", "app", "observability", "polars", "polars-delta"]
+provides-extras = ["app", "aws", "azure", "gcp", "observability", "polars", "polars-delta"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -761,6 +763,7 @@ dev = [
     { name = "databricks-sdk" },
     { name = "delta-spark", specifier = ">=3.2,<4" },
     { name = "deltalake" },
+    { name = "mkdocstrings", extras = ["python"] },
     { name = "plotly", specifier = ">=5.18" },
     { name = "polars" },
     { name = "prek", specifier = ">=0.3.3" },
@@ -772,6 +775,7 @@ dev = [
     { name = "ruff", specifier = ">=0.15.1" },
     { name = "ty", specifier = ">=0.0.29,<0.1" },
     { name = "vulture", specifier = ">=2.14" },
+    { name = "zensical" },
 ]
 docs = [
     { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.3" },

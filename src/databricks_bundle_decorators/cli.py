@@ -104,34 +104,6 @@ def load_resources(bundle: Bundle) -> Resources:
     return resources
 '''
 
-_RESOURCES_INIT_WITH_APP = '''\
-"""Resource loader for ``databricks bundle deploy``.
-
-Referenced from ``python.resources`` in ``databricks.yaml``::
-
-    python:
-      venv_path: .venv
-      resources:
-        - 'resources:load_resources'
-"""
-
-from databricks.bundles.core import Bundle, Resources
-
-
-def load_resources(bundle: Bundle) -> Resources:
-    """Entry-point called by ``databricks bundle deploy``."""
-    import {package_name}.pipelines  # noqa: F401 - triggers decorator registration
-    from databricks_bundle_decorators.app import generate_app_resource
-    from databricks_bundle_decorators.codegen import generate_resources
-
-    resources = Resources()
-    for key, job_resource in generate_resources().items():
-        resources.add_resource(key, job_resource)
-    for key, app_resource in generate_app_resource("{app_name}").items():
-        resources.add_resource(key, app_resource)
-    return resources
-'''
-
 _PIPELINES_INIT = '''\
 """Pipeline auto-discovery.
 
@@ -151,6 +123,31 @@ for _loader, _module_name, _is_pkg in pkgutil.walk_packages(__path__):
 _DATABRICKS_YAML = """\
 bundle:
   name: {project_name}
+
+artifacts:
+  {package_name}:
+    type: whl
+    build: uv build --wheel
+    path: .
+
+python:
+  venv_path: .venv
+  resources:
+    - 'resources:load_resources'
+
+targets:
+  dev:
+    mode: development
+    workspace:
+      host: https://<your-workspace>.azuredatabricks.net/
+"""
+
+_DATABRICKS_YAML_WITH_APP = """\
+bundle:
+  name: {project_name}
+
+include:
+  - resources/*.yml
 
 artifacts:
   {package_name}:
@@ -377,6 +374,31 @@ def _add_entry_point_to_pyproject(cwd: Path, package_name: str) -> bool:
     return True
 
 
+def _generate_app_yml(
+    *,
+    cwd: Path,
+    app_name: str,
+    created: list[str] | None = None,
+) -> Path:
+    """Discover pipelines and write ``resources/app.yml``.
+
+    This file is always overwritten because it is generated code.
+    Returns the path to the written file.
+    """
+    from databricks_bundle_decorators.app._codegen import (  # noqa: PLC0415
+        generate_app_config_yaml,
+    )
+
+    discover_pipelines()
+    yaml_content = generate_app_config_yaml(app_name)
+    app_yml = cwd / "resources" / "app.yml"
+    app_yml.parent.mkdir(parents=True, exist_ok=True)
+    app_yml.write_text(yaml_content)
+    if created is not None:
+        created.append(str(app_yml.relative_to(cwd)))
+    return app_yml
+
+
 # --- Init command ----------------------------------------------------------
 
 
@@ -412,19 +434,10 @@ def _cmd_init(*, docker: bool = False, dashboard: bool = False) -> None:
         created.append(str(path.relative_to(cwd)))
 
     # 1. resources/__init__.py
-    if dashboard:
-        app_name = f"{project_name}-observability"
-        _write(
-            cwd / "resources" / "__init__.py",
-            _RESOURCES_INIT_WITH_APP.format(
-                package_name=package_name, app_name=app_name
-            ),
-        )
-    else:
-        _write(
-            cwd / "resources" / "__init__.py",
-            _RESOURCES_INIT.format(package_name=package_name),
-        )
+    _write(
+        cwd / "resources" / "__init__.py",
+        _RESOURCES_INIT.format(package_name=package_name),
+    )
 
     # 2. pipelines/__init__.py  (auto-discovery)
     _write(pkg_dir / "pipelines" / "__init__.py", _PIPELINES_INIT)
@@ -436,9 +449,15 @@ def _cmd_init(*, docker: bool = False, dashboard: bool = False) -> None:
     )
 
     # 4. databricks.yaml
+    if docker:
+        yaml_template = _DOCKER_DATABRICKS_YAML
+    elif dashboard:
+        yaml_template = _DATABRICKS_YAML_WITH_APP
+    else:
+        yaml_template = _DATABRICKS_YAML
     _write(
         cwd / "databricks.yaml",
-        (_DOCKER_DATABRICKS_YAML if docker else _DATABRICKS_YAML).format(
+        yaml_template.format(
             project_name=project_name,
             package_name=package_name,
         ),
@@ -465,6 +484,13 @@ def _cmd_init(*, docker: bool = False, dashboard: bool = False) -> None:
             REQUIREMENTS_TXT_TEMPLATE.format(package_name=package_name),
         )
 
+        # Generate resources/app.yml from registry (always overwrite)
+        _generate_app_yml(
+            cwd=cwd,
+            app_name=f"{project_name}-observability",
+            created=created,
+        )
+
     # --- Summary -----------------------------------------------------------
     print()
     print("databricks-bundle-decorators project initialized!")
@@ -485,6 +511,19 @@ def _cmd_init(*, docker: bool = False, dashboard: bool = False) -> None:
     if entry_point_added:
         print("Modified:")
         print("  pyproject.toml (added pipeline entry point)")
+
+    # --- Dashboard: check databricks.yaml includes app.yml ----------------
+    if dashboard:
+        databricks_yaml = cwd / "databricks.yaml"
+        if databricks_yaml.exists():
+            yaml_text = databricks_yaml.read_text()
+            if "resources/*.yml" not in yaml_text and "app.yml" not in yaml_text:
+                print()
+                print("NOTE: Add the following to your databricks.yaml to")
+                print("include the generated app resource:")
+                print()
+                print("  include:")
+                print("    - resources/*.yml")
 
     print()
     print("Done! Define your @task and @job functions in the pipelines/ directory.")
@@ -984,6 +1023,37 @@ def catchup(
         target=target,
         profile=profile,
     )
+
+
+@app.command("app-config")
+def app_config() -> None:
+    """Regenerate ``resources/app.yml`` from the current job registry.
+
+    Run this after adding or removing ``@job`` definitions to keep the
+    Databricks App resource in sync.  The file is always overwritten.
+
+    Requires the ``[app]`` extra::
+
+        uv add databricks-bundle-decorators[app]
+    """
+    try:
+        importlib.import_module("dash")
+    except ImportError:
+        print(
+            "Error: dash is not installed. "
+            "Install the app extras first:\n\n"
+            "    uv add databricks-bundle-decorators[app]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    cwd = Path.cwd()
+    pyproject = _read_pyproject(cwd)
+    project_name = pyproject["project"]["name"]
+    app_name = f"{project_name}-observability"
+
+    path = _generate_app_yml(cwd=cwd, app_name=app_name)
+    print(f"Generated: {path.relative_to(cwd)}")
 
 
 @app.command("dashboard")

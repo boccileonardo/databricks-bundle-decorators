@@ -228,6 +228,10 @@ class TestCmdInit:
     ):
         self._make_project(tmp_path)
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
 
         _cmd_init(dashboard=True)
 
@@ -246,19 +250,49 @@ class TestCmdInit:
         assert "test_project" in reqs
         assert "databricks-bundle-decorators[app]" in reqs
 
-    def test_dashboard_flag_uses_app_resources_template(
+    def test_dashboard_flag_generates_app_yml(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ):
         self._make_project(tmp_path)
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
 
         _cmd_init(dashboard=True)
 
-        resources_content = (tmp_path / "resources" / "__init__.py").read_text()
-        assert "generate_app_resource" in resources_content
-        assert "test-project-observability" in resources_content
+        # resources/app.yml should exist (not resources/__init__.py with app code)
+        app_yml = tmp_path / "resources" / "app.yml"
+        assert app_yml.exists()
+        content = app_yml.read_text()
+        assert "resources:" in content
+        assert "apps:" in content
+        assert "test-project-observability" in content
+
+        # resources/__init__.py should NOT have generate_app_resource
+        resources_init = (tmp_path / "resources" / "__init__.py").read_text()
+        assert "generate_app_resource" not in resources_init
+
+    def test_dashboard_flag_databricks_yaml_has_include(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
+
+        _cmd_init(dashboard=True)
+
+        yaml_content = (tmp_path / "databricks.yaml").read_text()
+        assert "include:" in yaml_content
+        assert "resources/*.yml" in yaml_content
 
     def test_dashboard_flag_without_extra_exits(
         self,
@@ -290,6 +324,28 @@ class TestCmdInit:
         assert not (tmp_path / "app").exists()
         resources_content = (tmp_path / "resources" / "__init__.py").read_text()
         assert "generate_app_resource" not in resources_content
+
+    def test_dashboard_hints_include_for_existing_yaml(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ):
+        """When databricks.yaml already exists without include, print a hint."""
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
+
+        # Pre-create databricks.yaml without include
+        (tmp_path / "databricks.yaml").write_text("bundle:\n  name: test\n")
+
+        _cmd_init(dashboard=True)
+
+        out = capsys.readouterr().out
+        assert "resources/*.yml" in out
 
 
 class TestMainCli:
@@ -326,11 +382,16 @@ class TestMainCli:
         self._make_project(tmp_path)
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["dbxdec", "init", "--dashboard"])
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
 
         main()
 
         assert (tmp_path / "app" / "app.py").exists()
         assert (tmp_path / "app" / "app.yaml").exists()
+        assert (tmp_path / "resources" / "app.yml").exists()
 
     def test_no_subcommand_exits(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(sys, "argv", ["dbxdec"])

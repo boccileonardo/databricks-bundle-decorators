@@ -37,6 +37,9 @@ Job parameters:
 """
 
 from databricks_bundle_decorators.app._codegen import (
+    generate_app_config_yaml as generate_app_config_yaml,
+)
+from databricks_bundle_decorators.app._codegen import (
     generate_app_resource as generate_app_resource,
 )
 from databricks_bundle_decorators.backfill import (
@@ -119,6 +122,7 @@ __all__ = [
     "all_partitions",
     "discover_pipelines",
     "for_each_task",
+    "generate_app_config_yaml",
     "generate_app_resource",
     "generate_resources",
     "get_backfill_key",

@@ -38,18 +38,22 @@ This creates:
 | `app/app.py` | Dash entry point that imports your pipelines and calls `run_app()` |
 | `app/app.yaml` | Databricks App runtime configuration |
 | `app/requirements.txt` | Python dependencies for the app runtime |
-| `resources/__init__.py` | Resource loader with `generate_app_resource()` wired in |
+| `resources/app.yml` | Bundle resource definition for the app (auto-generated from registry) |
 
 If you already ran `dbxdec init` previously, existing files are
 preserved — the command only creates files that don't exist yet.
 You can add the `--dashboard` flag to a subsequent run to scaffold
 only the missing app files.
 
+!!! note
+    `resources/app.yml` is always regenerated (not skipped) because it
+    is derived from the job registry.  After adding or removing `@job`
+    definitions, run `dbxdec app-config` to update it.
+
 ??? example "Adding the dashboard to an existing project"
 
-    If you already ran `dbxdec init` before, `resources/__init__.py`
-    already exists and will be skipped.  Follow these steps to wire up
-    the dashboard manually:
+    If you already ran `dbxdec init` before, `databricks.yaml` already
+    exists and will be skipped.  Follow these steps:
 
     **1. Install the app extra**
 
@@ -63,35 +67,21 @@ only the missing app files.
     uv run dbxdec init --dashboard
     ```
 
-    This creates `app/app.py`, `app/app.yaml`, and
-    `app/requirements.txt` but skips `resources/__init__.py` since it
-    already exists.
+    This creates `app/app.py`, `app/app.yaml`,
+    `app/requirements.txt`, and `resources/app.yml`.
 
-    **3. Update `resources/__init__.py`**
+    **3. Add `include` to `databricks.yaml`**
 
-    Add the `generate_app_resource` import and loop alongside the
-    existing `generate_resources` call:
+    The command will print a reminder if your existing `databricks.yaml`
+    doesn't include the generated YAML.  Add it near the top:
 
-    ```python hl_lines="5 13-14"
-    def load_resources(bundle: Bundle) -> Resources:
-        import my_package.pipelines  # noqa: F401
-        from databricks_bundle_decorators.codegen import generate_resources
-        # highlight-next-line
-        from databricks_bundle_decorators.app import generate_app_resource
+    ```yaml
+    bundle:
+      name: my-project
 
-        resources = Resources()
-        for key, job_resource in generate_resources().items():
-            resources.add_resource(key, job_resource)
-
-        # Add the observability app
-        for key, app_resource in generate_app_resource("my-project-observability").items():
-            resources.add_resource(key, app_resource)
-
-        return resources
+    include:
+      - resources/*.yml
     ```
-
-    Replace `my-project` with your project name — this becomes the
-    app's URL slug in your workspace.
 
     **4. Deploy**
 
@@ -120,8 +110,9 @@ sidebar.
 
 ### Job discovery
 
-At deploy time, `generate_app_resource` reads the job registry and emits
-a bundle [app resource](https://docs.databricks.com/aws/en/dev-tools/bundles/resources#app-resources)
+At scaffold time, `dbxdec init --dashboard` reads the job registry and
+generates `resources/app.yml` — a bundle
+[app resource](https://docs.databricks.com/aws/en/dev-tools/bundles/resources#app-resources)
 definition.  Each registered job becomes:
 
 - An **app resource binding** with `${resources.jobs.<name>.id}` — the
@@ -155,20 +146,41 @@ the Databricks Apps runtime).
 ### Custom permission level
 
 By default, the app's service principal gets `CAN_VIEW` on each job.  To
-allow triggering runs from the app in the future, use a higher
-permission:
+allow triggering runs from the app in the future, edit the `permission`
+field in `resources/app.yml`:
 
-```python
-generate_app_resource("my-app", permission="CAN_MANAGE_RUN")
+```yaml
+resources:
+  apps:
+    my_project_observability:
+      resources:
+        - name: dbxdec-job-my-job
+          job:
+            id: "${resources.jobs.my_job.id}"
+            permission: CAN_MANAGE_RUN
 ```
 
 ### Custom source path
 
-If your app files live somewhere other than `./app`:
+If your app files live somewhere other than `./app`, update the
+`source_code_path` in `resources/app.yml`:
 
-```python
-generate_app_resource("my-app", source_code_path="./observability")
+```yaml
+resources:
+  apps:
+    my_project_observability:
+      source_code_path: ./observability
 ```
+
+### Updating after job changes
+
+When you add or remove `@job` definitions, regenerate the app resource:
+
+```bash
+uv run dbxdec app-config
+```
+
+This overwrites `resources/app.yml` with the current registry contents.
 
 ## Dashboard pages
 
