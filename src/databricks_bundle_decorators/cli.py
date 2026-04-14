@@ -470,8 +470,8 @@ def _cmd_init(*, docker: bool = False, dashboard: bool = False) -> None:
     if dashboard:
         from databricks_bundle_decorators.app._template import (  # noqa: PLC0415
             APP_PY_TEMPLATE,
+            APP_PYPROJECT_TEMPLATE,
             APP_YAML_TEMPLATE,
-            REQUIREMENTS_TXT_TEMPLATE,
         )
 
         _write(
@@ -480,9 +480,28 @@ def _cmd_init(*, docker: bool = False, dashboard: bool = False) -> None:
         )
         _write(cwd / "app" / "app.yaml", APP_YAML_TEMPLATE)
         _write(
-            cwd / "app" / "requirements.txt",
-            REQUIREMENTS_TXT_TEMPLATE,
+            cwd / "app" / "pyproject.toml",
+            APP_PYPROJECT_TEMPLATE,
         )
+
+        # Generate uv.lock so Databricks Apps uses uv (not pip)
+        app_dir = cwd / "app"
+        if not (app_dir / "uv.lock").exists():
+            uv_bin = shutil.which("uv")
+            if uv_bin is None:
+                print(
+                    "Warning: uv not found on PATH. "
+                    "Run 'uv lock' inside app/ manually to generate uv.lock.",
+                    file=sys.stderr,
+                )
+            else:
+                subprocess.run(  # noqa: S603
+                    [uv_bin, "lock"],
+                    cwd=app_dir,
+                    check=True,
+                    capture_output=True,
+                )
+                created.append("app/uv.lock")
 
         # Generate resources/app.yml from registry (always overwrite)
         _generate_app_yml(

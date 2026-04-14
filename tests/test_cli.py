@@ -232,23 +232,28 @@ class TestCmdInit:
             "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
+        )
 
         _cmd_init(dashboard=True)
 
         # app/ directory files
         assert (tmp_path / "app" / "app.py").exists()
         assert (tmp_path / "app" / "app.yaml").exists()
-        assert (tmp_path / "app" / "requirements.txt").exists()
+        assert (tmp_path / "app" / "pyproject.toml").exists()
 
         # app.py imports the user's pipelines
         app_py = (tmp_path / "app" / "app.py").read_text()
         assert "import test_project.pipelines" in app_py
         assert "run_app" in app_py
 
-        # requirements.txt does not include the local package
-        reqs = (tmp_path / "app" / "requirements.txt").read_text()
-        assert "test_project" not in reqs
-        assert "databricks-bundle-decorators[app]" in reqs
+        # app/pyproject.toml has the right deps and python version
+        app_pyproject = (tmp_path / "app" / "pyproject.toml").read_text()
+        assert "test_project" not in app_pyproject
+        assert "databricks-bundle-decorators[app]" in app_pyproject
+        assert 'requires-python = ">=3.12"' in app_pyproject
 
     def test_dashboard_flag_generates_app_yml(
         self,
@@ -260,6 +265,10 @@ class TestCmdInit:
         monkeypatch.setattr(
             "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
+        )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
         )
 
         _cmd_init(dashboard=True)
@@ -286,6 +295,10 @@ class TestCmdInit:
         monkeypatch.setattr(
             "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
+        )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
         )
 
         _cmd_init(dashboard=True)
@@ -337,6 +350,11 @@ class TestCmdInit:
         monkeypatch.setattr(
             "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
+        )
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
         )
 
         # Pre-create databricks.yaml without include

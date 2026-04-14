@@ -43,8 +43,17 @@ from databricks_bundle_decorators.app import run_app
 run_app()
 """
 
-#: Template for ``requirements.txt`` — app dependencies.
-REQUIREMENTS_TXT_TEMPLATE = """\
-databricks-bundle-decorators[app]
-databricks-sdk
+#: Template for ``pyproject.toml`` inside the ``app/`` directory.
+#: Databricks Apps uses ``uv`` when ``pyproject.toml`` + ``uv.lock``
+#: are present (and ``requirements.txt`` is absent), which allows
+#: specifying a Python version >= 3.12.
+APP_PYPROJECT_TEMPLATE = """\
+[project]
+name = "dbxdec-app"
+requires-python = ">=3.12"
+version = "0.0.0"
+dependencies = [
+    "databricks-bundle-decorators[app]",
+    "databricks-sdk",
+]
 """

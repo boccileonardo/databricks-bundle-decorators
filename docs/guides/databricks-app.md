@@ -37,7 +37,8 @@ This creates:
 |---|---|
 | `app/app.py` | Dash entry point that imports your pipelines and calls `run_app()` |
 | `app/app.yaml` | Databricks App runtime configuration |
-| `app/requirements.txt` | Python dependencies for the app runtime |
+| `app/pyproject.toml` | Python dependencies and version constraint (`>=3.12`) |
+| `app/uv.lock` | Lock file so Databricks Apps uses `uv` instead of `pip` |
 | `resources/app.yml` | Bundle resource definition for the app (auto-generated from registry) |
 
 If you already ran `dbxdec init` previously, existing files are
@@ -68,7 +69,7 @@ only the missing app files.
     ```
 
     This creates `app/app.py`, `app/app.yaml`,
-    `app/requirements.txt`, and `resources/app.yml`.
+    `app/pyproject.toml`, `app/uv.lock`, and `resources/app.yml`.
 
     **3. Add `include` to `databricks.yaml`**
 
