@@ -154,7 +154,7 @@ resources:
   apps:
     my_project_observability:
       resources:
-        - name: dbxdec-job-my-job
+        - name: my-job
           job:
             id: "${resources.jobs.my_job.id}"
             permission: CAN_MANAGE_RUN

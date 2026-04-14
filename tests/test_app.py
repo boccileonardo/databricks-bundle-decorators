@@ -208,7 +208,7 @@ class TestGenerateAppResource:
         resource_name = app_def["resources"][0]["name"]
         env_value_from = app_def["config"]["env"][0]["value_from"]
         assert resource_name == env_value_from
-        assert resource_name == "dbxdec-job-etl-daily"
+        assert resource_name == "etl-daily"
 
 
 class TestGenerateAppConfigYaml:
@@ -241,7 +241,7 @@ class TestGenerateAppConfigYaml:
         yaml_text = generate_app_config_yaml("my-app")
 
         assert "DBXDEC_JOB_ETL_DAILY" in yaml_text
-        assert "dbxdec-job-etl-daily" in yaml_text
+        assert "etl-daily" in yaml_text
         assert "${resources.jobs.etl_daily.id}" in yaml_text
 
     def test_empty_registry_no_env_or_resources(self) -> None:

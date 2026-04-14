@@ -63,8 +63,8 @@ def generate_app_resource(
     env: list[dict[str, Any]] = []
 
     for job_name in sorted(_JOB_REGISTRY.keys()):
-        # Resource name for the app resource binding
-        resource_name = f"dbxdec-job-{job_name}".replace("_", "-")
+        # Resource name for the app resource binding (max 30 chars)
+        resource_name = job_name.replace("_", "-")
 
         resources.append(
             {
