@@ -42,7 +42,7 @@ from databricks_bundle_decorators.dashboard._pages import (
 def run_app(
     *,
     host: str = "0.0.0.0",  # noqa: S104
-    port: int = 8050,
+    port: int = 8000,
     debug: bool = False,
 ) -> None:
     """Launch the Dash observability dashboard as a Databricks App.
