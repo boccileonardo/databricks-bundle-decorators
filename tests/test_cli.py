@@ -24,6 +24,10 @@ from databricks_bundle_decorators.decorators import job, task
 from databricks_bundle_decorators.registry import reset_registries
 
 
+def _raise_import_error(name: str) -> None:
+    raise ImportError(name)
+
+
 class TestReadPyproject:
     def test_reads_valid_toml(self, tmp_path: Path):
         (tmp_path / "pyproject.toml").write_text(
@@ -217,6 +221,150 @@ class TestCmdInit:
         yaml_content = (tmp_path / "databricks.yaml").read_text()
         assert "artifacts" in yaml_content
 
+    def test_dashboard_flag_creates_app_files(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
+        )
+
+        _cmd_init(dashboard=True)
+
+        # app/ directory files
+        assert (tmp_path / "app" / "app.py").exists()
+        assert (tmp_path / "app" / "app.yaml").exists()
+        assert (tmp_path / "app" / "pyproject.toml").exists()
+
+        # app.py is the app entry point
+        app_py = (tmp_path / "app" / "app.py").read_text()
+        assert "import test_project.pipelines" not in app_py
+        assert "run_app" in app_py
+
+        # app/pyproject.toml has the right deps and python version
+        app_pyproject = (tmp_path / "app" / "pyproject.toml").read_text()
+        assert "test_project" not in app_pyproject
+        assert "databricks-bundle-decorators[app]" in app_pyproject
+        assert 'requires-python = ">=3.12"' in app_pyproject
+
+    def test_dashboard_flag_generates_app_yml(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
+        )
+
+        _cmd_init(dashboard=True)
+
+        # resources/app.yml should exist (not resources/__init__.py with app code)
+        app_yml = tmp_path / "resources" / "app.yml"
+        assert app_yml.exists()
+        content = app_yml.read_text()
+        assert "resources:" in content
+        assert "apps:" in content
+        assert "test-project-observability" in content
+
+        # resources/__init__.py should NOT have generate_app_resource
+        resources_init = (tmp_path / "resources" / "__init__.py").read_text()
+        assert "generate_app_resource" not in resources_init
+
+    def test_dashboard_flag_databricks_yaml_has_include(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
+        )
+
+        _cmd_init(dashboard=True)
+
+        yaml_content = (tmp_path / "databricks.yaml").read_text()
+        assert "include:" in yaml_content
+        assert "resources/*.yml" in yaml_content
+
+    def test_dashboard_flag_without_extra_exits(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        # Hide the dash module to simulate missing extra
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.importlib.import_module",
+            _raise_import_error,
+        )
+
+        with pytest.raises(SystemExit):
+            _cmd_init(dashboard=True)
+
+    def test_default_init_no_app_files(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        _cmd_init()
+
+        assert not (tmp_path / "app").exists()
+        resources_content = (tmp_path / "resources" / "__init__.py").read_text()
+        assert "generate_app_resource" not in resources_content
+
+    def test_dashboard_hints_include_for_existing_yaml(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ):
+        """When databricks.yaml already exists without include, print a hint."""
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
+        )
+
+        # Pre-create databricks.yaml without include
+        (tmp_path / "databricks.yaml").write_text("bundle:\n  name: test\n")
+
+        _cmd_init(dashboard=True)
+
+        out = capsys.readouterr().out
+        assert "resources/*.yml" in out
+
 
 class TestMainCli:
     def test_init_subcommand(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -244,6 +392,25 @@ class TestMainCli:
             tmp_path / "src" / "test_project" / "pipelines" / "example.py"
         ).read_text()
         assert "libraries=[]" in content
+
+    def test_init_dashboard_subcommand(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """main() dispatches the init --dashboard subcommand."""
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["dbxdec", "init", "--dashboard"])
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
+
+        main()
+
+        assert (tmp_path / "app" / "app.py").exists()
+        assert (tmp_path / "app" / "app.yaml").exists()
+        assert (tmp_path / "app" / "registry.json").exists()
+        assert (tmp_path / "resources" / "app.yml").exists()
 
     def test_no_subcommand_exits(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(sys, "argv", ["dbxdec"])

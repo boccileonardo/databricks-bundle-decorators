@@ -65,7 +65,6 @@ from databricks_bundle_decorators.codegen import (
 )
 from databricks_bundle_decorators.context import get_dbutils as get_dbutils
 from databricks_bundle_decorators.context import params as params
-from databricks_bundle_decorators.dashboard import run_app as run_app
 from databricks_bundle_decorators.decorators import TaskProxy as TaskProxy
 from databricks_bundle_decorators.decorators import all_partitions as all_partitions
 from databricks_bundle_decorators.decorators import for_each_task as for_each_task
@@ -124,7 +123,6 @@ __all__ = [
     "job",
     "job_cluster",
     "params",
-    "run_app",
     "set_task_value",
     "task",
     "task_value",

@@ -20,6 +20,13 @@ dependencies = [
   "typer>=0.16",
   "whenever>=0.10",
 ]
+optional-dependencies.app = [
+  "dash>=2.14",
+  "dash-ag-grid>=31",
+  "dash-bootstrap-components>=1.5",
+  "databricks-sdk",
+  "plotly>=5.18",
+]
 optional-dependencies.aws = [
   "fsspec",
   "s3fs",
@@ -55,8 +62,10 @@ dev = [
   "dash-ag-grid>=31",
   "dash-bootstrap-components>=1.5",
   "databricks-bundle-decorators",
+  "databricks-sdk",
   "delta-spark>=3.2,<4",
   "deltalake",
+  "mkdocstrings[python]",
   "plotly>=5.18",
   "polars",
   "prek>=0.3.3",
@@ -68,6 +77,7 @@ dev = [
   "ruff>=0.15.1",
   "ty>=0.0.29,<0.1",
   "vulture>=2.14",
+  "zensical"
 ]
 docs = [
   "mkdocstrings[python]>=1.0.3",
@@ -116,6 +126,9 @@ lint.ignore = [
   "PLR2004", # magic value comparison (noisy)
   "S101",    # assert is fine (tests + runtime guards)
   "TRY003",  # long exception messages outside class (too strict)
+]
+lint.per-file-ignores."**/app/**" = [
+  "T201", # print used for app logging
 ]
 lint.per-file-ignores."**/cli.py" = [
   "T201", # print is the correct output method for CLI

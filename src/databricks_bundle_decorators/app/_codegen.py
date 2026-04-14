@@ -1,0 +1,244 @@
+"""Generate Databricks App resource definitions for the bundle.
+
+Reads the job registry and produces the ``app`` resource block that
+wires each job as an app resource with ``CAN_VIEW`` permission.
+Environment variables are emitted so the app can discover job IDs
+at runtime via ``DBXDEC_JOB_*``.
+
+.. note:: **SDK blocker — YAML-only approach**
+
+   The ``databricks-bundles`` Python SDK does **not** support ``App``
+   as a resource type (only ``Job`` is supported via
+   ``Resources.add_resource()``).  This forces us to:
+
+   1. Generate a YAML file (``resources/app.yml``) instead of
+      returning an ``App`` from ``load_resources()``.
+   2. Require ``include: [resources/*.yml]`` in ``databricks.yaml``.
+   3. Require ``dbxdec app-config`` when jobs are added/removed
+      (YAML must exist before the bundle CLI parses it).
+
+   If the SDK adds ``App`` support, all codegen can move into
+   ``load_resources()`` alongside jobs — eliminating the YAML file,
+   the ``include`` directive, and the manual ``app-config`` step.
+   Track: https://github.com/databricks/databricks-asset-bundles/issues
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from databricks_bundle_decorators.backfill import _serialize_backfill_tag
+from databricks_bundle_decorators.registry import _JOB_REGISTRY
+
+
+def generate_app_resource(
+    app_name: str,
+    source_code_path: str = "./app",
+    *,
+    permission: str = "CAN_VIEW",
+) -> dict[str, Any]:
+    """Build a bundle-compatible app resource definition.
+
+    The returned dictionary can be merged into the bundle's
+    ``resources.apps`` section.  It declares each registered job as
+    an app resource and emits ``DBXDEC_JOB_<name>`` environment
+    variables via ``valueFrom`` so the app can discover job IDs at
+    runtime.
+
+    Parameters
+    ----------
+    app_name:
+        The Databricks App name (must be lowercase, alphanumeric,
+        and hyphens only).
+    source_code_path:
+        Path to the app source code directory, relative to the
+        bundle root.
+    permission:
+        Permission level to grant the app's service principal on
+        each job.  Defaults to ``CAN_VIEW``.
+
+    Returns
+    -------
+    dict[str, Any]
+        A dictionary with a single key (the app resource key) whose
+        value is the full app resource definition.
+
+    Example
+    -------
+    ::
+
+        from databricks_bundle_decorators.app import generate_app_resource
+
+        app_resources = generate_app_resource("my-pipeline-observability")
+        # Merge into your bundle config alongside generate_resources()
+    """
+    resources: list[dict[str, Any]] = []
+    env: list[dict[str, Any]] = []
+
+    for job_name in sorted(_JOB_REGISTRY.keys()):
+        # Resource name for the app resource binding (max 30 chars)
+        resource_name = job_name.replace("_", "-")
+
+        resources.append(
+            {
+                "name": resource_name,
+                "description": f"Job: {job_name}",
+                "job": {
+                    "id": f"${{resources.jobs.{job_name}.id}}",
+                    "permission": permission,
+                },
+            }
+        )
+
+        # Environment variable so the app discovers the job ID
+        env_var_name = f"DBXDEC_JOB_{job_name.upper()}"
+        env.append(
+            {
+                "name": env_var_name,
+                "value_from": resource_name,
+            }
+        )
+
+    # Sanitize app_name for use as a resource key
+    resource_key = app_name.replace("-", "_")
+
+    return {
+        resource_key: {
+            "name": app_name,
+            "description": "Pipeline observability dashboard",
+            "source_code_path": source_code_path,
+            "config": {
+                "command": ["python", "app.py"],
+                "env": env,
+            },
+            "resources": resources,
+        }
+    }
+
+
+def generate_app_config_yaml(
+    app_name: str,
+    source_code_path: str = "../app",
+    *,
+    permission: str = "CAN_VIEW",
+) -> str:
+    """Return a YAML string declaring the app as a bundle resource.
+
+    The Databricks Python SDK does not support ``App`` resources via
+    ``Resources.add_resource()``, so the app must be declared in YAML.
+    Write the returned string to a file (e.g. ``resources/app.yml``)
+    and add it to the ``include`` list in ``databricks.yaml``.
+
+    The default ``source_code_path`` is ``../app`` because the
+    generated YAML file lives under ``resources/`` and paths are
+    resolved relative to the file's location.
+
+    Parameters
+    ----------
+    app_name:
+        The Databricks App name (lowercase, alphanumeric, hyphens).
+    source_code_path:
+        Path to the app source code directory, relative to the
+        generated YAML file (which lives under ``resources/``).
+    permission:
+        Permission level to grant the app's service principal on
+        each job.  Defaults to ``CAN_VIEW``.
+
+    Returns
+    -------
+    str
+        A YAML string for the ``resources.apps`` section.
+    """
+    app = generate_app_resource(app_name, source_code_path, permission=permission)
+    resource_key = app_name.replace("-", "_")
+    definition = app[resource_key]
+
+    lines = [
+        "# Auto-generated by: dbxdec init --dashboard",
+        "# Regenerate with:   dbxdec app-config",
+        "#",
+        "# Deploy with:",
+        "#   databricks bundle deploy",
+        f"#   databricks bundle run {resource_key}",
+        "#",
+        "# Do not edit manually — use dbxdec app-config to regenerate.",
+        "",
+        "resources:",
+        "  apps:",
+        f"    {resource_key}:",
+        f"      name: {definition['name']}",
+        f"      description: {definition['description']}",
+        f"      source_code_path: {definition['source_code_path']}",
+        "      config:",
+        '        command: ["python", "app.py"]',
+    ]
+
+    if definition["config"]["env"]:
+        lines.append("        env:")
+        for env_item in definition["config"]["env"]:
+            lines.append(f"          - name: {env_item['name']}")
+            lines.append(f"            value_from: {env_item['value_from']}")
+
+    if definition["resources"]:
+        lines.append("      resources:")
+        for res in definition["resources"]:
+            lines.append(f"        - name: {res['name']}")
+            lines.append(f'          description: "{res["description"]}"')
+            lines.append("          job:")
+            lines.append(f'            id: "{res["job"]["id"]}"')
+            lines.append(f"            permission: {res['job']['permission']}")
+
+    lines.append("")  # trailing newline
+    return "\n".join(lines)
+
+
+def generate_registry_json() -> str:
+    """Serialize backfill metadata from the job registry to JSON.
+
+    The returned string is written to ``app/registry.json`` so the
+    Databricks App can load backfill definitions without importing
+    the pipeline package (which may have non-public dependencies).
+
+    Only jobs that have a `backfill` definition are included.
+
+    Returns
+    -------
+    str
+        A pretty-printed JSON string mapping job names to their
+        serialised backfill definitions.
+    """
+    registry: dict[str, Any] = {}
+    for name, meta in sorted(_JOB_REGISTRY.items()):
+        if meta.backfill is not None:
+            registry[name] = json.loads(_serialize_backfill_tag(meta.backfill))
+    return json.dumps(registry, indent=2) + "\n"
+
+
+def sync_registry_json(project_root: Path | None = None) -> bool:
+    """Write ``app/registry.json`` if the ``app/`` directory exists.
+
+    Intended to be called from ``load_resources()`` during
+    ``databricks bundle deploy`` so that backfill metadata stays in
+    sync automatically — no manual ``dbxdec app-config`` needed for
+    backfill changes.
+
+    Parameters
+    ----------
+    project_root:
+        Path to the project root.  Defaults to the current working
+        directory.
+
+    Returns
+    -------
+    bool
+        ``True`` if the file was written, ``False`` if ``app/`` does
+        not exist (i.e. no dashboard is scaffolded).
+    """
+    root = project_root or Path.cwd()
+    app_dir = root / "app"
+    if not app_dir.is_dir():
+        return False
+    (app_dir / "registry.json").write_text(generate_registry_json())
+    return True
