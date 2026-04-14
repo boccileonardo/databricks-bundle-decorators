@@ -245,9 +245,9 @@ class TestCmdInit:
         assert "import test_project.pipelines" in app_py
         assert "run_app" in app_py
 
-        # requirements.txt references the package
+        # requirements.txt does not include the local package
         reqs = (tmp_path / "app" / "requirements.txt").read_text()
-        assert "test_project" in reqs
+        assert "test_project" not in reqs
         assert "databricks-bundle-decorators[app]" in reqs
 
     def test_dashboard_flag_generates_app_yml(

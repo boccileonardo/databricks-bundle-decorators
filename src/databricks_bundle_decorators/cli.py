@@ -481,7 +481,7 @@ def _cmd_init(*, docker: bool = False, dashboard: bool = False) -> None:
         _write(cwd / "app" / "app.yaml", APP_YAML_TEMPLATE)
         _write(
             cwd / "app" / "requirements.txt",
-            REQUIREMENTS_TXT_TEMPLATE.format(package_name=package_name),
+            REQUIREMENTS_TXT_TEMPLATE,
         )
 
         # Generate resources/app.yml from registry (always overwrite)
@@ -527,6 +527,17 @@ def _cmd_init(*, docker: bool = False, dashboard: bool = False) -> None:
 
     print()
     print("Done! Define your @task and @job functions in the pipelines/ directory.")
+
+    if dashboard:
+        print()
+        print("To deploy the app:")
+        print()
+        print("  databricks bundle deploy")
+        print("  databricks bundle run <app_resource_key>")
+        print()
+        print(
+            "The resource key is in resources/app.yml (e.g. my_project_observability)."
+        )
 
 
 # --- Backfill command ------------------------------------------------------

@@ -83,28 +83,46 @@ only the missing app files.
       - resources/*.yml
     ```
 
-    **4. Deploy**
+    **4. Deploy and start**
 
     ```bash
     databricks bundle deploy
+    databricks bundle run <app_resource_key>
     ```
 
-### 2. Deploy
+### 2. Deploy and start
+
+Deploy the bundle, then start the app:
 
 ```bash
 databricks bundle deploy
+databricks bundle run <app_resource_key>
 ```
 
-The bundle will:
+Replace `<app_resource_key>` with the app's resource key from
+`resources/app.yml` (e.g. `my_project_observability`).
 
-1. Create the Databricks App with a dedicated service principal.
-2. Grant the service principal `CAN_VIEW` on each registered job.
-3. Inject `DBXDEC_JOB_<NAME>=<job_id>` environment variables into the
+The **deploy** step:
+
+1. Creates the Databricks App with a dedicated service principal.
+2. Grants the service principal `CAN_VIEW` on each registered job.
+3. Injects `DBXDEC_JOB_<NAME>=<job_id>` environment variables into the
    app runtime so it can discover your jobs.
-4. Deploy the `app/` directory and start the Dash server.
+4. Uploads the `app/` directory to the workspace.
 
-After deployment, find the app in the **Apps** tab of your workspace
-sidebar.
+The **run** step deploys the source code to the app's compute and
+starts the Dash server.
+
+!!! warning
+    `databricks bundle deploy` alone does **not** start the app.
+    You must also run `databricks bundle run` to deploy the source
+    code to compute.  Without this step the app will show
+    "No source code" in the UI, and manually deploying through the
+    UI requires navigating the workspace file browser — use
+    `bundle run` to avoid that entirely.
+
+After the run completes, find the app in the **Apps** tab of your
+workspace sidebar.
 
 ## How it works
 
