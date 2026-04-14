@@ -47,8 +47,7 @@ from databricks.bundles.core import Bundle, Resources
 
 
 def load_resources(bundle: Bundle) -> Resources:
-    from databricks_bundle_decorators.discovery import discover_pipelines
-    from databricks_bundle_decorators.codegen import generate_resources
+    from databricks_bundle_decorators import discover_pipelines, generate_resources
 
     discover_pipelines()
 
