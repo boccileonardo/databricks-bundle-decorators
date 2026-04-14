@@ -36,12 +36,6 @@ Job parameters:
     ``params``
 """
 
-from databricks_bundle_decorators.app._codegen import (
-    generate_app_config_yaml as generate_app_config_yaml,
-)
-from databricks_bundle_decorators.app._codegen import (
-    generate_app_resource as generate_app_resource,
-)
 from databricks_bundle_decorators.backfill import (
     BackfillDef as BackfillDef,
 )
@@ -121,8 +115,6 @@ __all__ = [
     "all_partitions",
     "discover_pipelines",
     "for_each_task",
-    "generate_app_config_yaml",
-    "generate_app_resource",
     "generate_resources",
     "get_backfill_key",
     "get_dbutils",
@@ -131,19 +123,7 @@ __all__ = [
     "job",
     "job_cluster",
     "params",
-    "run_app",
     "set_task_value",
     "task",
     "task_value",
 ]
-
-
-def __getattr__(name: str) -> object:
-    # Lazy import for run_app — the dashboard module requires optional
-    # dependencies (dash-ag-grid, etc.) that aren't always available.
-    if name == "run_app":
-        from databricks_bundle_decorators.dashboard import run_app  # noqa: PLC0415
-
-        return run_app
-    msg = f"module {__name__!r} has no attribute {name!r}"
-    raise AttributeError(msg)
