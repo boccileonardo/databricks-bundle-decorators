@@ -253,7 +253,7 @@ class TestCmdInit:
         app_pyproject = (tmp_path / "app" / "pyproject.toml").read_text()
         assert "test_project" not in app_pyproject
         assert "databricks-bundle-decorators[app]" in app_pyproject
-        assert 'requires-python = ">=3.12,<3.14"' in app_pyproject
+        assert 'requires-python = ">=3.12"' in app_pyproject
 
     def test_dashboard_flag_generates_app_yml(
         self,
@@ -409,6 +409,7 @@ class TestMainCli:
 
         assert (tmp_path / "app" / "app.py").exists()
         assert (tmp_path / "app" / "app.yaml").exists()
+        assert (tmp_path / "app" / "registry.json").exists()
         assert (tmp_path / "resources" / "app.yml").exists()
 
     def test_no_subcommand_exits(self, monkeypatch: pytest.MonkeyPatch):

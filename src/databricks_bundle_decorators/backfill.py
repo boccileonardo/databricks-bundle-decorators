@@ -70,6 +70,35 @@ def _serialize_backfill_tag(defn: BackfillDef) -> str:
     return json.dumps(d, separators=(",", ":"))
 
 
+def _deserialize_backfill_tag(raw: str | dict[str, Any]) -> BackfillDef:
+    """Reconstruct a `BackfillDef` from its serialised JSON form.
+
+    Accepts either the JSON string produced by `_serialize_backfill_tag`
+    or an already-parsed dictionary.
+    """
+    d: dict[str, Any] = json.loads(raw) if isinstance(raw, str) else raw
+    kind = d.get("type", "static")
+    if kind == "static":
+        return StaticBackfill(keys=d["keys"])
+    cls_map: dict[
+        str, type[DailyBackfill | WeeklyBackfill | MonthlyBackfill | HourlyBackfill]
+    ] = {
+        "daily": DailyBackfill,
+        "weekly": WeeklyBackfill,
+        "monthly": MonthlyBackfill,
+        "hourly": HourlyBackfill,
+    }
+    cls = cls_map.get(kind)
+    if cls is None:
+        msg = f"Unknown backfill type: {kind!r}"
+        raise ValueError(msg)
+    return cls(
+        start_date=d["start_date"],
+        end_date=d.get("end_date"),
+        tz=d.get("tz", "UTC"),
+    )
+
+
 class BackfillDef(ABC):
     """Base class for backfill definitions.
 

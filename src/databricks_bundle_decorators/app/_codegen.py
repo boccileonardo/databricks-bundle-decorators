@@ -13,8 +13,10 @@ writing to a file that ``databricks.yml`` includes.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
+from databricks_bundle_decorators.backfill import _serialize_backfill_tag
 from databricks_bundle_decorators.registry import _JOB_REGISTRY
 
 
@@ -177,3 +179,25 @@ def generate_app_config_yaml(
 
     lines.append("")  # trailing newline
     return "\n".join(lines)
+
+
+def generate_registry_json() -> str:
+    """Serialize backfill metadata from the job registry to JSON.
+
+    The returned string is written to ``app/registry.json`` so the
+    Databricks App can load backfill definitions without importing
+    the pipeline package (which may have non-public dependencies).
+
+    Only jobs that have a `backfill` definition are included.
+
+    Returns
+    -------
+    str
+        A pretty-printed JSON string mapping job names to their
+        serialised backfill definitions.
+    """
+    registry: dict[str, Any] = {}
+    for name, meta in sorted(_JOB_REGISTRY.items()):
+        if meta.backfill is not None:
+            registry[name] = json.loads(_serialize_backfill_tag(meta.backfill))
+    return json.dumps(registry, indent=2) + "\n"

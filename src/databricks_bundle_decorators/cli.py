@@ -383,10 +383,15 @@ def _generate_app_yml(
     """Discover pipelines and write ``resources/app.yml``.
 
     This file is always overwritten because it is generated code.
-    Returns the path to the written file.
+    Also writes ``app/registry.json`` with serialised backfill
+    definitions so the app can display backfill data without
+    importing the pipeline package.
+
+    Returns the path to the written YAML file.
     """
     from databricks_bundle_decorators.app._codegen import (  # noqa: PLC0415
         generate_app_config_yaml,
+        generate_registry_json,
     )
 
     discover_pipelines()
@@ -396,6 +401,14 @@ def _generate_app_yml(
     app_yml.write_text(yaml_content)
     if created is not None:
         created.append(str(app_yml.relative_to(cwd)))
+
+    # Write backfill registry for the app
+    registry_json = cwd / "app" / "registry.json"
+    registry_json.parent.mkdir(parents=True, exist_ok=True)
+    registry_json.write_text(generate_registry_json())
+    if created is not None:
+        created.append(str(registry_json.relative_to(cwd)))
+
     return app_yml
 
 
@@ -1057,10 +1070,11 @@ def catchup(
 
 @app.command("app-config")
 def app_config() -> None:
-    """Regenerate ``resources/app.yml`` from the current job registry.
+    """Regenerate ``resources/app.yml`` and ``app/registry.json``.
 
     Run this after adding or removing ``@job`` definitions to keep the
-    Databricks App resource in sync.  The file is always overwritten.
+    Databricks App resource and backfill metadata in sync.  Both files
+    are always overwritten.
 
     Requires the ``[app]`` extra::
 
@@ -1082,8 +1096,10 @@ def app_config() -> None:
     project_name = pyproject["project"]["name"]
     app_name = f"{project_name}-observability"
 
-    path = _generate_app_yml(cwd=cwd, app_name=app_name)
-    print(f"Generated: {path.relative_to(cwd)}")
+    created: list[str] = []
+    _generate_app_yml(cwd=cwd, app_name=app_name, created=created)
+    for f in created:
+        print(f"Generated: {f}")
 
 
 @app.command("dashboard")

@@ -8,7 +8,9 @@ compute logic).
 
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from databricks_bundle_decorators.app._fetch import (
@@ -16,6 +18,7 @@ from databricks_bundle_decorators.app._fetch import (
     resolve_job_ids_from_env,
     resolve_workspace_url,
 )
+from databricks_bundle_decorators.backfill import BackfillDef, _deserialize_backfill_tag
 from databricks_bundle_decorators.dashboard._compute import (
     _backfill_kind,
     build_job_overview,
@@ -94,6 +97,26 @@ def run_app(
 
     from databricks_bundle_decorators.registry import _JOB_REGISTRY  # noqa: PLC0415
 
+    # Load backfill definitions from registry.json (generated at
+    # deploy time by ``dbxdec init --dashboard`` / ``dbxdec app-config``).
+    # This allows the app to show backfill data even when the pipeline
+    # package is not installed in the app runtime.
+    backfill_defs: dict[str, BackfillDef] = {}
+    registry_path = Path(__file__).resolve().parent.parent.parent / "registry.json"
+    if not registry_path.exists():
+        # Also check relative to cwd (deployed app layout)
+        registry_path = Path("registry.json")
+    if registry_path.exists():
+        raw = json.loads(registry_path.read_text())
+        for job_name, defn_dict in raw.items():
+            backfill_defs[job_name] = _deserialize_backfill_tag(defn_dict)
+
+    # Merge with live registry (if the pipeline package is imported,
+    # the registry takes precedence).
+    for name, meta in _JOB_REGISTRY.items():
+        if meta.backfill is not None:
+            backfill_defs[name] = meta.backfill
+
     # Discover jobs from env vars
     job_id_map = resolve_job_ids_from_env()
     workspace_url = resolve_workspace_url()
@@ -132,20 +155,20 @@ def run_app(
         coverages: dict[str, BackfillCoverage] = {}
 
         for name in job_names:
-            meta = _JOB_REGISTRY.get(name)
+            bf = backfill_defs.get(name)
             job_id = jid_map.get(name)
             runs = fetch_job_runs(job_id) if job_id else []
             all_runs[name] = runs
 
-            has_bf = meta is not None and meta.backfill is not None
+            has_bf = bf is not None
             overviews.append(
                 build_job_overview(name, job_id, runs, has_backfill=has_bf)
             )
 
-            if has_bf and meta is not None and meta.backfill is not None:
-                expected = meta.backfill.keys()
-                kind = _backfill_kind(meta.backfill)
-                tz = getattr(meta.backfill, "tz", "UTC")
+            if bf is not None:
+                expected = bf.keys()
+                kind = _backfill_kind(bf)
+                tz = getattr(bf, "tz", "UTC")
                 coverages[name] = compute_backfill_coverage(
                     name, runs, expected, kind=kind, tz=tz
                 )
