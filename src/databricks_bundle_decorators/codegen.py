@@ -170,8 +170,8 @@ def generate_resources(
                 JobCluster(
                     job_cluster_key=job_meta.cluster.name,
                     new_cluster=ClusterSpec.from_dict(
-                        job_meta.cluster.spec
-                    ),  # typed as ClusterSpecDict  # ty: ignore[invalid-argument-type]
+                        job_meta.cluster.spec  # ty: ignore[invalid-argument-type]
+                    ),  # typed as ClusterSpecDict
                 )
             )
 

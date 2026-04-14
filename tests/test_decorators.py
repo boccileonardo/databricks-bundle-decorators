@@ -232,8 +232,8 @@ class TestJobDecorator:
         with pytest.raises(TypeError, match="expects a ClusterMeta"):
 
             @job(
-                cluster="some_cluster"
-            )  # intentional wrong type  # ty: ignore[invalid-argument-type]
+                cluster="some_cluster"  # ty: ignore[invalid-argument-type]
+            )  # intentional wrong type
             def bad_job():
                 @task
                 def noop():
