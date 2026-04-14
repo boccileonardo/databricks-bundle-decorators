@@ -49,11 +49,6 @@ Requires::
     uv add databricks-bundle-decorators[app]
 """
 
-try:
-    import {package_name}.pipelines  # noqa: F401 — populate the job registry
-except ImportError:
-    pass  # Job discovery falls back to DBXDEC_JOB_* env vars
-
 from databricks_bundle_decorators.app import run_app
 
 run_app()
@@ -68,10 +63,10 @@ def run_app(
 ) -> None:
     """Launch the Dash observability dashboard as a Databricks App.
 
-    Import your pipeline package **before** calling this so the
-    job registry is populated.  The app discovers deployed jobs
-    from ``DBXDEC_JOB_*`` environment variables set by the bundle
-    app resource declarations.
+    The app discovers deployed jobs from ``DBXDEC_JOB_*`` environment
+    variables set by the bundle app resource declarations.  Backfill
+    definitions are loaded from ``registry.json`` (generated at deploy
+    time), so the pipeline package does not need to be installed.
 
     Parameters
     ----------

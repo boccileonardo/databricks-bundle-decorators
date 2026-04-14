@@ -33,11 +33,6 @@ Requires::
     uv add databricks-bundle-decorators[app]
 \"\"\"
 
-try:
-    import {package_name}.pipelines  # noqa: F401 — populate the job registry
-except ImportError:
-    pass  # Job discovery falls back to DBXDEC_JOB_* env vars
-
 from databricks_bundle_decorators.app import run_app
 
 run_app()

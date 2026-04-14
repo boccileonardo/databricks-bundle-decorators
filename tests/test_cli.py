@@ -244,9 +244,9 @@ class TestCmdInit:
         assert (tmp_path / "app" / "app.yaml").exists()
         assert (tmp_path / "app" / "pyproject.toml").exists()
 
-        # app.py imports the user's pipelines
+        # app.py is the app entry point
         app_py = (tmp_path / "app" / "app.py").read_text()
-        assert "import test_project.pipelines" in app_py
+        assert "import test_project.pipelines" not in app_py
         assert "run_app" in app_py
 
         # app/pyproject.toml has the right deps and python version

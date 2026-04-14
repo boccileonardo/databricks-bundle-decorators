@@ -489,7 +489,7 @@ def _cmd_init(*, docker: bool = False, dashboard: bool = False) -> None:
 
         _write(
             cwd / "app" / "app.py",
-            APP_PY_TEMPLATE.format(package_name=package_name),
+            APP_PY_TEMPLATE,
         )
         _write(cwd / "app" / "app.yaml", APP_YAML_TEMPLATE)
         _write(
