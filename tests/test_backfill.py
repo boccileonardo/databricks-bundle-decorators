@@ -64,7 +64,7 @@ class TestDailyBackfill:
     def test_is_frozen(self):
         p = DailyBackfill(start_date="2024-01-01")
         with pytest.raises(AttributeError):
-            p.start_date = "2024-02-01"  # type: ignore[misc]
+            p.start_date = "2024-02-01"  # ty: ignore[invalid-assignment]
 
     def test_is_backfill_def(self):
         p = DailyBackfill(start_date="2024-01-01")
@@ -186,7 +186,7 @@ class TestStaticBackfill:
     def test_is_frozen(self):
         p = StaticBackfill(keys=["a"])
         with pytest.raises(AttributeError):
-            p._keys = ["b"]  # type: ignore[misc]
+            p._keys = ["b"]  # ty: ignore[invalid-assignment]
 
 
 class TestGetRunLogicalDate:

@@ -96,7 +96,7 @@ def get_dbutils(spark: SparkSession | None = None) -> Any:
 
     # Strategy 2: IPython notebook namespace (dbutils injected by Databricks)
     try:
-        import IPython  # type: ignore[import-not-found]  # Databricks-only  # noqa: PLC0415
+        import IPython  # Databricks-only  # noqa: PLC0415  # ty: ignore[unresolved-import]
 
         ip = IPython.get_ipython()
         if ip is not None and "dbutils" in ip.user_ns:

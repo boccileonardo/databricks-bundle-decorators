@@ -57,12 +57,12 @@ from databricks_bundle_decorators.dashboard._pages import _backfill_date_bounds
 
 def _flatten_z(fig: object) -> list[int]:
     """Flatten the z matrix from a Plotly heatmap figure."""
-    return [int(v) for row in fig.data[0].z for v in row]  # type: ignore[union-attr]
+    return [int(v) for row in fig.data[0].z for v in row]  # ty: ignore[unresolved-attribute]
 
 
 def _flatten_hover(fig: object) -> list[str]:
     """Flatten the hovertext matrix from a Plotly heatmap figure."""
-    return [str(v) for row in fig.data[0].hovertext for v in row]  # type: ignore[union-attr]
+    return [str(v) for row in fig.data[0].hovertext for v in row]  # ty: ignore[unresolved-attribute]
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +131,7 @@ class TestRunInfo:
             duration_seconds=1.0,
         )
         with pytest.raises(AttributeError):
-            r.run_id = 2  # type: ignore[misc]
+            r.run_id = 2  # ty: ignore[invalid-assignment]
 
     def test_defaults(self) -> None:
         r = RunInfo(
@@ -952,7 +952,7 @@ class TestBuildDailyCalendar:
 
     def test_hover_shows_run_info(self) -> None:
         key_run_info = {"2024-01-15": (42, 1_705_312_800_000)}
-        fig = _build_daily_calendar({"2024-01-15"}, {"2024-01-15"}, key_run_info)
+        fig = _build_daily_calendar({"2024-01-15"}, {"2024-01-15"}, key_run_info)  # ty: ignore[invalid-argument-type]
         hover = _flatten_hover(fig)
         assert any("Run 42" in h for h in hover)
         assert any("2024" in h for h in hover)
@@ -1373,7 +1373,7 @@ class TestBuildPartitionGrid:
 
     def test_hover_shows_run_info(self) -> None:
         key_run_info = {"us": (99, 1_705_312_800_000)}
-        fig = _build_partition_grid(["us", "eu"], {"us"}, key_run_info)
+        fig = _build_partition_grid(["us", "eu"], {"us"}, key_run_info)  # ty: ignore[invalid-argument-type]
         hover = _flatten_hover(fig)
         assert any("Run 99" in h for h in hover)
         assert any("Missing" in h for h in hover)

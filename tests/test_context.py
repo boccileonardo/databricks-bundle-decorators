@@ -20,7 +20,7 @@ class TestGetDbutils:
 
         fake_dbutils_cls = MagicMock(return_value=sentinel)
         fake_module = types.ModuleType("pyspark.dbutils")
-        fake_module.DBUtils = fake_dbutils_cls  # type: ignore[attr-defined]
+        fake_module.DBUtils = fake_dbutils_cls  # ty: ignore[unresolved-attribute]
 
         with patch.dict(
             "sys.modules", {"pyspark.dbutils": fake_module, "pyspark": MagicMock()}
@@ -37,12 +37,12 @@ class TestGetDbutils:
 
         fake_dbutils_cls = MagicMock(return_value=sentinel)
         fake_dbutils_mod = types.ModuleType("pyspark.dbutils")
-        fake_dbutils_mod.DBUtils = fake_dbutils_cls  # type: ignore[attr-defined]
+        fake_dbutils_mod.DBUtils = fake_dbutils_cls  # ty: ignore[unresolved-attribute]
 
         fake_ss = MagicMock()
         fake_ss.getActiveSession.return_value = mock_spark
         fake_sql_mod = types.ModuleType("pyspark.sql")
-        fake_sql_mod.SparkSession = fake_ss  # type: ignore[attr-defined]
+        fake_sql_mod.SparkSession = fake_ss  # ty: ignore[unresolved-attribute]
 
         with patch.dict(
             "sys.modules",
@@ -91,12 +91,12 @@ class TestGetDbutils:
         """When pyspark is available but no active session, fall through."""
         fake_dbutils_cls = MagicMock()
         fake_dbutils_mod = types.ModuleType("pyspark.dbutils")
-        fake_dbutils_mod.DBUtils = fake_dbutils_cls  # type: ignore[attr-defined]
+        fake_dbutils_mod.DBUtils = fake_dbutils_cls  # ty: ignore[unresolved-attribute]
 
         fake_ss = MagicMock()
         fake_ss.getActiveSession.return_value = None
         fake_sql_mod = types.ModuleType("pyspark.sql")
-        fake_sql_mod.SparkSession = fake_ss  # type: ignore[attr-defined]
+        fake_sql_mod.SparkSession = fake_ss  # ty: ignore[unresolved-attribute]
 
         with (
             patch.dict(

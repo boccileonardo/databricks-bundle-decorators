@@ -23,7 +23,7 @@ _SAMPLE = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
 
 
 def _output_ctx(task_key: str = "my_task", **kwargs: object) -> OutputContext:
-    return OutputContext(job_name="j", task_key=task_key, run_id="r1", **kwargs)  # type: ignore[arg-type]
+    return OutputContext(job_name="j", task_key=task_key, run_id="r1", **kwargs)  # ty: ignore[invalid-argument-type]
 
 
 def _input_ctx(
@@ -37,7 +37,7 @@ def _input_ctx(
         upstream_task_key=upstream,
         run_id="r1",
         expected_type=expected_type,
-        **kwargs,  # type: ignore[arg-type]
+        **kwargs,  # ty: ignore[invalid-argument-type]
     )
 
 

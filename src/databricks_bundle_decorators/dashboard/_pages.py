@@ -14,7 +14,6 @@ import whenever
 from dash import dcc, html
 
 from databricks_bundle_decorators.dashboard._compute import (
-    _HOURLY_FMT,
     _WEEK_KEY_RE,
 )
 from databricks_bundle_decorators.dashboard._data import (
@@ -120,7 +119,6 @@ def _backfill_date_bounds(
     Works for ``daily``, ``weekly``, ``monthly``, and ``hourly`` kinds.
     Returns four ``None`` values when no valid dates can be parsed.
     """
-    from datetime import datetime  # noqa: PLC0415
 
     dates: list[date] = []
     if kind == "daily":
@@ -144,7 +142,7 @@ def _backfill_date_bounds(
     elif kind == "hourly":
         for key in expected_keys:
             try:
-                dates.append(datetime.strptime(key, _HOURLY_FMT).date())  # noqa: DTZ007
+                dates.append(date.fromisoformat(key[:10]))
             except ValueError:
                 continue
 

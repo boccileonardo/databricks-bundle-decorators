@@ -231,7 +231,9 @@ class TestJobDecorator:
         """Passing a string instead of ClusterMeta raises TypeError."""
         with pytest.raises(TypeError, match="expects a ClusterMeta"):
 
-            @job(cluster="some_cluster")  # type: ignore[arg-type]  # intentional wrong type
+            @job(
+                cluster="some_cluster"
+            )  # intentional wrong type  # ty: ignore[invalid-argument-type]
             def bad_job():
                 @task
                 def noop():
@@ -739,7 +741,7 @@ class TestDependsOn:
 
             @job
             def bad_dep_job():
-                @task(depends_on="setup")  # type: ignore[arg-type]
+                @task(depends_on="setup")  # ty: ignore[invalid-argument-type]
                 def work():
                     pass
 
@@ -941,7 +943,7 @@ class TestForEachTask:
 
             @job
             def bad_type_job():
-                @for_each_task(inputs="not_a_list_or_ref")  # type: ignore[arg-type]
+                @for_each_task(inputs="not_a_list_or_ref")  # ty: ignore[invalid-argument-type]
                 def work(inputs: str):
                     pass
 
@@ -1129,7 +1131,7 @@ class TestJobPartition:
     def test_partition_invalid_type_raises(self):
         with pytest.raises(TypeError, match="BackfillDef"):
 
-            @job(backfill="daily")  # type: ignore[arg-type]
+            @job(backfill="daily")  # ty: ignore[invalid-argument-type]
             def my_job():
                 @task
                 def step():
@@ -1249,7 +1251,7 @@ class TestAllPartitions:
         """all_partitions() with a non-TaskProxy raises TypeError."""
 
         with pytest.raises(TypeError, match="expects a TaskProxy"):
-            all_partitions("not_a_proxy")  # type: ignore[arg-type]
+            all_partitions("not_a_proxy")  # ty: ignore[invalid-argument-type]
 
     def test_all_partitions_codegen(self):
         """all_partitions edges produce __all_partitions__ named parameters."""

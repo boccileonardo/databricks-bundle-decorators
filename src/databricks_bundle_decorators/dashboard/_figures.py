@@ -13,7 +13,6 @@ import plotly.graph_objects as go
 import whenever
 
 from databricks_bundle_decorators.dashboard._compute import (
-    _HOURLY_FMT,
     _WEEK_KEY_RE,
 )
 from databricks_bundle_decorators.dashboard._data import (
@@ -549,8 +548,8 @@ def _build_hourly_calendar(
     expected: dict[tuple[date, int], str] = {}
     for key in expected_keys:
         try:
-            parsed = datetime.strptime(key, _HOURLY_FMT)  # noqa: DTZ007
-            expected[(parsed.date(), parsed.hour)] = key
+            parsed_d = date.fromisoformat(key[:10])
+            expected[(parsed_d, int(key[11:]))] = key
         except ValueError:
             continue
 
@@ -560,8 +559,8 @@ def _build_hourly_calendar(
     completed_parsed: set[tuple[date, int]] = set()
     for key in completed_keys:
         try:
-            parsed = datetime.strptime(key, _HOURLY_FMT)  # noqa: DTZ007
-            completed_parsed.add((parsed.date(), parsed.hour))
+            parsed_d = date.fromisoformat(key[:10])
+            completed_parsed.add((parsed_d, int(key[11:])))
         except ValueError:
             continue
 

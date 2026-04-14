@@ -180,7 +180,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 partition_values = task_meta.io_manager._extract_partition_values(
                     context
                 )
-                set_task_value("__partition_values__", partition_values)  # type: ignore[arg-type]
+                set_task_value("__partition_values__", partition_values)  # ty: ignore[invalid-argument-type]
         elif result is not None and not task_meta.io_manager:
             _logger.warning(
                 "Task '%s' returned a value but has no IoManager - "

@@ -43,9 +43,6 @@ _WEEK_KEY_RE: re.Pattern[str] = re.compile(r"^(\d{4})-W(\d{2})$")
 #: ``whenever`` format for hourly backfill keys.
 _HOURLY_FMT: str = "YYYY-MM-DD'T'hh"
 
-#: ``strftime`` / ``strptime`` format for hourly backfill keys.
-_HOURLY_FMT: str = "%Y-%m-%dT%H"
-
 
 def _effective_state(
     result_state: str | None,
