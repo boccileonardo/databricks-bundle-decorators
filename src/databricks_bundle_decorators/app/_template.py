@@ -1,7 +1,7 @@
-"""App template scaffolding for ``dbxdec init-app``.
+"""App template scaffolding for ``dbxdec init --dashboard``.
 
-Provides the ``app.yaml`` and ``app.py`` templates that users
-copy into their bundle project's ``./app`` directory.
+Provides the ``app.yaml``, ``app.py``, and ``pyproject.toml``
+templates that are written to the ``./app`` directory.
 """
 
 from __future__ import annotations

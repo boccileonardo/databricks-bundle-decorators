@@ -19,6 +19,9 @@ from databricks_bundle_decorators.app._codegen import (
 from databricks_bundle_decorators.app._codegen import (
     generate_registry_json as generate_registry_json,
 )
+from databricks_bundle_decorators.app._codegen import (
+    sync_registry_json as sync_registry_json,
+)
 from databricks_bundle_decorators.app._fetch import (
     fetch_job_runs as fetch_job_runs,
 )
@@ -37,4 +40,5 @@ __all__ = [
     "resolve_job_ids_from_env",
     "resolve_workspace_url",
     "run_app",
+    "sync_registry_json",
 ]

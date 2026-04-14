@@ -5,15 +5,28 @@ wires each job as an app resource with ``CAN_VIEW`` permission.
 Environment variables are emitted so the app can discover job IDs
 at runtime via ``DBXDEC_JOB_*``.
 
-The Python SDK for Databricks bundles does not support ``App`` as a
-resource type, so the app resource must be declared in YAML.  Use
-`generate_app_config_yaml` to produce a YAML string suitable for
-writing to a file that ``databricks.yml`` includes.
+.. note:: **SDK blocker — YAML-only approach**
+
+   The ``databricks-bundles`` Python SDK does **not** support ``App``
+   as a resource type (only ``Job`` is supported via
+   ``Resources.add_resource()``).  This forces us to:
+
+   1. Generate a YAML file (``resources/app.yml``) instead of
+      returning an ``App`` from ``load_resources()``.
+   2. Require ``include: [resources/*.yml]`` in ``databricks.yaml``.
+   3. Require ``dbxdec app-config`` when jobs are added/removed
+      (YAML must exist before the bundle CLI parses it).
+
+   If the SDK adds ``App`` support, all codegen can move into
+   ``load_resources()`` alongside jobs — eliminating the YAML file,
+   the ``include`` directive, and the manual ``app-config`` step.
+   Track: https://github.com/databricks/databricks-asset-bundles/issues
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from databricks_bundle_decorators.backfill import _serialize_backfill_tag
@@ -150,7 +163,7 @@ def generate_app_config_yaml(
         "#   databricks bundle deploy",
         f"#   databricks bundle run {resource_key}",
         "#",
-        "# Do not edit manually — changes will be overwritten.",
+        "# Do not edit manually — use dbxdec app-config to regenerate.",
         "",
         "resources:",
         "  apps:",
@@ -201,3 +214,31 @@ def generate_registry_json() -> str:
         if meta.backfill is not None:
             registry[name] = json.loads(_serialize_backfill_tag(meta.backfill))
     return json.dumps(registry, indent=2) + "\n"
+
+
+def sync_registry_json(project_root: Path | None = None) -> bool:
+    """Write ``app/registry.json`` if the ``app/`` directory exists.
+
+    Intended to be called from ``load_resources()`` during
+    ``databricks bundle deploy`` so that backfill metadata stays in
+    sync automatically — no manual ``dbxdec app-config`` needed for
+    backfill changes.
+
+    Parameters
+    ----------
+    project_root:
+        Path to the project root.  Defaults to the current working
+        directory.
+
+    Returns
+    -------
+    bool
+        ``True`` if the file was written, ``False`` if ``app/`` does
+        not exist (i.e. no dashboard is scaffolded).
+    """
+    root = project_root or Path.cwd()
+    app_dir = root / "app"
+    if not app_dir.is_dir():
+        return False
+    (app_dir / "registry.json").write_text(generate_registry_json())
+    return True

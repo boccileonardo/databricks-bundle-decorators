@@ -1,60 +1,56 @@
 # Databricks App Dashboard
 
-A native [Databricks App](https://docs.databricks.com/aws/en/dev-tools/databricks-apps)
-that provides an observability dashboard for your pipelines, running
-directly inside your Databricks workspace — accessible to your team via
-a browser, with no local setup required.
+Deploy the [observability dashboard](observability.md) as a native
+[Databricks App](https://docs.databricks.com/aws/en/dev-tools/databricks-apps)
+— accessible to your team via a browser, with no local setup required.
 
-The app uses the Databricks Python SDK and authenticates via the
-**service principal** that Databricks automatically provisions for each
-app.  Job IDs are injected at deploy time through bundle resource
-bindings — no hardcoding required.
+Authentication is handled automatically via the service principal that
+Databricks provisions for each app.
 
-## Installation
-
-The app extras are opt-in.  Install them in your project:
+## Quick start
 
 ```bash
 uv add databricks-bundle-decorators[app]
-```
-
-This pulls in `dash`, `plotly`, `dash-bootstrap-components`,
-`dash-ag-grid`, and `databricks-sdk`.
-
-## Setup
-
-### 1. Scaffold the app files
-
-Run `dbxdec init` with the `--dashboard` flag:
-
-```bash
 uv run dbxdec init --dashboard
+databricks bundle deploy
+databricks bundle run <app_resource_key>
 ```
 
-This creates:
+The resource key is printed during `init` and lives in
+`resources/app.yml` (e.g. `my_project_observability`).
+
+!!! warning
+    Both `deploy` **and** `run` are required.  `deploy` alone does not
+    start the app — `run` pushes the source code to compute.
+
+## Generated files
 
 | File | Purpose |
 |---|---|
-| `app/app.py` | Dash entry point that imports your pipelines and calls `run_app()` |
-| `app/app.yaml` | Databricks App runtime configuration |
-| `app/pyproject.toml` | Python dependencies and version constraint (`>=3.12`) |
-| `app/uv.lock` | Lock file so Databricks Apps uses `uv` instead of `pip` |
-| `resources/app.yml` | Bundle resource definition for the app (auto-generated from registry) |
+| `app/app.py` | Dash entry point |
+| `app/app.yaml` | App runtime configuration |
+| `app/pyproject.toml` | Dependencies (`>=3.12`) |
+| `app/uv.lock` | Lock file (tells Databricks Apps to use `uv`) |
+| `app/registry.json` | Serialised backfill definitions |
+| `resources/app.yml` | Bundle app resource (env vars, permissions) |
 
-If you already ran `dbxdec init` previously, existing files are
-preserved — the command only creates files that don't exist yet.
-You can add the `--dashboard` flag to a subsequent run to scaffold
-only the missing app files.
+## Updating after job changes
 
-!!! note
-    `resources/app.yml` is always regenerated (not skipped) because it
-    is derived from the job registry.  After adding or removing `@job`
-    definitions, run `dbxdec app-config` to update it.
+When you **add or remove** `@job` definitions:
 
-??? example "Adding the dashboard to an existing project"
+```bash
+uv run dbxdec app-config
+databricks bundle deploy
+databricks bundle run <app_resource_key>
+```
 
-    If you already ran `dbxdec init` before, `databricks.yaml` already
-    exists and will be skipped.  Follow these steps:
+Changing backfill parameters (e.g. `start_date`, `tz`) on existing
+jobs does **not** require `dbxdec app-config` — `registry.json` is
+updated automatically on every `databricks bundle deploy`.
+
+## Adding the dashboard to an existing project
+
+??? example "Step-by-step for existing projects"
 
     **1. Install the app extra**
 
@@ -68,18 +64,9 @@ only the missing app files.
     uv run dbxdec init --dashboard
     ```
 
-    This creates `app/app.py`, `app/app.yaml`,
-    `app/pyproject.toml`, `app/uv.lock`, and `resources/app.yml`.
-
-    **3. Add `include` to `databricks.yaml`**
-
-    The command will print a reminder if your existing `databricks.yaml`
-    doesn't include the generated YAML.  Add it near the top:
+    **3. Add `include` to `databricks.yaml`** (if not already present)
 
     ```yaml
-    bundle:
-      name: my-project
-
     include:
       - resources/*.yml
     ```
@@ -91,123 +78,52 @@ only the missing app files.
     databricks bundle run <app_resource_key>
     ```
 
-### 2. Deploy and start
+## Local testing
 
-Deploy the bundle, then start the app:
+Run the app locally from the `app/` directory:
 
 ```bash
-databricks bundle deploy
-databricks bundle run <app_resource_key>
+cd app
+DBXDEC_JOB_MY_JOB=<job_id> databricks apps run-local --prepare-environment
 ```
 
-Replace `<app_resource_key>` with the app's resource key from
-`resources/app.yml` (e.g. `my_project_observability`).
-
-The **deploy** step:
-
-1. Creates the Databricks App with a dedicated service principal.
-2. Grants the service principal `CAN_VIEW` on each registered job.
-3. Injects `DBXDEC_JOB_<NAME>=<job_id>` environment variables into the
-   app runtime so it can discover your jobs.
-4. Uploads the `app/` directory to the workspace.
-
-The **run** step deploys the source code to the app's compute and
-starts the Dash server.
-
-!!! warning
-    `databricks bundle deploy` alone does **not** start the app.
-    You must also run `databricks bundle run` to deploy the source
-    code to compute.  Without this step the app will show
-    "No source code" in the UI, and manually deploying through the
-    UI requires navigating the workspace file browser — use
-    `bundle run` to avoid that entirely.
-
-After the run completes, find the app in the **Apps** tab of your
-workspace sidebar.
-
-## How it works
-
-### Job discovery
-
-At scaffold time, `dbxdec init --dashboard` reads the job registry and
-generates `resources/app.yml` — a bundle
-[app resource](https://docs.databricks.com/aws/en/dev-tools/bundles/resources#app-resources)
-definition.  Each registered job becomes:
-
-- An **app resource binding** with `${resources.jobs.<name>.id}` — the
-  bundle resolves this to the actual job ID.
-- An **environment variable** (`DBXDEC_JOB_<NAME>`) mapped via
-  `valueFrom` to that resource binding.
-
-At app startup, `resolve_job_ids_from_env()` reads all `DBXDEC_JOB_*`
-environment variables to build the `{name: job_id}` mapping.
-
-### Authentication
-
-The app uses **app authorization** (service principal).  Databricks
-automatically provisions a service principal for each app and injects
-`DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET` into the runtime.
-The Databricks Python SDK auto-detects these credentials — no tokens or
-profiles to configure.
-
-Because the bundle resource declaration includes `permission: CAN_VIEW`
-for each job, the service principal is automatically granted access.
-All app users see the same data (no per-user permissions).
-
-### Data fetching
-
-The app calls `WorkspaceClient().jobs.list_runs()` to fetch run history.
-The workspace URL is read from `DATABRICKS_HOST` (set automatically by
-the Databricks Apps runtime).
+Set `DBXDEC_JOB_*` env vars to point at deployed jobs.
 
 ## Customization
 
-### Custom permission level
+### Permission level
 
-By default, the app's service principal gets `CAN_VIEW` on each job.  To
-allow triggering runs from the app in the future, edit the `permission`
-field in `resources/app.yml`:
-
-```yaml
-resources:
-  apps:
-    my_project_observability:
-      resources:
-        - name: my-job
-          job:
-            id: "${resources.jobs.my_job.id}"
-            permission: CAN_MANAGE_RUN
-```
-
-### Custom source path
-
-If your app files live somewhere other than `./app`, update the
-`source_code_path` in `resources/app.yml`:
-
-```yaml
-resources:
-  apps:
-    my_project_observability:
-      source_code_path: ./observability
-```
-
-### Updating after job changes
-
-When you add or remove `@job` definitions, regenerate the app resource:
+The app's service principal gets `CAN_VIEW` by default.  Use
+`--permission` to change it:
 
 ```bash
-uv run dbxdec app-config
+uv run dbxdec app-config --permission CAN_MANAGE_RUN
 ```
 
-This overwrites `resources/app.yml` with the current registry contents.
+This also works with `dbxdec init --dashboard --permission CAN_MANAGE_RUN`.
+
+### Source path
+
+If your app lives somewhere other than `./app`:
+
+```yaml
+source_code_path: ./observability
+```
 
 ## Dashboard pages
 
-The dashboard renders these pages:
+Same pages as the [local dashboard](observability.md#dashboard-pages):
 
-- **Overview** — KPI cards, job table with workspace links and backfill
-  completeness.
-- **Backfills** — summary grid with completeness percentages and status
-  squares.
-- **Backfill Detail** — per-job completeness heatmap with date-range
-  picker.
+- **Overview** — KPI cards, job table with workspace links.
+- **Backfills** — completeness grid with status squares.
+- **Backfill Detail** — per-job heatmap with date-range picker.
+
+## Known limitations
+
+The `databricks-bundles` Python SDK does not support `App` as a resource
+type — only `Job` is supported via `Resources.add_resource()`.  This is
+why the app resource must be declared in a separate YAML file
+(`resources/app.yml`) and why `dbxdec app-config` is needed when jobs
+are added or removed.  If the SDK adds `App` support, this complexity
+goes away — the app resource would be generated alongside jobs in
+`load_resources()` with no manual step.

@@ -25,11 +25,6 @@ from databricks_bundle_decorators.dashboard import APP_TEMPLATE
 from databricks_bundle_decorators.discovery import discover_pipelines
 from databricks_bundle_decorators.registry import _JOB_REGISTRY
 
-# Lazy-imported when --dashboard is used:
-# from databricks_bundle_decorators.app._template import (
-#     APP_PY_TEMPLATE, APP_YAML_TEMPLATE, REQUIREMENTS_TXT_TEMPLATE,
-# )
-
 try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
@@ -101,6 +96,11 @@ def load_resources(bundle: Bundle) -> Resources:
     resources = Resources()
     for key, job_resource in generate_resources().items():
         resources.add_resource(key, job_resource)
+
+    # Keep app/registry.json in sync with backfill definitions
+    from databricks_bundle_decorators.app._codegen import sync_registry_json
+    sync_registry_json()
+
     return resources
 '''
 
@@ -378,6 +378,7 @@ def _generate_app_yml(
     *,
     cwd: Path,
     app_name: str,
+    permission: str = "CAN_VIEW",
     created: list[str] | None = None,
 ) -> Path:
     """Discover pipelines and write ``resources/app.yml``.
@@ -395,7 +396,7 @@ def _generate_app_yml(
     )
 
     discover_pipelines()
-    yaml_content = generate_app_config_yaml(app_name)
+    yaml_content = generate_app_config_yaml(app_name, permission=permission)
     app_yml = cwd / "resources" / "app.yml"
     app_yml.parent.mkdir(parents=True, exist_ok=True)
     app_yml.write_text(yaml_content)
@@ -415,7 +416,9 @@ def _generate_app_yml(
 # --- Init command ----------------------------------------------------------
 
 
-def _cmd_init(*, docker: bool = False, dashboard: bool = False) -> None:
+def _cmd_init(
+    *, docker: bool = False, dashboard: bool = False, permission: str = "CAN_VIEW"
+) -> None:
     """Scaffold a new databricks-bundle-decorators pipeline project."""
     if dashboard:
         try:
@@ -520,6 +523,7 @@ def _cmd_init(*, docker: bool = False, dashboard: bool = False) -> None:
         _generate_app_yml(
             cwd=cwd,
             app_name=f"{project_name}-observability",
+            permission=permission,
             created=created,
         )
 
@@ -959,9 +963,17 @@ def init(
             "(uv add databricks-bundle-decorators[app]).",
         ),
     ] = False,
+    permission: Annotated[
+        str,
+        typer.Option(
+            help="Permission level granted to the app's service "
+            "principal on each job (e.g. CAN_VIEW, CAN_MANAGE_RUN). "
+            "Only used with --dashboard.",
+        ),
+    ] = "CAN_VIEW",
 ) -> None:
     """Scaffold a new databricks-bundle-decorators pipeline project."""
-    _cmd_init(docker=docker, dashboard=dashboard)
+    _cmd_init(docker=docker, dashboard=dashboard, permission=permission)
 
 
 @app.command("backfill")
@@ -1069,7 +1081,15 @@ def catchup(
 
 
 @app.command("app-config")
-def app_config() -> None:
+def app_config(
+    permission: Annotated[
+        str,
+        typer.Option(
+            help="Permission level granted to the app's service "
+            "principal on each job (e.g. CAN_VIEW, CAN_MANAGE_RUN).",
+        ),
+    ] = "CAN_VIEW",
+) -> None:
     """Regenerate ``resources/app.yml`` and ``app/registry.json``.
 
     Run this after adding or removing ``@job`` definitions to keep the
@@ -1097,7 +1117,9 @@ def app_config() -> None:
     app_name = f"{project_name}-observability"
 
     created: list[str] = []
-    _generate_app_yml(cwd=cwd, app_name=app_name, created=created)
+    _generate_app_yml(
+        cwd=cwd, app_name=app_name, permission=permission, created=created
+    )
     for f in created:
         print(f"Generated: {f}")
 

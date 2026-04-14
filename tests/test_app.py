@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +12,7 @@ from databricks_bundle_decorators.app._codegen import (
     generate_app_config_yaml,
     generate_app_resource,
     generate_registry_json,
+    sync_registry_json,
 )
 from databricks_bundle_decorators.app._fetch import (
     _JOB_ENV_PREFIX,
@@ -416,3 +418,52 @@ class TestGenerateRegistryJson:
         restored = _deserialize_backfill_tag(registry_data["my_job"])
 
         assert restored.keys() == bf.keys()
+
+
+class TestSyncRegistryJson:
+    """Tests for sync_registry_json."""
+
+    def setup_method(self) -> None:
+        reset_registries()
+
+    def test_writes_file_when_app_dir_exists(self, tmp_path: Path) -> None:
+        (tmp_path / "app").mkdir()
+        _JOB_REGISTRY["my_job"] = JobMeta(
+            fn=_dummy_fn,
+            name="my_job",
+            dag={},
+            backfill=DailyBackfill(start_date="2024-01-01"),
+        )
+
+        result = sync_registry_json(project_root=tmp_path)
+
+        assert result is True
+        registry_file = tmp_path / "app" / "registry.json"
+        assert registry_file.exists()
+        data = json.loads(registry_file.read_text())
+        assert "my_job" in data
+        assert data["my_job"]["type"] == "daily"
+
+    def test_returns_false_when_no_app_dir(self, tmp_path: Path) -> None:
+        result = sync_registry_json(project_root=tmp_path)
+
+        assert result is False
+        assert not (tmp_path / "app" / "registry.json").exists()
+
+    def test_overwrites_existing_file(self, tmp_path: Path) -> None:
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        (app_dir / "registry.json").write_text('{"old": "data"}')
+
+        _JOB_REGISTRY["new_job"] = JobMeta(
+            fn=_dummy_fn,
+            name="new_job",
+            dag={},
+            backfill=StaticBackfill(keys=["a"]),
+        )
+
+        sync_registry_json(project_root=tmp_path)
+
+        data = json.loads((app_dir / "registry.json").read_text())
+        assert "new_job" in data
+        assert "old" not in data

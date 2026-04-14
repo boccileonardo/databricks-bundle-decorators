@@ -38,22 +38,6 @@ from databricks_bundle_decorators.dashboard._pages import (
     _page_overview,
 )
 
-#: Template for the user's ``app.py`` entry point.
-APP_TEMPLATE = '''\
-"""Pipeline observability Databricks App.
-
-Deploy with ``databricks bundle deploy``.
-
-Requires::
-
-    uv add databricks-bundle-decorators[app]
-"""
-
-from databricks_bundle_decorators.app import run_app
-
-run_app()
-'''
-
 
 def run_app(
     *,
