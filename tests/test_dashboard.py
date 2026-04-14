@@ -57,12 +57,12 @@ from databricks_bundle_decorators.dashboard._pages import _backfill_date_bounds
 
 def _flatten_z(fig: object) -> list[int]:
     """Flatten the z matrix from a Plotly heatmap figure."""
-    return [int(v) for row in fig.data[0].z for v in row]  # type: ignore[union-attr]
+    return [int(v) for row in fig.data[0].z for v in row]  # ty: ignore[unresolved-attribute]
 
 
 def _flatten_hover(fig: object) -> list[str]:
     """Flatten the hovertext matrix from a Plotly heatmap figure."""
-    return [str(v) for row in fig.data[0].hovertext for v in row]  # type: ignore[union-attr]
+    return [str(v) for row in fig.data[0].hovertext for v in row]  # ty: ignore[unresolved-attribute]
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +131,7 @@ class TestRunInfo:
             duration_seconds=1.0,
         )
         with pytest.raises(AttributeError):
-            r.run_id = 2  # type: ignore[misc]
+            r.run_id = 2  # ty: ignore[invalid-assignment]
 
     def test_defaults(self) -> None:
         r = RunInfo(
@@ -477,7 +477,7 @@ class TestFilterPastKeys:
 
     def test_daily_includes_today(self) -> None:
         today = whenever.ZonedDateTime.now("UTC").date()
-        key = today.py_date().isoformat()
+        key = today.to_stdlib().isoformat()
         result = _filter_past_keys([key], "daily")
         assert key in result
 
@@ -493,8 +493,8 @@ class TestFilterPastKeys:
 
     def test_weekly_includes_current_week(self) -> None:
         today = whenever.ZonedDateTime.now("UTC").date()
-        iso = today.py_date().isocalendar()
-        key = f"{iso[0]}-W{iso[1]:02d}"
+        iwd = today.iso_week_date()
+        key = f"{iwd.year}-W{iwd.week:02d}"
         result = _filter_past_keys([key], "weekly")
         assert key in result
 
@@ -505,7 +505,7 @@ class TestFilterPastKeys:
 
     def test_monthly_includes_current_month(self) -> None:
         today = whenever.ZonedDateTime.now("UTC").date()
-        first = today.replace(day=1).py_date().isoformat()
+        first = today.replace(day=1).to_stdlib().isoformat()
         result = _filter_past_keys([first], "monthly")
         assert first in result
 
@@ -516,7 +516,7 @@ class TestFilterPastKeys:
 
     def test_hourly_includes_current_hour(self) -> None:
         now = whenever.ZonedDateTime.now("UTC")
-        key = now.py_datetime().strftime("%Y-%m-%dT%H")
+        key = now.replace(minute=0, second=0, nanosecond=0).format("YYYY-MM-DD'T'hh")
         result = _filter_past_keys([key], "hourly")
         assert key in result
 
@@ -952,7 +952,7 @@ class TestBuildDailyCalendar:
 
     def test_hover_shows_run_info(self) -> None:
         key_run_info = {"2024-01-15": (42, 1_705_312_800_000)}
-        fig = _build_daily_calendar({"2024-01-15"}, {"2024-01-15"}, key_run_info)
+        fig = _build_daily_calendar({"2024-01-15"}, {"2024-01-15"}, key_run_info)  # ty: ignore[invalid-argument-type]
         hover = _flatten_hover(fig)
         assert any("Run 42" in h for h in hover)
         assert any("2024" in h for h in hover)
@@ -1295,7 +1295,7 @@ class TestBackfillDateBounds:
         assert start == min_d  # no clipping
 
     def test_hourly_large_range_clips_to_last_7(self) -> None:
-        today = whenever.ZonedDateTime.now("UTC").date().py_date()
+        today = whenever.ZonedDateTime.now("UTC").date().to_stdlib()
         keys = [f"2024-01-{d:02d}T10" for d in range(1, 31)]
         min_d, max_d, start, end = _backfill_date_bounds("hourly", keys)
         assert min_d is not None
@@ -1322,7 +1322,7 @@ class TestBackfillDateBounds:
         assert _backfill_date_bounds("custom", ["a", "b"]) == (None, None, None, None)
 
     def test_init_end_anchored_to_today(self) -> None:
-        today = whenever.ZonedDateTime.now("UTC").date().py_date()
+        today = whenever.ZonedDateTime.now("UTC").date().to_stdlib()
         # Keys span from 1 year ago to 1 year from now
         start = today - timedelta(days=365)
         keys = [(start + timedelta(days=i)).isoformat() for i in range(730)]
@@ -1373,7 +1373,7 @@ class TestBuildPartitionGrid:
 
     def test_hover_shows_run_info(self) -> None:
         key_run_info = {"us": (99, 1_705_312_800_000)}
-        fig = _build_partition_grid(["us", "eu"], {"us"}, key_run_info)
+        fig = _build_partition_grid(["us", "eu"], {"us"}, key_run_info)  # ty: ignore[invalid-argument-type]
         hover = _flatten_hover(fig)
         assert any("Run 99" in h for h in hover)
         assert any("Missing" in h for h in hover)

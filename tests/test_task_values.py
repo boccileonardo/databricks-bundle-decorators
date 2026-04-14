@@ -48,12 +48,12 @@ class TestSetTaskValue:
 
     def test_set_nested(self):
         value = {"regions": ["us-east-1"], "counts": [1, 2, 3]}
-        set_task_value("nested", value)
+        set_task_value("nested", value)  # ty: ignore[invalid-argument-type]
         assert _local_task_values["__current__"]["nested"] == value
 
     def test_rejects_non_serializable(self):
         with pytest.raises(TypeError, match="JSON-serializable"):
-            set_task_value("bad", object())  # type: ignore[arg-type]
+            set_task_value("bad", object())  # ty: ignore[invalid-argument-type]
 
 
 class TestGetTaskValue:

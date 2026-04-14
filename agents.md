@@ -9,7 +9,7 @@ The package name is `databricks-bundle-decorators`. The Python import name is `d
 ## CRITICAL TOOLS
 
 - **Package manager:** UV only. Use `uv add`, `uv run`, `uv sync`. Never use `pip`, `venv`, `python -m`, or `pip install`.
-
+- **Running commands with output**: Do not try to write to /dev/null or /tmp (eg. do not run 2>/dev/null). Instead use the .copilot_worskpace/ folder for temporary files.
 - Before considering a change completed, must run the following commands in this order:
 
 ```bash

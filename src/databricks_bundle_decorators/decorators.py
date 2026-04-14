@@ -349,7 +349,7 @@ def task(
             # Normal execution (runtime / tests).
             return fn(*args, **kwargs)
 
-        wrapper._task_meta = meta  # type: ignore[attr-defined]
+        wrapper._task_meta = meta  # ty: ignore[unresolved-attribute]
         return wrapper
 
     if fn is not None:
@@ -550,7 +550,7 @@ def job(
         def wrapper(*args, **kwargs):
             return fn(*args, **kwargs)
 
-        wrapper._job_meta = meta  # type: ignore[attr-defined]
+        wrapper._job_meta = meta  # ty: ignore[unresolved-attribute]
         return wrapper
 
     if fn is not None:
@@ -812,7 +812,7 @@ def for_each_task(
 
             return TaskProxy(task_key)
 
-        wrapper._task_meta = meta  # type: ignore[attr-defined]
+        wrapper._task_meta = meta  # ty: ignore[unresolved-attribute]
         return wrapper
 
     return decorator

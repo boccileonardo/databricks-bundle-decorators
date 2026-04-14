@@ -144,8 +144,30 @@ def daily_pipeline():
 When `@job(backfill=...)` is specified, the decorator auto-injects a
 `backfill_key` job parameter with an empty default value. At runtime,
 a non-empty key is passed as a string to all IoManager contexts and is
-available via `get_backfill_key()`. An empty key (e.g. a manual run)
-defaults to `None`.
+available via `get_backfill_key()`.
+
+### Automatic key derivation
+
+When the `backfill_key` parameter is missing or empty — for example
+when a job is triggered by a **cron schedule**, a **file-arrival
+trigger**, or a **manual Run Now** — and the job has a time-based
+backfill definition (`DailyBackfill`, `WeeklyBackfill`,
+`MonthlyBackfill`, or `HourlyBackfill`), the key is automatically
+derived from the current time in the backfill definition's timezone.
+A warning is logged when this happens.
+
+| Backfill type | Auto-derived key |
+|---|---|
+| `DailyBackfill` | Today's date (e.g. `2024-06-15`) |
+| `WeeklyBackfill` | Current ISO week (e.g. `2024-W24`) |
+| `MonthlyBackfill` | First of the current month (e.g. `2024-06-01`) |
+| `HourlyBackfill` | Current hour (e.g. `2024-06-15T14`) |
+
+This means scheduled runs "just work" without requiring the
+trigger to supply the key explicitly.
+
+`StaticBackfill` has no sensible default, so runs without an
+explicit key will still raise `RuntimeError`.
 
 ## Reading the backfill key
 
@@ -161,7 +183,11 @@ key = get_backfill_key()          # "2024-01-15"
 dt  = get_run_logical_date()      # datetime(2024, 1, 15, tzinfo=UTC)
 ```
 
-Both raise `RuntimeError` if the `backfill_key` parameter is missing or empty.
+For time-based backfill definitions, the key is
+[auto-derived](#automatic-key-derivation) from the current time when
+not explicitly provided. A `RuntimeError` is raised only when no
+automatic derivation is possible (e.g. `StaticBackfill`, or no
+backfill definition at all).
 See the [Backfill Definitions API](../api/backfill.md) for full parameter details.
 
 ## Backfill definitions

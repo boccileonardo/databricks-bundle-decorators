@@ -13,7 +13,6 @@ import plotly.graph_objects as go
 import whenever
 
 from databricks_bundle_decorators.dashboard._compute import (
-    _HOURLY_FMT,
     _WEEK_KEY_RE,
 )
 from databricks_bundle_decorators.dashboard._data import (
@@ -203,12 +202,8 @@ def _build_daily_calendar(
 
     # Apply date-range filter
     if start_date is not None or end_date is not None:
-        lo = (
-            whenever.Date.from_py_date(start_date)
-            if start_date
-            else min(expected_dates)
-        )
-        hi = whenever.Date.from_py_date(end_date) if end_date else max(expected_dates)
+        lo = whenever.Date(start_date) if start_date else min(expected_dates)
+        hi = whenever.Date(end_date) if end_date else max(expected_dates)
         expected_dates = {d for d in expected_dates if lo <= d <= hi}
         completed_dates = {d for d in completed_dates if lo <= d <= hi}
     elif len(expected_dates) > _MAX_UNFILTERED_DAYS:
@@ -226,7 +221,7 @@ def _build_daily_calendar(
     # Align to Monday/Sunday boundaries
     start = min_d.subtract(days=min_d.day_of_week().value - 1)
     end = max_d.add(days=7 - max_d.day_of_week().value)
-    num_weeks = (end.py_date() - start.py_date()).days // 7 + 1
+    num_weeks = (end.to_stdlib() - start.to_stdlib()).days // 7 + 1
 
     z: list[list[int]] = [[0] * num_weeks for _ in range(7)]
     hover: list[list[str]] = [[""] * num_weeks for _ in range(7)]
@@ -263,9 +258,9 @@ def _build_daily_calendar(
         if ym != prev_ym:
             prev_ym = ym
             month_ticks.append(week_idx)
-            label = monday.py_date().strftime("%b")
+            label = monday.format("MMM")
             if monday.year != prev_year:
-                label = monday.py_date().strftime("%b '%y")
+                label = monday.format("MMM ''YY")
                 prev_year = monday.year
             month_labels.append(label)
 
@@ -365,8 +360,8 @@ def _build_weekly_calendar(
     z: list[list[int]] = []
     hover: list[list[str]] = []
 
-    today_iso = whenever.ZonedDateTime.now(tz).date().py_date().isocalendar()
-    today_yw = (today_iso[0], today_iso[1])
+    today_iwd = whenever.ZonedDateTime.now(tz).date().iso_week_date()
+    today_yw = (today_iwd.year, today_iwd.week)
     _ip = in_progress_keys or set()
     _err = errored_keys or set()
 
@@ -481,7 +476,7 @@ def _build_monthly_calendar(
     z: list[list[int]] = []
     hover: list[list[str]] = []
 
-    today = whenever.ZonedDateTime.now(tz).date().py_date()
+    today = whenever.ZonedDateTime.now(tz).date()
     today_ym = (today.year, today.month)
     _ip = in_progress_keys or set()
     _err = errored_keys or set()
@@ -553,8 +548,8 @@ def _build_hourly_calendar(
     expected: dict[tuple[date, int], str] = {}
     for key in expected_keys:
         try:
-            parsed = datetime.strptime(key, _HOURLY_FMT)  # noqa: DTZ007
-            expected[(parsed.date(), parsed.hour)] = key
+            parsed_d = date.fromisoformat(key[:10])
+            expected[(parsed_d, int(key[11:]))] = key
         except ValueError:
             continue
 
@@ -564,8 +559,8 @@ def _build_hourly_calendar(
     completed_parsed: set[tuple[date, int]] = set()
     for key in completed_keys:
         try:
-            parsed = datetime.strptime(key, _HOURLY_FMT)  # noqa: DTZ007
-            completed_parsed.add((parsed.date(), parsed.hour))
+            parsed_d = date.fromisoformat(key[:10])
+            completed_parsed.add((parsed_d, int(key[11:])))
         except ValueError:
             continue
 

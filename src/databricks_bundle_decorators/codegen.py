@@ -112,7 +112,7 @@ def generate_resources(
                     "python_wheel_task": PythonWheelTask(
                         package_name=package_name,
                         entry_point="dbxdec-run",
-                        named_parameters=named_params,  # type: ignore[arg-type]
+                        named_parameters=named_params,  # ty: ignore[invalid-argument-type]
                     ),
                     **task_sdk_config,
                 }
@@ -138,7 +138,7 @@ def generate_resources(
 
                 outer_task_obj = Task(
                     task_key=task_key,
-                    depends_on=depends_on,
+                    depends_on=depends_on,  # ty: ignore[invalid-argument-type]
                     for_each_task=for_each,
                 )
                 tasks.append(outer_task_obj)
@@ -153,7 +153,7 @@ def generate_resources(
                     "python_wheel_task": PythonWheelTask(
                         package_name=package_name,
                         entry_point="dbxdec-run",
-                        named_parameters=named_params,  # type: ignore[arg-type]  # SDK Variable wrappers
+                        named_parameters=named_params,  # SDK Variable wrappers  # ty: ignore[invalid-argument-type]
                     ),
                     **task_sdk_config,
                 }
@@ -169,7 +169,9 @@ def generate_resources(
             job_clusters.append(
                 JobCluster(
                     job_cluster_key=job_meta.cluster.name,
-                    new_cluster=ClusterSpec.from_dict(job_meta.cluster.spec),  # type: ignore[arg-type]  # typed as ClusterSpecDict
+                    new_cluster=ClusterSpec.from_dict(
+                        job_meta.cluster.spec  # ty: ignore[invalid-argument-type]
+                    ),  # typed as ClusterSpecDict
                 )
             )
 
@@ -189,9 +191,9 @@ def generate_resources(
 
         job_obj = Job(
             name=job_name,
-            tasks=tasks,  # type: ignore[arg-type]  # SDK Variable wrappers
-            parameters=parameters,
-            job_clusters=job_clusters,  # type: ignore[arg-type]  # SDK Variable wrappers
+            tasks=tasks,  # SDK Variable wrappers  # ty: ignore[invalid-argument-type]
+            parameters=parameters,  # ty: ignore[invalid-argument-type]
+            job_clusters=job_clusters,  # SDK Variable wrappers  # ty: ignore[invalid-argument-type]
             **job_meta.sdk_config,
         )
         jobs[job_name] = job_obj
