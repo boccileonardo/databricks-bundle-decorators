@@ -14,8 +14,7 @@ details.
 ## Quick start
 
 ```python
-from databricks_bundle_decorators import job, task
-from databricks_bundle_decorators.backfill import DailyBackfill, get_backfill_key
+from databricks_bundle_decorators import job, task, DailyBackfill, get_backfill_key
 from databricks_bundle_decorators.io_managers import PolarsParquetIoManager
 
 io = PolarsParquetIoManager(
@@ -177,7 +176,7 @@ Two helpers are available inside task functions:
 - **`get_run_logical_date()`** — parses the key as an ISO-8601 `datetime`. Use for time-based backfills only.
 
 ```python
-from databricks_bundle_decorators.backfill import get_backfill_key, get_run_logical_date
+from databricks_bundle_decorators import get_backfill_key, get_run_logical_date
 
 key = get_backfill_key()          # "2024-01-15"
 dt  = get_run_logical_date()      # datetime(2024, 1, 15, tzinfo=UTC)
@@ -196,7 +195,7 @@ Attach a `BackfillDef` to `@job(backfill=...)` to enable the
 backfill CLI:
 
 ```python
-from databricks_bundle_decorators.backfill import DailyBackfill
+from databricks_bundle_decorators import DailyBackfill
 
 @job(backfill=DailyBackfill(start_date="2024-01-01"))
 def my_pipeline():
