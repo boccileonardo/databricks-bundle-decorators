@@ -24,6 +24,10 @@ from databricks_bundle_decorators.decorators import job, task
 from databricks_bundle_decorators.registry import reset_registries
 
 
+def _raise_import_error(name: str) -> None:
+    raise ImportError(name)
+
+
 class TestReadPyproject:
     def test_reads_valid_toml(self, tmp_path: Path):
         (tmp_path / "pyproject.toml").write_text(
@@ -217,6 +221,76 @@ class TestCmdInit:
         yaml_content = (tmp_path / "databricks.yaml").read_text()
         assert "artifacts" in yaml_content
 
+    def test_dashboard_flag_creates_app_files(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        _cmd_init(dashboard=True)
+
+        # app/ directory files
+        assert (tmp_path / "app" / "app.py").exists()
+        assert (tmp_path / "app" / "app.yaml").exists()
+        assert (tmp_path / "app" / "requirements.txt").exists()
+
+        # app.py imports the user's pipelines
+        app_py = (tmp_path / "app" / "app.py").read_text()
+        assert "import test_project.pipelines" in app_py
+        assert "run_app" in app_py
+
+        # requirements.txt references the package
+        reqs = (tmp_path / "app" / "requirements.txt").read_text()
+        assert "test_project" in reqs
+        assert "databricks-bundle-decorators[app]" in reqs
+
+    def test_dashboard_flag_uses_app_resources_template(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        _cmd_init(dashboard=True)
+
+        resources_content = (tmp_path / "resources" / "__init__.py").read_text()
+        assert "generate_app_resource" in resources_content
+        assert "test-project-observability" in resources_content
+
+    def test_dashboard_flag_without_extra_exits(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        # Hide the dash module to simulate missing extra
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.importlib.import_module",
+            _raise_import_error,
+        )
+
+        with pytest.raises(SystemExit):
+            _cmd_init(dashboard=True)
+
+    def test_default_init_no_app_files(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        _cmd_init()
+
+        assert not (tmp_path / "app").exists()
+        resources_content = (tmp_path / "resources" / "__init__.py").read_text()
+        assert "generate_app_resource" not in resources_content
+
 
 class TestMainCli:
     def test_init_subcommand(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -244,6 +318,19 @@ class TestMainCli:
             tmp_path / "src" / "test_project" / "pipelines" / "example.py"
         ).read_text()
         assert "libraries=[]" in content
+
+    def test_init_dashboard_subcommand(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """main() dispatches the init --dashboard subcommand."""
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["dbxdec", "init", "--dashboard"])
+
+        main()
+
+        assert (tmp_path / "app" / "app.py").exists()
+        assert (tmp_path / "app" / "app.yaml").exists()
 
     def test_no_subcommand_exits(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(sys, "argv", ["dbxdec"])

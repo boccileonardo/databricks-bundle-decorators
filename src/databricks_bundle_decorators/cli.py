@@ -25,6 +25,11 @@ from databricks_bundle_decorators.dashboard import APP_TEMPLATE
 from databricks_bundle_decorators.discovery import discover_pipelines
 from databricks_bundle_decorators.registry import _JOB_REGISTRY
 
+# Lazy-imported when --dashboard is used:
+# from databricks_bundle_decorators.app._template import (
+#     APP_PY_TEMPLATE, APP_YAML_TEMPLATE, REQUIREMENTS_TXT_TEMPLATE,
+# )
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
@@ -96,6 +101,34 @@ def load_resources(bundle: Bundle) -> Resources:
     resources = Resources()
     for key, job_resource in generate_resources().items():
         resources.add_resource(key, job_resource)
+    return resources
+'''
+
+_RESOURCES_INIT_WITH_APP = '''\
+"""Resource loader for ``databricks bundle deploy``.
+
+Referenced from ``python.resources`` in ``databricks.yaml``::
+
+    python:
+      venv_path: .venv
+      resources:
+        - 'resources:load_resources'
+"""
+
+from databricks.bundles.core import Bundle, Resources
+
+
+def load_resources(bundle: Bundle) -> Resources:
+    """Entry-point called by ``databricks bundle deploy``."""
+    import {package_name}.pipelines  # noqa: F401 - triggers decorator registration
+    from databricks_bundle_decorators.app import generate_app_resource
+    from databricks_bundle_decorators.codegen import generate_resources
+
+    resources = Resources()
+    for key, job_resource in generate_resources().items():
+        resources.add_resource(key, job_resource)
+    for key, app_resource in generate_app_resource("{app_name}").items():
+        resources.add_resource(key, app_resource)
     return resources
 '''
 
@@ -347,8 +380,20 @@ def _add_entry_point_to_pyproject(cwd: Path, package_name: str) -> bool:
 # --- Init command ----------------------------------------------------------
 
 
-def _cmd_init(*, docker: bool = False) -> None:
+def _cmd_init(*, docker: bool = False, dashboard: bool = False) -> None:
     """Scaffold a new databricks-bundle-decorators pipeline project."""
+    if dashboard:
+        try:
+            importlib.import_module("dash")
+        except ImportError:
+            print(
+                "Error: dash is not installed. "
+                "Install the app extras first:\n\n"
+                "    uv add databricks-bundle-decorators[app]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     cwd = Path.cwd()
     pyproject = _read_pyproject(cwd)
     package_name = _detect_package_name(pyproject)
@@ -367,10 +412,19 @@ def _cmd_init(*, docker: bool = False) -> None:
         created.append(str(path.relative_to(cwd)))
 
     # 1. resources/__init__.py
-    _write(
-        cwd / "resources" / "__init__.py",
-        _RESOURCES_INIT.format(package_name=package_name),
-    )
+    if dashboard:
+        app_name = f"{project_name}-observability"
+        _write(
+            cwd / "resources" / "__init__.py",
+            _RESOURCES_INIT_WITH_APP.format(
+                package_name=package_name, app_name=app_name
+            ),
+        )
+    else:
+        _write(
+            cwd / "resources" / "__init__.py",
+            _RESOURCES_INIT.format(package_name=package_name),
+        )
 
     # 2. pipelines/__init__.py  (auto-discovery)
     _write(pkg_dir / "pipelines" / "__init__.py", _PIPELINES_INIT)
@@ -392,6 +446,24 @@ def _cmd_init(*, docker: bool = False) -> None:
 
     # 5. Ensure package __init__.py exists
     _write(pkg_dir / "__init__.py", "")
+
+    # 6. Dashboard app files (when --dashboard is used)
+    if dashboard:
+        from databricks_bundle_decorators.app._template import (  # noqa: PLC0415
+            APP_PY_TEMPLATE,
+            APP_YAML_TEMPLATE,
+            REQUIREMENTS_TXT_TEMPLATE,
+        )
+
+        _write(
+            cwd / "app" / "app.py",
+            APP_PY_TEMPLATE.format(package_name=package_name),
+        )
+        _write(cwd / "app" / "app.yaml", APP_YAML_TEMPLATE)
+        _write(
+            cwd / "app" / "requirements.txt",
+            REQUIREMENTS_TXT_TEMPLATE.format(package_name=package_name),
+        )
 
     # --- Summary -----------------------------------------------------------
     print()
@@ -797,9 +869,17 @@ def init(
             "instead of uploaded as a wheel.",
         ),
     ] = False,
+    dashboard: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            help="Scaffold a Databricks App observability dashboard "
+            "under app/. Requires the [app] extra "
+            "(uv add databricks-bundle-decorators[app]).",
+        ),
+    ] = False,
 ) -> None:
     """Scaffold a new databricks-bundle-decorators pipeline project."""
-    _cmd_init(docker=docker)
+    _cmd_init(docker=docker, dashboard=dashboard)
 
 
 @app.command("backfill")
