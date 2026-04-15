@@ -172,6 +172,20 @@ def generate_app_config_yaml(
             lines.append(f'            id: "{res["job"]["id"]}"')
             lines.append(f"            permission: {res['job']['permission']}")
 
+    # Grant the app SP permission on each job so that
+    # ``databricks bundle deploy`` doesn't wipe app-granted
+    # permissions.  See https://github.com/databricks/cli/issues/4309
+    sp_ref = f"${{resources.apps.{resource_key}.service_principal_client_id}}"
+    job_names = sorted(_JOB_REGISTRY.keys())
+    if job_names:
+        lines.append("")
+        lines.append("  jobs:")
+        for job_name in job_names:
+            lines.append(f"    {job_name}:")
+            lines.append("      permissions:")
+            lines.append(f"        - level: {permission}")
+            lines.append(f'          service_principal_name: "{sp_ref}"')
+
     lines.append("")  # trailing newline
     return "\n".join(lines)
 
