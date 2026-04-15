@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -15,8 +14,7 @@ from databricks_bundle_decorators.app._codegen import (
     sync_registry_json,
 )
 from databricks_bundle_decorators.app._fetch import (
-    _JOB_ENV_PREFIX,
-    resolve_job_ids_from_env,
+    resolve_job_ids_from_sdk,
     resolve_workspace_url,
 )
 from databricks_bundle_decorators.backfill import (
@@ -37,44 +35,23 @@ from databricks_bundle_decorators.registry import (
 )
 
 
-class TestResolveJobIdsFromEnv:
-    """Tests for resolve_job_ids_from_env."""
+class TestResolveJobIdsFromSdk:
+    """Tests for resolve_job_ids_from_sdk."""
 
-    def setup_method(self) -> None:
-        reset_registries()
+    def test_returns_empty_when_no_app_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DATABRICKS_APP_NAME", raising=False)
 
-    def test_reads_dbxdec_job_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DBXDEC_JOB_ETL_DAILY", "12345")
-        monkeypatch.setenv("DBXDEC_JOB_BACKFILL", "67890")
+        result = resolve_job_ids_from_sdk()
 
-        result = resolve_job_ids_from_env()
+        assert result == {}
 
-        assert result == {"etl_daily": 12345, "backfill": 67890}
-
-    def test_ignores_non_dbxdec_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DBXDEC_JOB_MY_JOB", "111")
-        monkeypatch.setenv("SOME_OTHER_VAR", "222")
-
-        result = resolve_job_ids_from_env()
-
-        assert result == {"my_job": 111}
-        assert "SOME_OTHER_VAR" not in result
-
-    def test_skips_non_numeric_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DBXDEC_JOB_GOOD", "999")
-        monkeypatch.setenv("DBXDEC_JOB_BAD", "not_a_number")
-
-        result = resolve_job_ids_from_env()
-
-        assert result == {"good": 999}
-
-    def test_empty_when_no_dbxdec_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Ensure no DBXDEC_JOB_* vars exist
-        for key in list(os.environ):
-            if key.startswith(_JOB_ENV_PREFIX):
-                monkeypatch.delenv(key)
-
-        result = resolve_job_ids_from_env()
+    def test_returns_empty_on_sdk_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATABRICKS_APP_NAME", "my-app")
+        # SDK import will fail or WorkspaceClient will fail without
+        # proper credentials — the function should catch and return {}
+        result = resolve_job_ids_from_sdk()
 
         assert result == {}
 
@@ -155,12 +132,8 @@ class TestGenerateAppResource:
         assert "Job: backfill" in job_names
         assert "Job: etl_daily" in job_names
 
-        # Check env vars
-        env = app_def["config"]["env"]
-        assert len(env) == 2
-        env_names = {e["name"] for e in env}
-        assert "DBXDEC_JOB_BACKFILL" in env_names
-        assert "DBXDEC_JOB_ETL_DAILY" in env_names
+        # No env in bundle config — env vars live in app.yaml
+        assert "env" not in app_def["config"]
 
     def test_job_resource_uses_interpolation(self) -> None:
         _JOB_REGISTRY["my_job"] = JobMeta(
@@ -206,21 +179,7 @@ class TestGenerateAppResource:
 
         app_def = result["test_app"]
         assert app_def["resources"] == []
-        assert app_def["config"]["env"] == []
-
-    def test_env_value_uses_job_id_interpolation(self) -> None:
-        _JOB_REGISTRY["etl_daily"] = JobMeta(
-            fn=_dummy_fn,
-            name="etl_daily",
-            dag={},
-        )
-
-        result = generate_app_resource("test-app")
-
-        app_def = result["test_app"]
-        env_entry = app_def["config"]["env"][0]
-        assert env_entry["name"] == "DBXDEC_JOB_ETL_DAILY"
-        assert env_entry["value"] == "${resources.jobs.etl_daily.id}"
+        assert "env" not in app_def["config"]
 
 
 class TestGenerateAppConfigYaml:
@@ -252,9 +211,27 @@ class TestGenerateAppConfigYaml:
 
         yaml_text = generate_app_config_yaml("my-app")
 
-        assert "DBXDEC_JOB_ETL_DAILY" in yaml_text
         assert "etl-daily" in yaml_text
         assert "${resources.jobs.etl_daily.id}" in yaml_text
+
+    def test_yaml_has_no_job_permissions_section(self) -> None:
+        """Job permissions are handled in codegen, not in the YAML."""
+        _JOB_REGISTRY["etl_daily"] = JobMeta(
+            fn=_dummy_fn,
+            name="etl_daily",
+            dag={},
+        )
+        _JOB_REGISTRY["backfill"] = JobMeta(
+            fn=_dummy_fn,
+            name="backfill",
+            dag={},
+        )
+
+        yaml_text = generate_app_config_yaml("my-app")
+
+        # YAML should NOT contain a jobs section — permissions are
+        # injected via generate_resources(app_resource_key=...) instead
+        assert "  jobs:" not in yaml_text
 
     def test_empty_registry_no_env_or_resources(self) -> None:
         yaml_text = generate_app_config_yaml("test-app")
@@ -357,11 +334,12 @@ class TestGenerateRegistryJson:
         result = json.loads(generate_registry_json())
         assert result == {}
 
-    def test_jobs_without_backfill_excluded(self) -> None:
+    def test_jobs_without_backfill_included_as_null(self) -> None:
         _JOB_REGISTRY["no_backfill"] = JobMeta(fn=_dummy_fn, name="no_backfill", dag={})
 
         result = json.loads(generate_registry_json())
-        assert result == {}
+        assert "no_backfill" in result
+        assert result["no_backfill"] is None
 
     def test_daily_backfill_serialized(self) -> None:
         _JOB_REGISTRY["etl_daily"] = JobMeta(
@@ -405,7 +383,8 @@ class TestGenerateRegistryJson:
         _JOB_REGISTRY["job_no_bf"] = JobMeta(fn=_dummy_fn, name="job_no_bf", dag={})
 
         result = json.loads(generate_registry_json())
-        assert set(result.keys()) == {"job_a", "job_b"}
+        assert set(result.keys()) == {"job_a", "job_b", "job_no_bf"}
+        assert result["job_no_bf"] is None
 
     def test_round_trip_preserves_keys(self) -> None:
         bf = DailyBackfill(start_date="2024-01-01", end_date="2024-01-05")

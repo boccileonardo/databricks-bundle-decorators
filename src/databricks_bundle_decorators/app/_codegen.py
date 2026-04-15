@@ -2,8 +2,8 @@
 
 Reads the job registry and produces the ``app`` resource block that
 wires each job as an app resource with ``CAN_VIEW`` permission.
-Environment variables are emitted so the app can discover job IDs
-at runtime via ``DBXDEC_JOB_*``.
+Job IDs are resolved at runtime via the Databricks SDK
+(``WorkspaceClient().apps.get()``).
 
 .. note:: **SDK blocker — YAML-only approach**
 
@@ -43,9 +43,8 @@ def generate_app_resource(
 
     The returned dictionary can be merged into the bundle's
     ``resources.apps`` section.  It declares each registered job as
-    an app resource and emits ``DBXDEC_JOB_<name>`` environment
-    variables via ``valueFrom`` so the app can discover job IDs at
-    runtime.
+    an app resource so the app can discover job IDs at runtime via
+    the SDK (``WorkspaceClient().apps.get()``).
 
     Parameters
     ----------
@@ -75,7 +74,6 @@ def generate_app_resource(
         # Merge into your bundle config alongside generate_resources()
     """
     resources: list[dict[str, Any]] = []
-    env: list[dict[str, Any]] = []
 
     for job_name in sorted(_JOB_REGISTRY.keys()):
         # Resource name for the app resource binding (max 30 chars)
@@ -92,15 +90,6 @@ def generate_app_resource(
             }
         )
 
-        # Environment variable so the app discovers the job ID
-        env_var_name = f"DBXDEC_JOB_{job_name.upper()}"
-        env.append(
-            {
-                "name": env_var_name,
-                "value": f"${{resources.jobs.{job_name}.id}}",
-            }
-        )
-
     # Sanitize app_name for use as a resource key
     resource_key = app_name.replace("-", "_")
 
@@ -111,7 +100,6 @@ def generate_app_resource(
             "source_code_path": source_code_path,
             "config": {
                 "command": ["python", "app.py"],
-                "env": env,
             },
             "resources": resources,
         }
@@ -175,13 +163,6 @@ def generate_app_config_yaml(
         '        command: ["python", "app.py"]',
     ]
 
-    if definition["config"]["env"]:
-        lines.append("        env:")
-        for env_item in definition["config"]["env"]:
-            lines.append(f"          - name: {env_item['name']}")
-            value = env_item["value"]
-            lines.append(f'            value: "{value}"')
-
     if definition["resources"]:
         lines.append("      resources:")
         for res in definition["resources"]:
@@ -196,24 +177,29 @@ def generate_app_config_yaml(
 
 
 def generate_registry_json() -> str:
-    """Serialize backfill metadata from the job registry to JSON.
+    """Serialize job and backfill metadata from the job registry to JSON.
 
     The returned string is written to ``app/registry.json`` so the
-    Databricks App can load backfill definitions without importing
-    the pipeline package (which may have non-public dependencies).
+    Databricks App can load job names and backfill definitions without
+    importing the pipeline package (which may have non-public
+    dependencies).
 
-    Only jobs that have a `backfill` definition are included.
+    All registered jobs are included.  Jobs without a backfill
+    definition have a ``null`` value; those with one have their
+    serialised backfill definition.
 
     Returns
     -------
     str
         A pretty-printed JSON string mapping job names to their
-        serialised backfill definitions.
+        serialised backfill definitions (or ``null``).
     """
     registry: dict[str, Any] = {}
     for name, meta in sorted(_JOB_REGISTRY.items()):
         if meta.backfill is not None:
             registry[name] = json.loads(_serialize_backfill_tag(meta.backfill))
+        else:
+            registry[name] = None
     return json.dumps(registry, indent=2) + "\n"
 
 

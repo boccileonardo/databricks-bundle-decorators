@@ -684,13 +684,6 @@ gcp = [
     { name = "fsspec" },
     { name = "gcsfs" },
 ]
-observability = [
-    { name = "dash" },
-    { name = "dash-ag-grid" },
-    { name = "dash-bootstrap-components" },
-    { name = "plotly" },
-    { name = "polars" },
-]
 polars = [
     { name = "polars" },
 ]
@@ -731,11 +724,8 @@ docs = [
 requires-dist = [
     { name = "adlfs", marker = "extra == 'azure'" },
     { name = "dash", marker = "extra == 'app'", specifier = ">=2.14" },
-    { name = "dash", marker = "extra == 'observability'", specifier = ">=2.14" },
     { name = "dash-ag-grid", marker = "extra == 'app'", specifier = ">=31" },
-    { name = "dash-ag-grid", marker = "extra == 'observability'", specifier = ">=31" },
     { name = "dash-bootstrap-components", marker = "extra == 'app'", specifier = ">=1.5" },
-    { name = "dash-bootstrap-components", marker = "extra == 'observability'", specifier = ">=1.5" },
     { name = "databricks-bundles", specifier = ">=0.275" },
     { name = "databricks-sdk", marker = "extra == 'app'" },
     { name = "deltalake", marker = "extra == 'polars-delta'" },
@@ -744,15 +734,13 @@ requires-dist = [
     { name = "fsspec", marker = "extra == 'gcp'" },
     { name = "gcsfs", marker = "extra == 'gcp'" },
     { name = "plotly", marker = "extra == 'app'", specifier = ">=5.18" },
-    { name = "plotly", marker = "extra == 'observability'", specifier = ">=5.18" },
-    { name = "polars", marker = "extra == 'observability'" },
     { name = "polars", marker = "extra == 'polars'" },
     { name = "polars", marker = "extra == 'polars-delta'" },
     { name = "s3fs", marker = "extra == 'aws'" },
     { name = "typer", specifier = ">=0.16" },
     { name = "whenever", specifier = ">=0.10" },
 ]
-provides-extras = ["app", "aws", "azure", "gcp", "observability", "polars", "polars-delta"]
+provides-extras = ["app", "aws", "azure", "gcp", "polars", "polars-delta"]
 
 [package.metadata.requires-dev]
 dev = [

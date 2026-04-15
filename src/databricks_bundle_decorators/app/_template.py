@@ -1,21 +1,14 @@
 """App template scaffolding for ``dbxdec init --dashboard``.
 
-Provides the ``app.yaml``, ``app.py``, and ``pyproject.toml``
+Provides the ``app.py``, ``app.yaml``, and ``pyproject.toml``
 templates that are written to the ``./app`` directory.
 """
 
 from __future__ import annotations
 
-#: Template for ``app.yaml`` — the Databricks App runtime config.
-#: The ``env`` section and ``command`` are populated by
-#: ``generate_app_resource`` in the ``databricks.yml``, so this
-#: file just needs the basics.
+#: Template for ``app.yaml`` — read by the Databricks Apps runtime.
+#: Job IDs are resolved via the SDK at runtime, not via env vars.
 APP_YAML_TEMPLATE = """\
-# Databricks App configuration for the observability dashboard.
-# The command and env vars are managed by the bundle resource
-# definition (see databricks.yml).  This file provides defaults
-# for local development.
-
 command:
   - python
   - app.py

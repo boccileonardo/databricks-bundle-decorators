@@ -1,8 +1,13 @@
-# Databricks App Dashboard
+# Observability Dashboard
 
-Deploy the [observability dashboard](observability.md) as a native
+A Dash-based dashboard deployed as a native
 [Databricks App](https://docs.databricks.com/aws/en/dev-tools/databricks-apps)
 — accessible to your team via a browser, with no local setup required.
+
+The dashboard shows job KPIs and backfill completeness for all jobs
+deployed from the current bundle.  For run history, task DAGs, and
+task-level details, the dashboard links directly to the Databricks
+workspace UI.
 
 Authentication is handled automatically via the service principal that
 Databricks provisions for each app.
@@ -31,8 +36,8 @@ The resource key is printed during `init` and lives in
 | `app/app.yaml` | App runtime configuration |
 | `app/pyproject.toml` | Dependencies (`>=3.12`) |
 | `app/uv.lock` | Lock file (tells Databricks Apps to use `uv`) |
-| `app/registry.json` | Serialised backfill definitions |
-| `resources/app.yml` | Bundle app resource (env vars, permissions) |
+| `app/registry.json` | Serialised job list and backfill definitions |
+| `resources/app.yml` | Bundle app resource (resource bindings, permissions) |
 
 ## Updating after job changes
 
@@ -84,10 +89,11 @@ Run the app locally from the `app/` directory:
 
 ```bash
 cd app
-DBXDEC_JOB_MY_JOB=<job_id> databricks apps run-local --prepare-environment
+DATABRICKS_APP_NAME=<app-name> databricks apps run-local --prepare-environment
 ```
 
-Set `DBXDEC_JOB_*` env vars to point at deployed jobs.
+The app resolves job IDs via `WorkspaceClient().apps.get()`, so
+`DATABRICKS_APP_NAME` must be set to your deployed app name.
 
 ## Customization
 
@@ -112,11 +118,33 @@ source_code_path: ./observability
 
 ## Dashboard pages
 
-Same pages as the [local dashboard](observability.md#dashboard-pages):
+- **Overview** — KPI cards (registered jobs, deployed count, total runs,
+  success rate, failures, average duration) and a job table with status,
+  run counts, and backfill completeness.  Job names link to the
+  Databricks workspace when available.
+- **Backfills** — summary table of backfill completeness across all jobs.
+  Click a job name to drill down.
+- **Backfill Detail** (`/backfills/<name>`) — per-job completeness
+  percentage, heatmap with date-range picker, and list of missing keys.
 
-- **Overview** — KPI cards, job table with workspace links.
-- **Backfills** — completeness grid with status squares.
-- **Backfill Detail** — per-job heatmap with date-range picker.
+Each backfill type gets a dedicated visualization:
+
+| Backfill type | Visualization |
+|---------------|---------------|
+| `DailyBackfill` | GitHub-style calendar heatmap (weekday rows × week columns) |
+| `WeeklyBackfill` | Year × week grid (W01–W53) |
+| `MonthlyBackfill` | Year × month grid (Jan–Dec) |
+| `HourlyBackfill` | Date × hour grid (00–23) |
+| `StaticBackfill` | Single-row partition grid |
+
+| Color | Meaning |
+|-------|----------|
+| 🟩 Green | Completed |
+| 🟦 Blue | In progress |
+| 🟥 Red | Failed |
+| 🟨 Amber | Missing |
+| Light blue | Not started (future) |
+| Gray | Not in range |
 
 ## Known limitations
 

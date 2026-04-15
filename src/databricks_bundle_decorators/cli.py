@@ -21,7 +21,6 @@ from typing import Annotated
 import typer
 
 from databricks_bundle_decorators.backfill import BACKFILL_KEY_PARAM, BackfillDef
-from databricks_bundle_decorators.dashboard import APP_TEMPLATE
 from databricks_bundle_decorators.discovery import discover_pipelines
 from databricks_bundle_decorators.registry import _JOB_REGISTRY
 
@@ -94,7 +93,7 @@ def load_resources(bundle: Bundle) -> Resources:
     from databricks_bundle_decorators.codegen import generate_resources
 
     resources = Resources()
-    for key, job_resource in generate_resources().items():
+    for key, job_resource in generate_resources({generate_kwargs}).items():
         resources.add_resource(key, job_resource)
 
     # Keep app/registry.json in sync with backfill definitions
@@ -450,9 +449,17 @@ def _cmd_init(
         created.append(str(path.relative_to(cwd)))
 
     # 1. resources/__init__.py
+    if dashboard:
+        app_resource_key = f"{project_name}-observability".replace("-", "_")
+        generate_kwargs = f'app_resource_key="{app_resource_key}"'
+    else:
+        generate_kwargs = ""
     _write(
         cwd / "resources" / "__init__.py",
-        _RESOURCES_INIT.format(package_name=package_name),
+        _RESOURCES_INIT.format(
+            package_name=package_name,
+            generate_kwargs=generate_kwargs,
+        ),
     )
 
     # 2. pipelines/__init__.py  (auto-discovery)
@@ -494,7 +501,10 @@ def _cmd_init(
             cwd / "app" / "app.py",
             APP_PY_TEMPLATE,
         )
-        _write(cwd / "app" / "app.yaml", APP_YAML_TEMPLATE)
+        _write(
+            cwd / "app" / "app.yaml",
+            APP_YAML_TEMPLATE,
+        )
         _write(
             cwd / "app" / "pyproject.toml",
             APP_PYPROJECT_TEMPLATE,
@@ -1122,45 +1132,6 @@ def app_config(
     )
     for f in created:
         print(f"Generated: {f}")
-
-
-@app.command("dashboard")
-def dashboard() -> None:
-    """Launch the observability dashboard for all registered jobs.
-
-    Scaffolds ``observability/app.py`` on first run, then launches
-    the Dash server.  The dashboard uses the Databricks CLI for data
-    access — same credentials as bundle deploy, no additional auth
-    needed.
-
-    Requires the ``[observability]`` extra::
-
-        uv add databricks-bundle-decorators[observability]
-    """
-    try:
-        importlib.import_module("dash")
-    except ImportError:
-        print(
-            "Error: dash is not installed. "
-            "Install the observability extras:\n\n"
-            "    uv add databricks-bundle-decorators[observability]",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    cwd = Path.cwd()
-    pyproject = _read_pyproject(cwd)
-    package_name = _detect_package_name(pyproject)
-
-    app_path = Path("observability/app.py")
-    if not app_path.exists():
-        app_path.parent.mkdir(parents=True, exist_ok=True)
-        app_path.write_text(
-            APP_TEMPLATE.format(package_name=package_name, app_path=str(app_path))
-        )
-        print(f"Created: {app_path}")
-
-    sys.exit(subprocess.call([sys.executable, str(app_path)]))  # noqa: S603
 
 
 # --- Main ------------------------------------------------------------------

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from databricks_bundle_decorators.dashboard._data import (
+from databricks_bundle_decorators.app._data import (
     BackfillCoverage,
     JobOverview,
 )
