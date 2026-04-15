@@ -2,46 +2,54 @@
 
 Uses the Databricks Python SDK with credentials auto-injected by the
 Databricks Apps runtime (``DATABRICKS_CLIENT_ID`` /
-``DATABRICKS_CLIENT_SECRET``).  Job IDs are discovered from
-environment variables set by bundle app resource ``valueFrom``
-declarations.
+``DATABRICKS_CLIENT_SECRET``).  Job IDs are discovered from the app's
+resource bindings via ``WorkspaceClient().apps.get()``.
 """
 
 from __future__ import annotations
 
 import os
-import re
 
 from databricks_bundle_decorators.dashboard._data import RunInfo
 
-#: Environment variable prefix for job ID bindings.
-#: The codegen emits ``DBXDEC_JOB_<job_name>=<job_id>`` entries.
-_JOB_ENV_PREFIX = "DBXDEC_JOB_"
 
-#: Pattern to extract a clean job name from the env var suffix.
-_JOB_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+def resolve_job_ids_from_sdk() -> dict[str, int]:
+    """Look up job IDs from the app's resource bindings via the SDK.
 
-
-def resolve_job_ids_from_env() -> dict[str, int]:
-    """Discover job name → job ID mapping from environment variables.
-
-    The bundle codegen emits ``DBXDEC_JOB_<NAME>=<job_id>`` env vars
-    via ``valueFrom`` in the app resource definition.  This function
-    reads all matching env vars and returns the mapping.
+    Uses ``DATABRICKS_APP_NAME`` (set by the Databricks Apps runtime)
+    to query the app's own configuration and extract job resource
+    bindings.  Each resource binding for a job contains the resolved
+    job ID.
 
     Returns
     -------
     dict[str, int]
-        Mapping of job name to numeric job ID.
+        Mapping of job name (underscores) to numeric job ID.
+        Returns an empty dict if not running in a Databricks App
+        or if the SDK call fails.
     """
+    app_name = os.environ.get("DATABRICKS_APP_NAME")
+    if not app_name:
+        return {}
+
+    try:
+        from databricks.sdk import WorkspaceClient  # noqa: PLC0415
+
+        w = WorkspaceClient()
+        app = w.apps.get(name=app_name)
+    except Exception:  # noqa: BLE001
+        return {}
+
     mapping: dict[str, int] = {}
-    for key, value in os.environ.items():
-        if key.startswith(_JOB_ENV_PREFIX):
-            job_name = key[len(_JOB_ENV_PREFIX) :].lower()
-            try:
-                mapping[job_name] = int(value)
-            except ValueError:
-                continue
+    for resource in app.resources or []:
+        if not hasattr(resource, "job") or resource.job is None:
+            continue
+        # Reverse the name transformation: hyphens → underscores
+        job_name = resource.name.replace("-", "_")
+        try:
+            mapping[job_name] = int(resource.job.id)
+        except (ValueError, TypeError, AttributeError):
+            continue
     return mapping
 
 

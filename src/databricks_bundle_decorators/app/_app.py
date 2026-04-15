@@ -1,9 +1,8 @@
 """Dash application entry point for the Databricks App dashboard.
 
-Discovers jobs from ``DBXDEC_JOB_*`` environment variables injected
-by the bundle app resource, fetches run data via the Databricks SDK,
-and reuses the existing dashboard UI components (pages, figures,
-compute logic).
+Discovers jobs from the app's resource bindings via the Databricks SDK,
+fetches run data, and reuses the existing dashboard UI components
+(pages, figures, compute logic).
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from typing import Any
 
 from databricks_bundle_decorators.app._fetch import (
     fetch_job_runs,
-    resolve_job_ids_from_env,
+    resolve_job_ids_from_sdk,
     resolve_workspace_url,
 )
 from databricks_bundle_decorators.backfill import BackfillDef, _deserialize_backfill_tag
@@ -37,6 +36,28 @@ from databricks_bundle_decorators.dashboard._pages import (
     _page_backfills,
     _page_overview,
 )
+
+
+def _load_registry() -> tuple[set[str], dict[str, BackfillDef]]:
+    """Load job names and backfill definitions from ``registry.json``.
+
+    Returns a set of all job names found in the registry and a dict
+    mapping job names to their backfill definitions (only for jobs
+    that have one).
+    """
+    all_jobs: set[str] = set()
+    backfill_defs: dict[str, BackfillDef] = {}
+    registry_path = Path(__file__).resolve().parent.parent.parent / "registry.json"
+    if not registry_path.exists():
+        # Also check relative to cwd (deployed app layout)
+        registry_path = Path("registry.json")
+    if registry_path.exists():
+        raw = json.loads(registry_path.read_text())
+        all_jobs.update(raw.keys())
+        for job_name, defn_dict in raw.items():
+            if defn_dict is not None:
+                backfill_defs[job_name] = _deserialize_backfill_tag(defn_dict)
+    return all_jobs, backfill_defs
 
 
 def run_app(
@@ -76,19 +97,8 @@ def run_app(
 
     from databricks_bundle_decorators.registry import _JOB_REGISTRY  # noqa: PLC0415
 
-    # Load backfill definitions from registry.json (generated at
-    # deploy time by ``dbxdec init --dashboard`` / ``dbxdec app-config``).
-    # This allows the app to show backfill data even when the pipeline
-    # package is not installed in the app runtime.
-    backfill_defs: dict[str, BackfillDef] = {}
-    registry_path = Path(__file__).resolve().parent.parent.parent / "registry.json"
-    if not registry_path.exists():
-        # Also check relative to cwd (deployed app layout)
-        registry_path = Path("registry.json")
-    if registry_path.exists():
-        raw = json.loads(registry_path.read_text())
-        for job_name, defn_dict in raw.items():
-            backfill_defs[job_name] = _deserialize_backfill_tag(defn_dict)
+    # Load job names and backfill definitions from registry.json
+    all_registry_jobs, backfill_defs = _load_registry()
 
     # Merge with live registry (if the pipeline package is imported,
     # the registry takes precedence).
@@ -96,23 +106,23 @@ def run_app(
         if meta.backfill is not None:
             backfill_defs[name] = meta.backfill
 
-    # Discover jobs from env vars
-    job_id_map = resolve_job_ids_from_env()
+    # Discover job IDs via SDK (app resource bindings)
+    job_id_map = resolve_job_ids_from_sdk()
     workspace_url = resolve_workspace_url()
 
-    # Use registry job names if populated, else fall back to env var names
-    # or backfill_defs (from registry.json).
+    # Use registry job names if populated, else fall back to
+    # registry.json, or SDK resource names.
     if _JOB_REGISTRY:
         job_names = sorted(_JOB_REGISTRY.keys())
+    elif all_registry_jobs:
+        job_names = sorted(all_registry_jobs)
     elif job_id_map:
         job_names = sorted(job_id_map.keys())
-    elif backfill_defs:
-        job_names = sorted(backfill_defs.keys())
     else:
         print(
             "Error: No jobs found. "
-            "Ensure DBXDEC_JOB_* env vars are set and/or your pipeline "
-            "package is imported before run_app().",
+            "Ensure the app has job resource bindings and/or "
+            "registry.json is deployed.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -127,10 +137,10 @@ def run_app(
     }
 
     def _refresh_data() -> None:
-        # Re-read env vars in case of redeployment
-        _cache["job_id_map"] = resolve_job_ids_from_env()
+        # Re-read job IDs in case of redeployment
+        jid_map = resolve_job_ids_from_sdk()
+        _cache["job_id_map"] = jid_map
         _cache["workspace_url"] = resolve_workspace_url()
-        jid_map = _cache["job_id_map"]
 
         all_runs: dict[str, list[RunInfo]] = {}
         overviews: list[JobOverview] = []

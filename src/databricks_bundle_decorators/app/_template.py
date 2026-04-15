@@ -1,12 +1,18 @@
 """App template scaffolding for ``dbxdec init --dashboard``.
 
-Provides the ``app.py`` and ``pyproject.toml`` templates that are
-written to the ``./app`` directory.  The ``app.yaml`` is generated
-dynamically by `generate_app_yaml` in ``_codegen.py`` so that it
-includes ``valueFrom`` env vars for each registered job.
+Provides the ``app.py``, ``app.yaml``, and ``pyproject.toml``
+templates that are written to the ``./app`` directory.
 """
 
 from __future__ import annotations
+
+#: Template for ``app.yaml`` — read by the Databricks Apps runtime.
+#: Job IDs are resolved via the SDK at runtime, not via env vars.
+APP_YAML_TEMPLATE = """\
+command:
+  - python
+  - app.py
+"""
 
 #: Template for ``app.py`` — the app entry point.
 APP_PY_TEMPLATE = """\

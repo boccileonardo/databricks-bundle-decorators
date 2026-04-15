@@ -31,8 +31,8 @@ The resource key is printed during `init` and lives in
 | `app/app.yaml` | App runtime configuration |
 | `app/pyproject.toml` | Dependencies (`>=3.12`) |
 | `app/uv.lock` | Lock file (tells Databricks Apps to use `uv`) |
-| `app/registry.json` | Serialised backfill definitions |
-| `resources/app.yml` | Bundle app resource (env vars, permissions) |
+| `app/registry.json` | Serialised job list and backfill definitions |
+| `resources/app.yml` | Bundle app resource (resource bindings, permissions) |
 
 ## Updating after job changes
 
@@ -84,10 +84,11 @@ Run the app locally from the `app/` directory:
 
 ```bash
 cd app
-DBXDEC_JOB_MY_JOB=<job_id> databricks apps run-local --prepare-environment
+DATABRICKS_APP_NAME=<app-name> databricks apps run-local --prepare-environment
 ```
 
-Set `DBXDEC_JOB_*` env vars to point at deployed jobs.
+The app resolves job IDs via `WorkspaceClient().apps.get()`, so
+`DATABRICKS_APP_NAME` must be set to your deployed app name.
 
 ## Customization
 
