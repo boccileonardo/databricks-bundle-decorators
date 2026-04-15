@@ -208,7 +208,7 @@ class TestGenerateAppResource:
         assert app_def["resources"] == []
         assert app_def["config"]["env"] == []
 
-    def test_env_value_from_matches_resource_name(self) -> None:
+    def test_env_value_uses_job_id_interpolation(self) -> None:
         _JOB_REGISTRY["etl_daily"] = JobMeta(
             fn=_dummy_fn,
             name="etl_daily",
@@ -218,10 +218,9 @@ class TestGenerateAppResource:
         result = generate_app_resource("test-app")
 
         app_def = result["test_app"]
-        resource_name = app_def["resources"][0]["name"]
-        env_value_from = app_def["config"]["env"][0]["value_from"]
-        assert resource_name == env_value_from
-        assert resource_name == "etl-daily"
+        env_entry = app_def["config"]["env"][0]
+        assert env_entry["name"] == "DBXDEC_JOB_ETL_DAILY"
+        assert env_entry["value"] == "${resources.jobs.etl_daily.id}"
 
 
 class TestGenerateAppConfigYaml:

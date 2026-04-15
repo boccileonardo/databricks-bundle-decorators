@@ -97,7 +97,7 @@ def generate_app_resource(
         env.append(
             {
                 "name": env_var_name,
-                "value_from": resource_name,
+                "value": f"${{resources.jobs.{job_name}.id}}",
             }
         )
 
@@ -179,7 +179,8 @@ def generate_app_config_yaml(
         lines.append("        env:")
         for env_item in definition["config"]["env"]:
             lines.append(f"          - name: {env_item['name']}")
-            lines.append(f"            value_from: {env_item['value_from']}")
+            value = env_item["value"]
+            lines.append(f'            value: "{value}"')
 
     if definition["resources"]:
         lines.append("      resources:")
