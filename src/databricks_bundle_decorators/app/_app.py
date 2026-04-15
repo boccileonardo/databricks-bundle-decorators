@@ -101,10 +101,13 @@ def run_app(
     workspace_url = resolve_workspace_url()
 
     # Use registry job names if populated, else fall back to env var names
+    # or backfill_defs (from registry.json).
     if _JOB_REGISTRY:
         job_names = sorted(_JOB_REGISTRY.keys())
     elif job_id_map:
         job_names = sorted(job_id_map.keys())
+    elif backfill_defs:
+        job_names = sorted(backfill_defs.keys())
     else:
         print(
             "Error: No jobs found. "

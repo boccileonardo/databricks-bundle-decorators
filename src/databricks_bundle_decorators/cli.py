@@ -392,6 +392,7 @@ def _generate_app_yml(
     """
     from databricks_bundle_decorators.app._codegen import (  # noqa: PLC0415
         generate_app_config_yaml,
+        generate_app_yaml,
         generate_registry_json,
     )
 
@@ -402,6 +403,13 @@ def _generate_app_yml(
     app_yml.write_text(yaml_content)
     if created is not None:
         created.append(str(app_yml.relative_to(cwd)))
+
+    # Write app.yaml with valueFrom env vars
+    app_yaml = cwd / "app" / "app.yaml"
+    app_yaml.parent.mkdir(parents=True, exist_ok=True)
+    app_yaml.write_text(generate_app_yaml())
+    if created is not None:
+        created.append(str(app_yaml.relative_to(cwd)))
 
     # Write backfill registry for the app
     registry_json = cwd / "app" / "registry.json"
@@ -487,14 +495,12 @@ def _cmd_init(
         from databricks_bundle_decorators.app._template import (  # noqa: PLC0415
             APP_PY_TEMPLATE,
             APP_PYPROJECT_TEMPLATE,
-            APP_YAML_TEMPLATE,
         )
 
         _write(
             cwd / "app" / "app.py",
             APP_PY_TEMPLATE,
         )
-        _write(cwd / "app" / "app.yaml", APP_YAML_TEMPLATE)
         _write(
             cwd / "app" / "pyproject.toml",
             APP_PYPROJECT_TEMPLATE,

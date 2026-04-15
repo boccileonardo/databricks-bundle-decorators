@@ -17,6 +17,9 @@ from databricks_bundle_decorators.app._codegen import (
     generate_app_resource as generate_app_resource,
 )
 from databricks_bundle_decorators.app._codegen import (
+    generate_app_yaml as generate_app_yaml,
+)
+from databricks_bundle_decorators.app._codegen import (
     generate_registry_json as generate_registry_json,
 )
 from databricks_bundle_decorators.app._codegen import (
@@ -36,6 +39,7 @@ __all__ = [
     "fetch_job_runs",
     "generate_app_config_yaml",
     "generate_app_resource",
+    "generate_app_yaml",
     "generate_registry_json",
     "resolve_job_ids_from_env",
     "resolve_workspace_url",
