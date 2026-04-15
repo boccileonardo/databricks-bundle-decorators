@@ -81,40 +81,45 @@ def fetch_job_runs(
     w = WorkspaceClient()
     runs: list[RunInfo] = []
 
-    for run in w.jobs.list_runs(job_id=job_id, limit=limit):
-        state = run.state
-        result_state = (
-            state.result_state.value if state and state.result_state else None
-        )
-        life_cycle_state = (
-            state.life_cycle_state.value if state and state.life_cycle_state else None
-        )
-        state_message = (state.state_message if state else None) or None
-
-        start_ms = run.start_time
-        end_ms = run.end_time
-        duration = None
-        if start_ms and end_ms:
-            duration = round((end_ms - start_ms) / 1000.0, 1)
-
-        backfill_key = None
-        for param in run.job_parameters or []:
-            if param.name == "backfill_key":
-                backfill_key = param.value
-                break
-
-        runs.append(
-            RunInfo(
-                run_id=run.run_id or 0,
-                result_state=result_state,
-                start_time_ms=start_ms,
-                end_time_ms=end_ms,
-                duration_seconds=duration,
-                backfill_key=backfill_key,
-                life_cycle_state=life_cycle_state,
-                state_message=state_message,
+    try:
+        for run in w.jobs.list_runs(job_id=job_id, limit=limit):
+            state = run.state
+            result_state = (
+                state.result_state.value if state and state.result_state else None
             )
-        )
+            life_cycle_state = (
+                state.life_cycle_state.value
+                if state and state.life_cycle_state
+                else None
+            )
+            state_message = (state.state_message if state else None) or None
+
+            start_ms = run.start_time
+            end_ms = run.end_time
+            duration = None
+            if start_ms and end_ms:
+                duration = round((end_ms - start_ms) / 1000.0, 1)
+
+            backfill_key = None
+            for param in run.job_parameters or []:
+                if param.name == "backfill_key":
+                    backfill_key = param.value
+                    break
+
+            runs.append(
+                RunInfo(
+                    run_id=run.run_id or 0,
+                    result_state=result_state,
+                    start_time_ms=start_ms,
+                    end_time_ms=end_ms,
+                    duration_seconds=duration,
+                    backfill_key=backfill_key,
+                    life_cycle_state=life_cycle_state,
+                    state_message=state_message,
+                )
+            )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[dbxdec] fetch_job_runs({job_id}) failed: {exc!r}", flush=True)
 
     return runs
 

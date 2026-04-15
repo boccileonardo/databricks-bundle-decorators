@@ -141,6 +141,7 @@ def run_app(
         jid_map = resolve_job_ids_from_sdk()
         _cache["job_id_map"] = jid_map
         _cache["workspace_url"] = resolve_workspace_url()
+        print(f"[dbxdec] job_id_map: {jid_map}", flush=True)
 
         all_runs: dict[str, list[RunInfo]] = {}
         overviews: list[JobOverview] = []
@@ -150,6 +151,10 @@ def run_app(
             bf = backfill_defs.get(name)
             job_id = jid_map.get(name)
             runs = fetch_job_runs(job_id) if job_id else []
+            print(
+                f"[dbxdec] {name}: job_id={job_id}, runs={len(runs)}",
+                flush=True,
+            )
             all_runs[name] = runs
 
             has_bf = bf is not None
