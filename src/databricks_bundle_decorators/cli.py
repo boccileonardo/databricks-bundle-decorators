@@ -94,7 +94,7 @@ def load_resources(bundle: Bundle) -> Resources:
     from databricks_bundle_decorators.codegen import generate_resources
 
     resources = Resources()
-    for key, job_resource in generate_resources().items():
+    for key, job_resource in generate_resources({generate_kwargs}).items():
         resources.add_resource(key, job_resource)
 
     # Keep app/registry.json in sync with backfill definitions
@@ -450,9 +450,17 @@ def _cmd_init(
         created.append(str(path.relative_to(cwd)))
 
     # 1. resources/__init__.py
+    if dashboard:
+        app_resource_key = f"{project_name}-observability".replace("-", "_")
+        generate_kwargs = f'app_resource_key="{app_resource_key}"'
+    else:
+        generate_kwargs = ""
     _write(
         cwd / "resources" / "__init__.py",
-        _RESOURCES_INIT.format(package_name=package_name),
+        _RESOURCES_INIT.format(
+            package_name=package_name,
+            generate_kwargs=generate_kwargs,
+        ),
     )
 
     # 2. pipelines/__init__.py  (auto-discovery)

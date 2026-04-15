@@ -281,9 +281,10 @@ class TestCmdInit:
         assert "apps:" in content
         assert "test-project-observability" in content
 
-        # resources/__init__.py should NOT have generate_app_resource
+        # resources/__init__.py should pass app_resource_key
         resources_init = (tmp_path / "resources" / "__init__.py").read_text()
         assert "generate_app_resource" not in resources_init
+        assert 'app_resource_key="test_project_observability"' in resources_init
 
     def test_dashboard_flag_databricks_yaml_has_include(
         self,

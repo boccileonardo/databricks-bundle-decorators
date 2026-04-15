@@ -214,7 +214,8 @@ class TestGenerateAppConfigYaml:
         assert "etl-daily" in yaml_text
         assert "${resources.jobs.etl_daily.id}" in yaml_text
 
-    def test_includes_job_permissions_for_app_sp(self) -> None:
+    def test_yaml_has_no_job_permissions_section(self) -> None:
+        """Job permissions are handled in codegen, not in the YAML."""
         _JOB_REGISTRY["etl_daily"] = JobMeta(
             fn=_dummy_fn,
             name="etl_daily",
@@ -228,29 +229,8 @@ class TestGenerateAppConfigYaml:
 
         yaml_text = generate_app_config_yaml("my-app")
 
-        # Job permissions section grants the app SP access
-        assert "  jobs:" in yaml_text
-        assert "    etl_daily:" in yaml_text
-        assert "    backfill:" in yaml_text
-        assert "      permissions:" in yaml_text
-        assert "        - level: CAN_VIEW" in yaml_text
-        sp_ref = "${resources.apps.my_app.service_principal_client_id}"
-        assert sp_ref in yaml_text
-
-    def test_job_permissions_use_custom_permission(self) -> None:
-        _JOB_REGISTRY["my_job"] = JobMeta(
-            fn=_dummy_fn,
-            name="my_job",
-            dag={},
-        )
-
-        yaml_text = generate_app_config_yaml("my-app", permission="CAN_MANAGE_RUN")
-
-        assert "        - level: CAN_MANAGE_RUN" in yaml_text
-
-    def test_empty_registry_no_job_permissions(self) -> None:
-        yaml_text = generate_app_config_yaml("test-app")
-
+        # YAML should NOT contain a jobs section — permissions are
+        # injected via generate_resources(app_resource_key=...) instead
         assert "  jobs:" not in yaml_text
 
     def test_empty_registry_no_env_or_resources(self) -> None:

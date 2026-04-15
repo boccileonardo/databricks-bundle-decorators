@@ -479,3 +479,59 @@ class TestBackfillTagCodegen:
         resources = generate_resources(package_name="test_pkg")
         tag = json.loads(resources["utc_job"].tags[BACKFILL_TAG])
         assert "tz" not in tag
+
+    def test_app_resource_key_adds_permissions(self):
+        """When app_resource_key is set, each Job gets a permission entry."""
+
+        @job
+        def my_job():
+            @task
+            def step():
+                pass
+
+            step()
+
+        resources = generate_resources(
+            package_name="test_pkg",
+            app_resource_key="my_app_observability",
+        )
+        perms = resources["my_job"].permissions
+        assert len(perms) == 1
+        perm = perms[0]
+        assert perm.level.value == "CAN_VIEW"
+        assert (
+            perm.service_principal_name.value
+            == "${resources.apps.my_app_observability.service_principal_client_id}"
+        )
+
+    def test_app_resource_key_custom_permission(self):
+        """app_permission overrides the default CAN_VIEW level."""
+
+        @job
+        def perm_job():
+            @task
+            def step():
+                pass
+
+            step()
+
+        resources = generate_resources(
+            package_name="test_pkg",
+            app_resource_key="my_app",
+            app_permission="CAN_MANAGE_RUN",
+        )
+        assert resources["perm_job"].permissions[0].level.value == "CAN_MANAGE_RUN"
+
+    def test_no_app_resource_key_no_permissions(self):
+        """Without app_resource_key, permissions list is empty."""
+
+        @job
+        def plain_job():
+            @task
+            def step():
+                pass
+
+            step()
+
+        resources = generate_resources(package_name="test_pkg")
+        assert resources["plain_job"].permissions == []

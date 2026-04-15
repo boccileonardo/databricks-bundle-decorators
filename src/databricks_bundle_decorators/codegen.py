@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from databricks.bundles.core._variable import Variable
 from databricks.bundles.jobs import (
     ClusterSpec,
     ForEachTask,
@@ -22,6 +23,8 @@ from databricks.bundles.jobs import (
     Task,
     TaskDependency,
 )
+from databricks.bundles.jobs._models.job_permission import JobPermission
+from databricks.bundles.jobs._models.job_permission_level import JobPermissionLevel
 
 from databricks_bundle_decorators.backfill import BACKFILL_TAG, _serialize_backfill_tag
 from databricks_bundle_decorators.registry import (
@@ -33,6 +36,8 @@ from databricks_bundle_decorators.registry import (
 def generate_resources(
     package_name: str = "databricks_bundle_decorators",
     default_libraries: list[object] | None = None,
+    app_resource_key: str | None = None,
+    app_permission: str = "CAN_VIEW",
 ) -> dict:
     """Build ``{resource_key: Job}`` from the global registries.
 
@@ -46,6 +51,18 @@ def generate_resources(
         ``libraries`` explicitly.  When ``None`` (the default), uses
         ``[Library(whl="dist/*.whl")]``.  Pass an empty list to suppress
         the default wheel library.
+    app_resource_key:
+        When set, each generated ``Job`` is given a ``permissions``
+        entry that grants the app's service principal ``CAN_VIEW``
+        (or the level specified by *app_permission*).  The value must
+        be the bundle resource key of the app (e.g.
+        ``"my_app_observability"``).  This works around
+        `databricks/cli#4309 <https://github.com/databricks/cli/issues/4309>`_
+        where ``bundle deploy`` wipes app-granted permissions.
+    app_permission:
+        Permission level to grant the app service principal.
+        Defaults to ``"CAN_VIEW"``.  Only used when
+        *app_resource_key* is set.
     """
     _default_libraries: list[object] | None = (
         [Library(whl="dist/*.whl")] if default_libraries is None else default_libraries
@@ -189,11 +206,27 @@ def generate_resources(
                 BACKFILL_TAG: _serialize_backfill_tag(job_meta.backfill),
             }
 
+        # ----- app permissions --------------------------------------------
+        # When an app resource key is set, grant the app's service
+        # principal permission on each job so that ``bundle deploy``
+        # preserves the ACL.  See https://github.com/databricks/cli/issues/4309
+        permissions: list[JobPermission] = []
+        if app_resource_key is not None:
+            sp_ref = Variable(
+                path=f"resources.apps.{app_resource_key}.service_principal_client_id",
+                type=str,
+            )
+            level = JobPermissionLevel(app_permission)
+            permissions.append(
+                JobPermission(level=level, service_principal_name=sp_ref)
+            )
+
         job_obj = Job(
             name=job_name,
             tasks=tasks,  # SDK Variable wrappers  # ty: ignore[invalid-argument-type]
             parameters=parameters,  # ty: ignore[invalid-argument-type]
             job_clusters=job_clusters,  # SDK Variable wrappers  # ty: ignore[invalid-argument-type]
+            permissions=permissions,  # ty: ignore[invalid-argument-type]
             **job_meta.sdk_config,
         )
         jobs[job_name] = job_obj
