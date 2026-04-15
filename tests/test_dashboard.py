@@ -1,43 +1,27 @@
-"""Tests for the observability dashboard (CLI + Dash approach)."""
+"""Tests for the observability dashboard UI components."""
 
 from __future__ import annotations
 
-import json
 from datetime import date, timedelta
-from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
 
 import pytest
 import whenever
 
-from databricks_bundle_decorators.backfill import (
-    DailyBackfill,
-    HourlyBackfill,
-    MonthlyBackfill,
-    StaticBackfill,
-    WeeklyBackfill,
-)
-from databricks_bundle_decorators.dashboard import (
-    APP_TEMPLATE,
+from databricks_bundle_decorators.app import (
     BackfillCoverage,
     JobOverview,
     RunInfo,
     build_job_overview,
     compute_backfill_coverage,
-    fetch_job_runs,
-    resolve_bundle_targets,
-    resolve_job_ids,
-    resolve_workspace_url,
 )
-from databricks_bundle_decorators.dashboard._compute import (
+from databricks_bundle_decorators.app._compute import (
     _backfill_kind,
     _effective_state,
     _filter_past_keys,
     _is_active,
     _is_terminal_failure,
 )
-from databricks_bundle_decorators.dashboard._display import (
+from databricks_bundle_decorators.app._display import (
     _SQ_COMPLETED,
     _SQ_FAILED,
     _SQ_MISSING,
@@ -45,14 +29,21 @@ from databricks_bundle_decorators.dashboard._display import (
     _fmt_duration,
     _overviews_to_records,
 )
-from databricks_bundle_decorators.dashboard._figures import (
+from databricks_bundle_decorators.app._figures import (
     _build_daily_calendar,
     _build_hourly_calendar,
     _build_monthly_calendar,
     _build_partition_grid,
     _build_weekly_calendar,
 )
-from databricks_bundle_decorators.dashboard._pages import _backfill_date_bounds
+from databricks_bundle_decorators.app._pages import _backfill_date_bounds
+from databricks_bundle_decorators.backfill import (
+    DailyBackfill,
+    HourlyBackfill,
+    MonthlyBackfill,
+    StaticBackfill,
+    WeeklyBackfill,
+)
 
 
 def _flatten_z(fig: object) -> list[int]:
@@ -63,57 +54,6 @@ def _flatten_z(fig: object) -> list[int]:
 def _flatten_hover(fig: object) -> list[str]:
     """Flatten the hovertext matrix from a Plotly heatmap figure."""
     return [str(v) for row in fig.data[0].hovertext for v in row]  # ty: ignore[unresolved-attribute]
-
-
-# ---------------------------------------------------------------------------
-# Helpers for building mock CLI responses
-# ---------------------------------------------------------------------------
-
-
-def _cli_run(
-    *,
-    run_id: int = 1,
-    result_state: str | None = "SUCCESS",
-    life_cycle_state: str | None = None,
-    state_message: str | None = None,
-    start_time: int = 1_000_000,
-    end_time: int = 1_060_000,
-    backfill_key: str | None = None,
-) -> dict[str, Any]:
-    state: dict[str, Any] = {}
-    if result_state is not None:
-        state["result_state"] = result_state
-    if life_cycle_state is not None:
-        state["life_cycle_state"] = life_cycle_state
-    if state_message is not None:
-        state["state_message"] = state_message
-    params: list[dict[str, str]] = []
-    if backfill_key is not None:
-        params.append({"name": "backfill_key", "value": backfill_key})
-    return {
-        "run_id": run_id,
-        "state": state,
-        "start_time": start_time,
-        "end_time": end_time,
-        "job_parameters": params,
-    }
-
-
-def _mock_subprocess(
-    stdout: str = "[]",
-    returncode: int = 0,
-    stderr: str = "",
-) -> Any:
-    """Return a callable that mocks subprocess.run."""
-
-    def mock_run(cmd: list[str], **kw: Any) -> SimpleNamespace:
-        return SimpleNamespace(
-            returncode=returncode,
-            stdout=stdout,
-            stderr=stderr,
-        )
-
-    return mock_run
 
 
 # ---------------------------------------------------------------------------
@@ -523,357 +463,6 @@ class TestFilterPastKeys:
     def test_unknown_kind_returns_all(self) -> None:
         keys = ["a", "b"]
         assert _filter_past_keys(keys, "unknown") == keys
-
-
-# ---------------------------------------------------------------------------
-# fetch_job_runs (mocks subprocess — CLI-based)
-# ---------------------------------------------------------------------------
-
-
-class TestFetchJobRuns:
-    def test_basic(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        runs_json = json.dumps([_cli_run(run_id=10, result_state="SUCCESS")])
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=runs_json),
-        )
-        runs = fetch_job_runs(42)
-        assert len(runs) == 1
-        assert runs[0].run_id == 10
-        assert runs[0].result_state == "SUCCESS"
-
-    def test_computes_duration(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        runs_json = json.dumps([_cli_run(start_time=1_000_000, end_time=1_060_000)])
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=runs_json),
-        )
-        runs = fetch_job_runs(1)
-        assert runs[0].duration_seconds == 60.0
-
-    def test_extracts_backfill_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        runs_json = json.dumps([_cli_run(backfill_key="2024-01-15")])
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=runs_json),
-        )
-        runs = fetch_job_runs(1)
-        assert runs[0].backfill_key == "2024-01-15"
-
-    def test_handles_no_backfill_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        runs_json = json.dumps([_cli_run()])
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=runs_json),
-        )
-        runs = fetch_job_runs(1)
-        assert runs[0].backfill_key is None
-
-    def test_handles_running_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        runs_json = json.dumps([_cli_run(result_state=None, end_time=0)])
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=runs_json),
-        )
-        runs = fetch_job_runs(1)
-        assert runs[0].result_state is None
-
-    def test_empty_runs(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout="[]"),
-        )
-        runs = fetch_job_runs(1)
-        assert runs == []
-
-    def test_returns_empty_on_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(returncode=1, stderr="error"),
-        )
-        runs = fetch_job_runs(1)
-        assert runs == []
-
-    def test_passes_profile(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        captured_cmd: list[str] = []
-
-        def mock_run(cmd: list[str], **kw: Any) -> SimpleNamespace:
-            captured_cmd.extend(cmd)
-            return SimpleNamespace(returncode=0, stdout="[]", stderr="")
-
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            mock_run,
-        )
-        fetch_job_runs(42, profile="work")
-        assert "--profile" in captured_cmd
-        assert "work" in captured_cmd
-        assert "--job-id" in captured_cmd
-        assert "42" in captured_cmd
-
-    def test_parses_life_cycle_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        runs_json = json.dumps(
-            [
-                _cli_run(
-                    result_state=None,
-                    life_cycle_state="INTERNAL_ERROR",
-                    state_message="Cluster failed",
-                ),
-            ]
-        )
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=runs_json),
-        )
-        runs = fetch_job_runs(1)
-        assert runs[0].life_cycle_state == "INTERNAL_ERROR"
-        assert runs[0].state_message == "Cluster failed"
-
-    def test_empty_state_message_becomes_none(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        runs_json = json.dumps(
-            [
-                _cli_run(result_state="SUCCESS", state_message=""),
-            ]
-        )
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=runs_json),
-        )
-        runs = fetch_job_runs(1)
-        assert runs[0].state_message is None
-
-
-# ---------------------------------------------------------------------------
-# resolve_bundle_targets (reads databricks.yaml)
-# ---------------------------------------------------------------------------
-
-
-class TestResolveBundleTargets:
-    def test_parses_targets(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        yaml_content = """bundle:\n  name: my_project\n\ntargets:\n  dev:\n    mode: development\n  staging:\n    mode: development\n  prod:\n    mode: production\n"""
-        (tmp_path / "databricks.yaml").write_text(yaml_content)
-        monkeypatch.chdir(tmp_path)
-        assert resolve_bundle_targets() == ["dev", "staging", "prod"]
-
-    def test_no_yaml_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.chdir(tmp_path)
-        assert resolve_bundle_targets() == []
-
-    def test_no_targets_section(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / "databricks.yaml").write_text("bundle:\n  name: x\n")
-        monkeypatch.chdir(tmp_path)
-        assert resolve_bundle_targets() == []
-
-    def test_yml_extension(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        yaml_content = "bundle:\n  name: x\n\ntargets:\n  dev:\n    mode: development\n"
-        (tmp_path / "databricks.yml").write_text(yaml_content)
-        monkeypatch.chdir(tmp_path)
-        assert resolve_bundle_targets() == ["dev"]
-
-    def test_prefers_yaml_over_yml(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / "databricks.yaml").write_text(
-            "bundle:\n  name: x\ntargets:\n  alpha:\n    mode: dev\n"
-        )
-        (tmp_path / "databricks.yml").write_text(
-            "bundle:\n  name: x\ntargets:\n  beta:\n    mode: dev\n"
-        )
-        monkeypatch.chdir(tmp_path)
-        assert resolve_bundle_targets() == ["alpha"]
-
-
-# ---------------------------------------------------------------------------
-# resolve_job_ids (mocks subprocess)
-# ---------------------------------------------------------------------------
-
-
-class TestResolveJobIds:
-    def test_parses_bundle_summary(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        summary = {
-            "resources": {
-                "jobs": {
-                    "etl_job": {"id": "12345"},
-                    "ml_job": {"id": "67890"},
-                }
-            }
-        }
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            lambda cmd, **kw: SimpleNamespace(
-                returncode=0, stdout=json.dumps(summary), stderr=""
-            ),
-        )
-        result = resolve_job_ids()
-        assert result == {"etl_job": 12345, "ml_job": 67890}
-
-    def test_returns_empty_when_cli_missing(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        monkeypatch.setattr("shutil.which", lambda cmd: None)
-        result = resolve_job_ids()
-        assert result == {}
-        assert "not found" in capsys.readouterr().err
-
-    def test_returns_empty_on_command_failure(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            lambda cmd, **kw: SimpleNamespace(
-                returncode=1, stdout="", stderr="bundle not found"
-            ),
-        )
-        result = resolve_job_ids()
-        assert result == {}
-        assert "failed" in capsys.readouterr().err
-
-    def test_passes_target_and_profile(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        captured_cmd: list[str] = []
-
-        def mock_run(cmd: list[str], **kw: Any) -> SimpleNamespace:
-            captured_cmd.extend(cmd)
-            return SimpleNamespace(
-                returncode=0,
-                stdout=json.dumps({"resources": {"jobs": {}}}),
-                stderr="",
-            )
-
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            mock_run,
-        )
-        resolve_job_ids(target="prod", profile="work")
-        assert "--target" in captured_cmd
-        assert "prod" in captured_cmd
-        assert "--profile" in captured_cmd
-        assert "work" in captured_cmd
-
-    def test_skips_jobs_without_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        summary = {
-            "resources": {
-                "jobs": {
-                    "deployed": {"id": "111"},
-                    "not_deployed": {},
-                }
-            }
-        }
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            lambda cmd, **kw: SimpleNamespace(
-                returncode=0, stdout=json.dumps(summary), stderr=""
-            ),
-        )
-        result = resolve_job_ids()
-        assert result == {"deployed": 111}
-
-
-# ---------------------------------------------------------------------------
-# resolve_workspace_url (mocks subprocess)
-# ---------------------------------------------------------------------------
-
-
-class TestResolveWorkspaceUrl:
-    def test_returns_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        auth_data = {"host": "https://my-workspace.databricks.com/"}
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=json.dumps(auth_data)),
-        )
-        result = resolve_workspace_url()
-        assert result == "https://my-workspace.databricks.com"
-
-    def test_strips_trailing_slash(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        auth_data = {"host": "https://example.databricks.com///"}
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=json.dumps(auth_data)),
-        )
-        result = resolve_workspace_url()
-        assert result == "https://example.databricks.com"
-
-    def test_returns_none_when_cli_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr("shutil.which", lambda cmd: None)
-        assert resolve_workspace_url() is None
-
-    def test_returns_none_on_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(returncode=1, stderr="error"),
-        )
-        assert resolve_workspace_url() is None
-
-    def test_returns_none_on_bad_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout="not json"),
-        )
-        assert resolve_workspace_url() is None
-
-    def test_returns_none_when_no_host_key(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=json.dumps({"user": "test"})),
-        )
-        assert resolve_workspace_url() is None
-
-    def test_returns_host_from_nested_details(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        auth_data = {
-            "status": "success",
-            "details": {"host": "https://nested.databricks.com/"},
-        }
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            _mock_subprocess(stdout=json.dumps(auth_data)),
-        )
-        result = resolve_workspace_url()
-        assert result == "https://nested.databricks.com"
-
-    def test_passes_profile(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        captured_cmd: list[str] = []
-
-        def mock_run(cmd: list[str], **kw: Any) -> SimpleNamespace:
-            captured_cmd.extend(cmd)
-            return SimpleNamespace(
-                returncode=0,
-                stdout=json.dumps({"host": "https://ws.databricks.com"}),
-                stderr="",
-            )
-
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/databricks")
-        monkeypatch.setattr(
-            "databricks_bundle_decorators.dashboard._fetch.subprocess.run",
-            mock_run,
-        )
-        resolve_workspace_url(profile="work")
-        assert "--profile" in captured_cmd
-        assert "work" in captured_cmd
 
 
 # ---------------------------------------------------------------------------
@@ -1415,25 +1004,7 @@ class TestFmtDuration:
 
 
 # ---------------------------------------------------------------------------
-# APP_TEMPLATE
-# ---------------------------------------------------------------------------
-
-
-class TestAppTemplate:
-    def test_renders_package_name(self) -> None:
-        result = APP_TEMPLATE.format(
-            package_name="my_pipeline", app_path="observability/app.py"
-        )
-        assert "import my_pipeline.pipelines" in result
-        assert "run_app()" in result
-
-    def test_renders_app_path(self) -> None:
-        result = APP_TEMPLATE.format(package_name="pkg", app_path="custom/dashboard.py")
-        assert "python custom/dashboard.py" in result
-
-
-# ---------------------------------------------------------------------------
-# Polars data helpers
+# Display helpers
 # ---------------------------------------------------------------------------
 
 

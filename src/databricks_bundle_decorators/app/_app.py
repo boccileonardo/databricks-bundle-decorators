@@ -1,8 +1,8 @@
-"""Dash application entry point for the Databricks App dashboard.
+"""Dash application entry point for the observability dashboard.
 
 Discovers jobs from the app's resource bindings via the Databricks SDK,
-fetches run data, and reuses the existing dashboard UI components
-(pages, figures, compute logic).
+fetches run data, and renders the dashboard UI (pages, figures, compute
+logic).
 """
 
 from __future__ import annotations
@@ -12,30 +12,30 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from databricks_bundle_decorators.app._fetch import (
-    fetch_job_runs,
-    resolve_job_ids_from_sdk,
-    resolve_workspace_url,
-)
-from databricks_bundle_decorators.backfill import BackfillDef, _deserialize_backfill_tag
-from databricks_bundle_decorators.dashboard._compute import (
+from databricks_bundle_decorators.app._compute import (
     _backfill_kind,
     build_job_overview,
     compute_backfill_coverage,
 )
-from databricks_bundle_decorators.dashboard._data import (
+from databricks_bundle_decorators.app._data import (
     COLOR_IN_PROGRESS,
     BackfillCoverage,
     JobOverview,
     RunInfo,
 )
-from databricks_bundle_decorators.dashboard._pages import (
+from databricks_bundle_decorators.app._fetch import (
+    fetch_job_runs,
+    resolve_job_ids_from_sdk,
+    resolve_workspace_url,
+)
+from databricks_bundle_decorators.app._pages import (
     _FIGURE_BUILDERS,
     _build_coverage_figure,
     _page_backfill_detail,
     _page_backfills,
     _page_overview,
 )
+from databricks_bundle_decorators.backfill import BackfillDef, _deserialize_backfill_tag
 
 
 def _load_registry() -> tuple[set[str], dict[str, BackfillDef]]:

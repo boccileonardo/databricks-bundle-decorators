@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 
-from databricks_bundle_decorators.dashboard._data import RunInfo
+from databricks_bundle_decorators.app._data import RunInfo
 
 
 def resolve_job_ids_from_sdk() -> dict[str, int]:

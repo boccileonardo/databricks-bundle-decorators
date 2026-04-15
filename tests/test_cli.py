@@ -1,6 +1,5 @@
 """Tests for the CLI scaffolding command (dbxdec init)."""
 
-import importlib
 import json
 import subprocess
 import sys
@@ -17,7 +16,6 @@ from databricks_bundle_decorators.cli import (
     _detect_src_layout,
     _get_launched_backfill_keys,
     _read_pyproject,
-    dashboard,
     main,
 )
 from databricks_bundle_decorators.decorators import job, task
@@ -1129,89 +1127,3 @@ class TestGetLaunchedBackfillKeys:
 
         result = _get_launched_backfill_keys("123", None, None)
         assert result == {"2024-01-01"}
-
-
-class TestDashboardCmd:
-    """Tests for the ``dbxdec dashboard`` command."""
-
-    def _write_pyproject(self, path: Path) -> None:
-        (path / "pyproject.toml").write_text('[project]\nname = "my-pipeline"\n')
-
-    def test_exits_when_dash_not_installed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        monkeypatch.chdir(tmp_path)
-        self._write_pyproject(tmp_path)
-
-        orig_import = importlib.import_module
-
-        def _block_dash(name: str) -> object:
-            if name == "dash":
-                raise ImportError("no dash")
-            return orig_import(name)
-
-        monkeypatch.setattr("importlib.import_module", _block_dash)
-
-        with pytest.raises(SystemExit, match="1"):
-            dashboard()
-
-    def test_scaffolds_app_on_first_run(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        monkeypatch.chdir(tmp_path)
-        self._write_pyproject(tmp_path)
-
-        calls: list[list[str]] = []
-        monkeypatch.setattr(
-            "subprocess.call",
-            lambda cmd: (calls.append(cmd), 0)[1],
-        )
-
-        with pytest.raises(SystemExit, match="0"):
-            dashboard()
-
-        app_file = tmp_path / "observability" / "app.py"
-        assert app_file.exists()
-        content = app_file.read_text()
-        assert "my_pipeline" in content
-        assert "run_app" in content
-
-    def test_does_not_overwrite_existing_app(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        monkeypatch.chdir(tmp_path)
-        self._write_pyproject(tmp_path)
-
-        app_file = tmp_path / "observability" / "app.py"
-        app_file.parent.mkdir(parents=True)
-        app_file.write_text("# custom\n")
-
-        calls: list[list[str]] = []
-        monkeypatch.setattr(
-            "subprocess.call",
-            lambda cmd: (calls.append(cmd), 0)[1],
-        )
-
-        with pytest.raises(SystemExit, match="0"):
-            dashboard()
-
-        assert app_file.read_text() == "# custom\n"
-
-    def test_launches_dash_via_sys_executable(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        monkeypatch.chdir(tmp_path)
-        self._write_pyproject(tmp_path)
-
-        calls: list[list[str]] = []
-        monkeypatch.setattr(
-            "subprocess.call",
-            lambda cmd: (calls.append(cmd), 0)[1],
-        )
-
-        with pytest.raises(SystemExit, match="0"):
-            dashboard()
-
-        assert len(calls) == 1
-        assert calls[0][0] == sys.executable
-        assert "observability/app.py" in calls[0][1]

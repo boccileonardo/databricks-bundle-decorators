@@ -12,10 +12,10 @@ from typing import Any
 import plotly.graph_objects as go
 import whenever
 
-from databricks_bundle_decorators.dashboard._compute import (
+from databricks_bundle_decorators.app._compute import (
     _WEEK_KEY_RE,
 )
-from databricks_bundle_decorators.dashboard._data import (
+from databricks_bundle_decorators.app._data import (
     COLOR_COMPLETED,
     COLOR_FAILED,
     COLOR_IN_PROGRESS,

@@ -11,7 +11,7 @@ from typing import Any
 
 import whenever
 
-from databricks_bundle_decorators.dashboard._data import (
+from databricks_bundle_decorators.app._data import (
     BackfillCoverage,
     JobOverview,
     RunInfo,

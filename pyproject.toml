@@ -39,13 +39,6 @@ optional-dependencies.gcp = [
   "fsspec",
   "gcsfs",
 ]
-optional-dependencies.observability = [
-  "dash>=2.14",
-  "dash-ag-grid>=31",
-  "dash-bootstrap-components>=1.5",
-  "plotly>=5.18",
-  "polars",
-]
 optional-dependencies.polars = [
   "polars",
 ]
@@ -132,9 +125,6 @@ lint.per-file-ignores."**/app/**" = [
 ]
 lint.per-file-ignores."**/cli.py" = [
   "T201", # print is the correct output method for CLI
-]
-lint.per-file-ignores."**/dashboard/**" = [
-  "T201", # print used for dashboard logging
 ]
 lint.per-file-ignores."__init__.py" = [
   "F401", # unused imports (re-exports)

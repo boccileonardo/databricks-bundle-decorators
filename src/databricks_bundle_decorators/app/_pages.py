@@ -13,22 +13,22 @@ import dash_bootstrap_components as dbc
 import whenever
 from dash import dcc, html
 
-from databricks_bundle_decorators.dashboard._compute import (
+from databricks_bundle_decorators.app._compute import (
     _WEEK_KEY_RE,
 )
-from databricks_bundle_decorators.dashboard._data import (
+from databricks_bundle_decorators.app._data import (
     COLOR_COMPLETED,
     COLOR_FAILED,
     COLOR_IN_PROGRESS,
     BackfillCoverage,
     JobOverview,
 )
-from databricks_bundle_decorators.dashboard._display import (
+from databricks_bundle_decorators.app._display import (
     _coverages_to_records,
     _fmt_duration,
     _overviews_to_records,
 )
-from databricks_bundle_decorators.dashboard._figures import (
+from databricks_bundle_decorators.app._figures import (
     _build_daily_calendar,
     _build_hourly_calendar,
     _build_monthly_calendar,
