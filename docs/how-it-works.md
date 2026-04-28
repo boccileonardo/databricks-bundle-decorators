@@ -19,7 +19,11 @@ Job runs on Databricks
 
 ## Task dependencies
 
-Inside a `@job` body, calling a `@task` function doesn't execute it immediately — it records it. Passing the return value of one task call to another captures the dependency:
+There are two ways to declare that one task depends on another:
+
+### Data dependencies (pass return values as arguments)
+
+Inside a `@job` body, calling a `@task` function doesn't execute it immediately — it records it. Passing the return value of one task call to another captures the dependency **and** wires up data transfer via `IoManager`:
 
 ```python
 @job
@@ -34,6 +38,35 @@ def my_job():
 ```
 
 At deploy time this produces a two-task job where `b` runs after `a`. At runtime, the framework passes the output of `a` as the `data` argument to `b`.
+
+### Control-flow dependencies (`depends_on`)
+
+Sometimes a task must wait for another to finish but doesn't need its output — for example, a cleanup task that runs after ingestion, or a notification task that fires after all transforms complete. Use `depends_on` for these ordering-only constraints:
+
+```python
+@job
+def my_job():
+    @task
+    def ingest(): ...
+    @task
+    def build_index(): ...
+    @task(depends_on=ingest_result)
+    def notify(): ...
+
+    ingest_result = ingest()
+    build_index(ingest_result)      # data dependency — receives output
+    notify()                        # control-flow dependency — no data transferred
+```
+
+`depends_on` accepts a single `TaskProxy` or a list of them:
+
+```python
+@task(depends_on=[step_a_result, step_b_result])
+def final_step():
+    ...  # runs after both step_a and step_b, but receives no data from them
+```
+
+You can combine both styles on the same task — pass some upstream outputs as arguments (data dependencies) and list others in `depends_on` (control-flow dependencies). Duplicate edges are automatically deduplicated.
 
 ## Passing data between tasks
 
