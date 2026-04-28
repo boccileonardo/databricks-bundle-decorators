@@ -58,6 +58,14 @@ class TestSparkUCTableConstruction:
         io = SparkUCTableIoManager(catalog="main", schema="staging")
         assert io._mode == "error"
 
+    def test_merge_mode_raises_value_error(self):
+        with pytest.raises(ValueError, match='mode="merge" is not supported'):
+            SparkUCTableIoManager(catalog="main", schema="staging", mode="merge")
+
+    def test_invalid_mode_raises_value_error(self):
+        with pytest.raises(ValueError, match="invalid mode"):
+            SparkUCTableIoManager(catalog="main", schema="staging", mode="upsert")
+
 
 class TestSparkUCTableSetup:
     def test_setup_obtains_session(self, spark: SparkSession):
@@ -207,6 +215,18 @@ class TestSparkUCVolumeDeltaConstruction:
             catalog="main", schema="staging", volume="raw_data"
         )
         assert io._mode == "error"
+
+    def test_merge_mode_raises_value_error(self):
+        with pytest.raises(ValueError, match='mode="merge" is not supported'):
+            SparkUCVolumeDeltaIoManager(
+                catalog="main", schema="staging", volume="raw_data", mode="merge"
+            )
+
+    def test_invalid_mode_raises_value_error(self):
+        with pytest.raises(ValueError, match="invalid mode"):
+            SparkUCVolumeDeltaIoManager(
+                catalog="main", schema="staging", volume="raw_data", mode="upsert"
+            )
 
 
 class TestSparkUCVolumeDeltaSetup:

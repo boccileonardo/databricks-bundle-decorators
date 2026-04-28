@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD046 -->
 # Built-in IoManagers
 
 Ready-to-use `IoManager` implementations for common data formats and
@@ -35,6 +36,22 @@ io_append = PolarsDeltaIoManager(
     mode="overwrite",   # or "append", "ignore"
 )
 ```
+
+| Mode | Behaviour |
+|------|-----------|
+| `"error"` (default) | Raise if the target already exists |
+| `"overwrite"` | Replace the target completely |
+| `"append"` | Add rows to the existing target |
+| `"ignore"` | Silently skip if the target already exists |
+
+!!! warning "mode='merge' is not a valid write mode"
+
+    Do **not** pass `mode="merge"` — it will raise a `ValueError`.
+    Delta merge/upsert is not a write mode; it requires a merge builder
+    object that describes the match predicate and update/insert actions.
+    See the next section for the correct pattern.
+
+### Merge / Upsert
 
 For **merge / upsert** operations, return a merge builder from your
 task instead of a DataFrame.  The IoManager detects the type and
@@ -77,10 +94,5 @@ calls `.execute()` automatically:
         )  # returns DeltaMergeBuilder — IoManager calls .execute()
     ```
 
-| Mode | Behaviour |
-|------|-----------|
-| `"error"` (default) | Raise if the target already exists |
-| `"overwrite"` | Replace the target completely |
-| `"append"` | Add rows to the existing target |
-| `"ignore"` | Silently skip if the target already exists |
-| *(merge builder)* | Return a `TableMerger` / `DeltaMergeBuilder` — `mode` is ignored |
+When returning a merge builder, the `mode` parameter on the IoManager is
+ignored — the merge builder fully controls how data is written.

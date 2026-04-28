@@ -14,6 +14,31 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+_VALID_DELTA_MODES = frozenset({"error", "overwrite", "append", "ignore"})
+
+
+def _validate_delta_mode(mode: str, io_manager_name: str) -> None:
+    """Raise ValueError if *mode* is not a valid Delta write mode.
+
+    In particular, ``"merge"`` is not a write mode — users should return a
+    ``TableMerger`` or ``DeltaMergeBuilder`` from the task function instead.
+    """
+    if mode == "merge":
+        msg = (
+            f'{io_manager_name}: mode="merge" is not supported. '
+            f"To perform merge/upsert operations, return a fully-configured "
+            f"TableMerger (deltalake) or DeltaMergeBuilder (delta-spark) "
+            f"from your task function instead. The IoManager will call "
+            f".execute() on it automatically."
+        )
+        raise ValueError(msg)
+    if mode not in _VALID_DELTA_MODES:
+        msg = (
+            f"{io_manager_name}: invalid mode {mode!r}. "
+            f"Valid modes are: {sorted(_VALID_DELTA_MODES)}"
+        )
+        raise ValueError(msg)
+
 
 def _normalize_partition_by(
     partition_by: str | list[str] | None,

@@ -175,6 +175,14 @@ class TestModeParameter:
         io = PolarsDeltaIoManager(base_path="/data")
         assert io._mode == "error"
 
+    def test_merge_mode_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match='mode="merge" is not supported'):
+            PolarsDeltaIoManager(base_path="/data", mode="merge")
+
+    def test_invalid_mode_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="invalid mode"):
+            PolarsDeltaIoManager(base_path="/data", mode="upsert")
+
     def test_overwrite_mode(self, tmp_path: Path) -> None:
         io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
         io.write(_output_ctx("t"), _SAMPLE)
