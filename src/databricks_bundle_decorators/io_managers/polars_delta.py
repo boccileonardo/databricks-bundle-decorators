@@ -23,6 +23,7 @@ from databricks_bundle_decorators.io_manager import (
     _polars_apply_partition_filter,
     _polars_extract_partition_values,
     _resolve_backfill_key,
+    _validate_delta_mode,
 )
 
 
@@ -141,6 +142,7 @@ class PolarsDeltaIoManager(IoManager):
         *,
         auto_filter: bool = True,
     ) -> None:
+        _validate_delta_mode(mode, type(self).__name__)
         self._base_path = base_path
         self._storage_options = storage_options
         self._write_options = write_options or {}

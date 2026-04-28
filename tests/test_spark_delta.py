@@ -194,6 +194,18 @@ class TestSparkServerlessDeltaRoundTrip:
 
 
 class TestSparkDeltaMode:
+    def test_merge_mode_raises_value_error(self):
+        with pytest.raises(ValueError, match='mode="merge" is not supported'):
+            SparkDeltaIoManager(base_path="/data", mode="merge")
+
+    def test_serverless_merge_mode_raises_value_error(self):
+        with pytest.raises(ValueError, match='mode="merge" is not supported'):
+            SparkServerlessDeltaIoManager(base_path="/data", mode="merge")
+
+    def test_invalid_mode_raises_value_error(self):
+        with pytest.raises(ValueError, match="invalid mode"):
+            SparkDeltaIoManager(base_path="/data", mode="upsert")
+
     def test_mode_overwrite(self, spark: SparkSession, tmp_path):
         io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
         io.setup()

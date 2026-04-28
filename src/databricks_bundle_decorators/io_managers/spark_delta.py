@@ -25,6 +25,7 @@ from databricks_bundle_decorators.io_manager import (
     _resolve_backfill_key,
     _spark_apply_partition_filter,
     _spark_extract_partition_values,
+    _validate_delta_mode,
 )
 
 
@@ -42,6 +43,7 @@ class _SparkDeltaBase(IoManager):
         *,
         auto_filter: bool = True,
     ) -> None:
+        _validate_delta_mode(mode, type(self).__name__)
         self._base_path = base_path
         self._write_options = write_options or {}
         self._read_options = read_options or {}

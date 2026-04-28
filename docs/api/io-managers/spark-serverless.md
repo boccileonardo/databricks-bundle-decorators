@@ -14,6 +14,14 @@ Same behaviour as classic compute — `partition_by` is specified on the
 
 ## Delta
 
+!!! tip "Merge / Upsert"
+
+    `mode="merge"` is **not** a valid write mode and will raise a `ValueError`.
+    To perform merge/upsert operations, return a `delta.tables.DeltaMergeBuilder`
+    from your task function — the IoManager calls `.execute()` automatically.
+    See [Delta Write Modes & Merge](index.md#delta-write-modes-merge) for
+    full examples.
+
 ::: databricks_bundle_decorators.io_managers.SparkServerlessDeltaIoManager
 
 ## Parquet

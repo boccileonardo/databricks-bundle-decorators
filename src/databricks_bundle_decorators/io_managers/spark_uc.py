@@ -30,6 +30,7 @@ from databricks_bundle_decorators.io_manager import (
     _resolve_backfill_key,
     _spark_apply_partition_filter,
     _spark_extract_partition_values,
+    _validate_delta_mode,
 )
 
 
@@ -91,6 +92,7 @@ class SparkUCTableIoManager(IoManager):
         *,
         auto_filter: bool = True,
     ) -> None:
+        _validate_delta_mode(mode, type(self).__name__)
         self.catalog = catalog
         self.schema = schema
         self._write_options = write_options or {}
@@ -245,6 +247,7 @@ class SparkUCVolumeDeltaIoManager(IoManager):
         *,
         auto_filter: bool = True,
     ) -> None:
+        _validate_delta_mode(mode, type(self).__name__)
         self.catalog = catalog
         self.schema = schema
         self.volume = volume
