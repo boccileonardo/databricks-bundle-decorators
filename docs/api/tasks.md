@@ -20,23 +20,59 @@ def my_job():
     def setup():
         ...  # e.g. create a table, warm a cache
 
+    setup_proxy = setup()
+
     @task(depends_on=setup_proxy)
     def work():
         ...  # runs after setup, but receives no data from it
 
-    setup_proxy = setup()
     work()
 ```
+
+Since `depends_on` is a `@task` decorator parameter, the upstream
+`TaskProxy` must be assigned before the `@task(depends_on=...)` line.
 
 You can pass a list to wait on multiple tasks:
 
 ```python
-@task(depends_on=[a_proxy, b_proxy])
-def final():
-    ...
+@job
+def my_job():
+    @task
+    def step_a(): ...
+
+    @task
+    def step_b(): ...
+
+    a_proxy = step_a()
+    b_proxy = step_b()
+
+    @task(depends_on=[a_proxy, b_proxy])
+    def final():
+        ...
+
+    final()
 ```
 
-`depends_on` and data arguments can be mixed on the same task.
+`depends_on` and data arguments can be mixed on the same task:
+
+```python
+@job
+def my_job():
+    @task
+    def init(): ...
+
+    @task
+    def produce(): ...
+
+    i = init()
+    p = produce()
+
+    @task(depends_on=i)       # control-flow dep on init
+    def consume(data): ...
+
+    consume(p)                # data dep on produce
+```
+
 See [How It Works — Control-flow dependencies](../how-it-works.md#control-flow-dependencies-depends_on)
 for more details.
 

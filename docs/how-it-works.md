@@ -48,25 +48,65 @@ Sometimes a task must wait for another to finish but doesn't need its output —
 def my_job():
     @task
     def ingest(): ...
+
     @task
-    def build_index(): ...
-    @task(depends_on=ingest_result)
-    def notify(): ...
+    def build_index(data): ...
 
     ingest_result = ingest()
     build_index(ingest_result)      # data dependency — receives output
-    notify()                        # control-flow dependency — no data transferred
+
+    @task(depends_on=ingest_result)  # control-flow dependency — no data transferred
+    def notify(): ...
+
+    notify()
 ```
 
-`depends_on` accepts a single `TaskProxy` or a list of them:
+`depends_on` is a parameter on the `@task` decorator, so the upstream
+`TaskProxy` must be assigned before the `@task(depends_on=...)` line.
+Define and call your upstream tasks first, then define the downstream
+task with the `depends_on` parameter.
+
+`depends_on` accepts a single `TaskProxy` or a list:
 
 ```python
-@task(depends_on=[step_a_result, step_b_result])
-def final_step():
-    ...  # runs after both step_a and step_b, but receives no data from them
+@job
+def my_job():
+    @task
+    def step_a(): ...
+
+    @task
+    def step_b(): ...
+
+    a_result = step_a()
+    b_result = step_b()
+
+    @task(depends_on=[a_result, b_result])
+    def final_step():
+        ...  # runs after both step_a and step_b, but receives no data
+
+    final_step()
 ```
 
-You can combine both styles on the same task — pass some upstream outputs as arguments (data dependencies) and list others in `depends_on` (control-flow dependencies). Duplicate edges are automatically deduplicated.
+You can combine both styles on the same task — pass some upstream outputs as arguments (data dependencies) and list others in `depends_on` (control-flow dependencies). Duplicate edges are automatically deduplicated:
+
+```python
+@job
+def my_job():
+    @task
+    def init(): ...
+
+    @task
+    def produce(): ...
+
+    i = init()
+    p = produce()
+
+    @task(depends_on=i)       # control-flow dep on init
+    def consume(data): ...
+
+    consume(p)                # data dep on produce
+    # consume now depends on both init and produce
+```
 
 ## Passing data between tasks
 
