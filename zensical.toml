@@ -37,6 +37,7 @@ nav = [
         ]},
         { "Custom IoManagers" = "api/custom-io-manager.md" },
         { "Backfill Definitions" = "api/backfill.md" },
+        { "SDK Types" = "api/sdk-types.md" },
     ]},
     { "Internals" = [
         "internals/index.md",
