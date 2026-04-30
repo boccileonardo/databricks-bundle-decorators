@@ -102,6 +102,23 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
         upstream_qualified = f"{job_name}.{upstream_task_key}"
         upstream_meta = _TASK_REGISTRY.get(upstream_qualified)
         if upstream_meta and upstream_meta.io_manager:
+            # Check if the upstream task signalled that it produced no output.
+            # This supports tasks with optional return types (e.g.
+            # Optional[LazyFrame]) that may legitimately return None.
+            upstream_output_is_none = get_task_value(
+                upstream_task_key, "__output_is_none__"
+            )
+            if upstream_output_is_none:
+                _logger.warning(
+                    "Upstream task '%s' produced None — skipping "
+                    "IoManager.read() for parameter '%s' of task '%s'.",
+                    upstream_task_key,
+                    param_name,
+                    task_key,
+                )
+                kwargs[param_name] = None
+                continue
+
             upstream_meta.io_manager._ensure_setup()
 
             # Retrieve partition filter from upstream task values
@@ -181,6 +198,12 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                     context
                 )
                 set_task_value("__partition_values__", partition_values)  # ty: ignore[invalid-argument-type]
+        elif result is None and task_meta.io_manager:
+            # Signal to downstream tasks that this task produced no output.
+            # This allows tasks with optional return types (e.g.
+            # Optional[LazyFrame]) to skip writes without causing read
+            # failures in downstream consumers.
+            set_task_value("__output_is_none__", value=True)
         elif result is not None and not task_meta.io_manager:
             _logger.warning(
                 "Task '%s' returned a value but has no IoManager - "

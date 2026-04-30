@@ -905,3 +905,109 @@ class TestStaticBackfillRuntime:
 
         assert len(captured_ctx) == 1
         assert captured_ctx[0].backfill_key == "us"
+
+
+class TestOptionalOutput:
+    """Runtime handles tasks that return None (optional outputs)."""
+
+    def setup_method(self):
+        reset_registries()
+        _MemoryIo.storage = {}
+        _local_task_values.clear()
+
+    def test_none_output_signals_downstream(self):
+        """When a task with io_manager returns None, downstream receives None."""
+        io = _MemoryIo()
+
+        def producer():
+            return None
+
+        captured: dict[str, Any] = {}
+
+        def consumer(data):
+            captured["data"] = data
+
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=producer, task_key="producer", io_manager=io
+        )
+        _TASK_REGISTRY["j.consumer"] = TaskMeta(fn=consumer, task_key="consumer")
+
+        # Run producer — returns None, should not write but should signal
+        run_task("producer", {"__job_name__": "j", "__task_key__": "producer"})
+
+        # Verify no data was written
+        assert "producer" not in io.storage
+
+        # Run consumer — should receive None without calling IoManager.read()
+        run_task(
+            "consumer",
+            {
+                "__job_name__": "j",
+                "__task_key__": "consumer",
+                "__upstream__data": "producer",
+            },
+        )
+
+        assert captured["data"] is None
+
+    def test_none_output_skips_io_manager_read(self):
+        """IoManager.read() is not called when upstream produced None."""
+        read_called = []
+
+        class _TrackingIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                read_called.append(True)
+                return "should not be returned"
+
+        io = _TrackingIo()
+
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=lambda: None, task_key="producer", io_manager=io
+        )
+        _TASK_REGISTRY["j.consumer"] = TaskMeta(
+            fn=lambda data: data, task_key="consumer"
+        )
+
+        run_task("producer", {"__job_name__": "j", "__task_key__": "producer"})
+        run_task(
+            "consumer",
+            {
+                "__job_name__": "j",
+                "__task_key__": "consumer",
+                "__upstream__data": "producer",
+            },
+        )
+
+        assert read_called == []
+
+    def test_non_none_output_still_reads_normally(self):
+        """When upstream produces a value, downstream reads via IoManager as usual."""
+        io = _MemoryIo()
+
+        def producer():
+            return {"rows": [1, 2, 3]}
+
+        captured: dict[str, Any] = {}
+
+        def consumer(data):
+            captured["data"] = data
+
+        _TASK_REGISTRY["j.producer"] = TaskMeta(
+            fn=producer, task_key="producer", io_manager=io
+        )
+        _TASK_REGISTRY["j.consumer"] = TaskMeta(fn=consumer, task_key="consumer")
+
+        run_task("producer", {"__job_name__": "j", "__task_key__": "producer"})
+        run_task(
+            "consumer",
+            {
+                "__job_name__": "j",
+                "__task_key__": "consumer",
+                "__upstream__data": "producer",
+            },
+        )
+
+        assert captured["data"] == {"rows": [1, 2, 3]}
