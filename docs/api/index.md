@@ -10,3 +10,4 @@ Public, user-facing API. For framework internals (codegen, runtime, registry), s
 | [Built-in IoManagers](io-managers/index.md) | Polars (Parquet, Delta, JSON, CSV), Spark (Delta, Parquet), Unity Catalog (Tables, Volumes) |
 | [Custom IoManagers](custom-io-manager.md) | `IoManager` ABC, `OutputContext`, `InputContext` |
 | [Backfill Definitions](backfill.md) | `BackfillDef`, `DailyBackfill`, `WeeklyBackfill`, `MonthlyBackfill`, `HourlyBackfill`, `StaticBackfill`, `get_run_logical_date`, `all_partitions` |
+| [SDK Types](sdk-types.md) | `JobConfig`, `TaskConfig`, `ClusterConfig` — all importable `databricks.bundles.jobs` classes |
