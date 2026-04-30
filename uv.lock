@@ -656,7 +656,7 @@ wheels = [
 
 [[package]]
 name = "databricks-bundle-decorators"
-version = "0.10.6"
+version = "0.10.7"
 source = { editable = "." }
 dependencies = [
     { name = "databricks-bundles" },
