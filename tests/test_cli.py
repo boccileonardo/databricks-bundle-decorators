@@ -15,7 +15,9 @@ from databricks_bundle_decorators.cli import (
     _detect_package_name,
     _detect_src_layout,
     _get_launched_backfill_keys,
+    _read_app_name_from_yml,
     _read_pyproject,
+    app_config,
     main,
 )
 from databricks_bundle_decorators.decorators import job, task
@@ -1127,3 +1129,123 @@ class TestGetLaunchedBackfillKeys:
 
         result = _get_launched_backfill_keys("123", None, None)
         assert result == {"2024-01-01"}
+
+
+class TestReadAppNameFromYml:
+    """Tests for _read_app_name_from_yml."""
+
+    def test_returns_none_when_file_missing(self, tmp_path: Path) -> None:
+        assert _read_app_name_from_yml(tmp_path) is None
+
+    def test_reads_name_from_existing_yml(self, tmp_path: Path) -> None:
+        (tmp_path / "resources").mkdir()
+        (tmp_path / "resources" / "app.yml").write_text(
+            "resources:\n"
+            "  apps:\n"
+            "    my_custom_app:\n"
+            "      name: my-custom-app\n"
+            "      description: Pipeline observability dashboard\n"
+        )
+
+        assert _read_app_name_from_yml(tmp_path) == "my-custom-app"
+
+    def test_reads_user_edited_name(self, tmp_path: Path) -> None:
+        (tmp_path / "resources").mkdir()
+        (tmp_path / "resources" / "app.yml").write_text(
+            "resources:\n"
+            "  apps:\n"
+            "    my_custom_name:\n"
+            "      name: totally-renamed-app\n"
+            "      description: Pipeline observability dashboard\n"
+        )
+
+        assert _read_app_name_from_yml(tmp_path) == "totally-renamed-app"
+
+
+class TestAppConfigNameResolution:
+    """Tests for app_config --name flag and existing name preservation."""
+
+    def _make_project(self, tmp_path: Path, name: str = "test-project") -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            f'[project]\nname = "{name}"\nversion = "0.1.0"\n'
+        )
+
+    def test_uses_name_flag(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
+
+        app_config(permission="CAN_VIEW", name="custom-name")
+
+        content = (tmp_path / "resources" / "app.yml").read_text()
+        assert "name: custom-name" in content
+
+    def test_preserves_existing_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
+        # Pre-create app.yml with a user-edited name
+        (tmp_path / "resources").mkdir(parents=True)
+        (tmp_path / "resources" / "app.yml").write_text(
+            "resources:\n"
+            "  apps:\n"
+            "    user_app:\n"
+            "      name: user-edited-name\n"
+            "      description: Pipeline observability dashboard\n"
+        )
+
+        app_config(permission="CAN_VIEW", name=None)
+
+        content = (tmp_path / "resources" / "app.yml").read_text()
+        assert "name: user-edited-name" in content
+        assert "test-project-observability" not in content
+
+    def test_falls_back_to_pyproject_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
+
+        app_config(permission="CAN_VIEW", name=None)
+
+        content = (tmp_path / "resources" / "app.yml").read_text()
+        assert "name: test-project-observability" in content
+
+    def test_name_flag_overrides_existing_yml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
+        # Pre-create app.yml with one name
+        (tmp_path / "resources").mkdir(parents=True)
+        (tmp_path / "resources" / "app.yml").write_text(
+            "resources:\n"
+            "  apps:\n"
+            "    old_app:\n"
+            "      name: old-app\n"
+            "      description: Pipeline observability dashboard\n"
+        )
+
+        app_config(permission="CAN_VIEW", name="new-name")
+
+        content = (tmp_path / "resources" / "app.yml").read_text()
+        assert "name: new-name" in content
+        assert "old-app" not in content

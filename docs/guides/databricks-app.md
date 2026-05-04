@@ -97,6 +97,19 @@ The app resolves job IDs via `WorkspaceClient().apps.get()`, so
 
 ## Customization
 
+### App name
+
+By default the app is named `<project-name>-observability` (derived from
+`pyproject.toml`).  Once generated, `dbxdec app-config` preserves
+whatever name is already in `resources/app.yml` — so you can rename the
+app by editing that file directly.
+
+To override the name explicitly:
+
+```bash
+uv run dbxdec app-config --name my-custom-dashboard
+```
+
 ### Permission level
 
 The app's service principal gets `CAN_VIEW` by default.  Use

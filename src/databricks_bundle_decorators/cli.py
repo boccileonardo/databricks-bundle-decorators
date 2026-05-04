@@ -71,6 +71,31 @@ def _detect_src_layout(cwd: Path, package_name: str) -> Path:
     return src_path
 
 
+def _read_app_name_from_yml(cwd: Path) -> str | None:
+    """Extract the app name from an existing ``resources/app.yml``.
+
+    Parses the generated YAML structure to find the resource key under
+    ``resources.apps`` and converts it back to the app name (replacing
+    underscores with hyphens).
+
+    Returns ``None`` if the file does not exist or cannot be parsed.
+    """
+    app_yml = cwd / "resources" / "app.yml"
+    if not app_yml.exists():
+        return None
+    # The generated YAML has a known structure:
+    #   resources:
+    #     apps:
+    #       <resource_key>:
+    #         name: <app_name>
+    # We look for the "name:" field at the 4th indentation level.
+    for line in app_yml.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("name:") and line.startswith("      "):
+            return stripped.removeprefix("name:").strip()
+    return None
+
+
 # --- File templates -------------------------------------------------------
 
 _RESOURCES_INIT = '''\
@@ -1099,6 +1124,15 @@ def app_config(
             "principal on each job (e.g. CAN_VIEW, CAN_MANAGE_RUN).",
         ),
     ] = "CAN_VIEW",
+    name: Annotated[
+        str | None,
+        typer.Option(
+            help="Override the Databricks App name. "
+            "If not provided, the name is read from the existing "
+            "resources/app.yml; if that file doesn't exist, it is "
+            "derived from the project name in pyproject.toml.",
+        ),
+    ] = None,
 ) -> None:
     """Regenerate ``resources/app.yml`` and ``app/registry.json``.
 
@@ -1122,9 +1156,16 @@ def app_config(
         sys.exit(1)
 
     cwd = Path.cwd()
-    pyproject = _read_pyproject(cwd)
-    project_name = pyproject["project"]["name"]
-    app_name = f"{project_name}-observability"
+
+    if name is not None:
+        app_name = name
+    else:
+        # Preserve existing name from resources/app.yml if present
+        app_name = _read_app_name_from_yml(cwd)
+        if app_name is None:
+            pyproject = _read_pyproject(cwd)
+            project_name = pyproject["project"]["name"]
+            app_name = f"{project_name}-observability"
 
     created: list[str] = []
     _generate_app_yml(
