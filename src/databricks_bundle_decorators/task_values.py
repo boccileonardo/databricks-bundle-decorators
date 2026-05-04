@@ -70,7 +70,10 @@ def set_task_value(key: str, value: TaskValue) -> None:
         _local_task_values.setdefault(store_key, {})[key] = value
 
 
-def get_task_value(task_key: str, key: str) -> Any:
+_MISSING = object()
+
+
+def get_task_value(task_key: str, key: str, *, default: Any = _MISSING) -> Any:
     """Read a value previously written by an upstream task.
 
     Parameters
@@ -79,6 +82,10 @@ def get_task_value(task_key: str, key: str) -> Any:
         The ``task_key`` of the upstream task that called `set_task_value`.
     key:
         The key passed to `set_task_value`.
+    default:
+        Value to return when the key does not exist.  If omitted, raises
+        ``ValueError`` on Databricks (matching the platform behaviour) or
+        returns ``None`` locally.
     """
     if _is_databricks_runtime():
         # On Databricks: let any API/permission error propagate.
@@ -89,5 +96,9 @@ def get_task_value(task_key: str, key: str) -> Any:
 
         spark = SparkSession.builder.getOrCreate()
         dbutils = DBUtils(spark)
-        return dbutils.jobs.taskValues.get(taskKey=task_key, key=key)
+        if default is _MISSING:
+            return dbutils.jobs.taskValues.get(taskKey=task_key, key=key)
+        return dbutils.jobs.taskValues.get(taskKey=task_key, key=key, default=default)
+    if default is not _MISSING:
+        return _local_task_values.get(task_key, {}).get(key, default)
     return _local_task_values.get(task_key, {}).get(key)

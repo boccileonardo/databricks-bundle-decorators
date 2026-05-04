@@ -106,7 +106,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
             # This supports tasks with optional return types (e.g.
             # Optional[LazyFrame]) that may legitimately return None.
             upstream_output_is_none = get_task_value(
-                upstream_task_key, "__output_is_none__"
+                upstream_task_key, "__output_is_none__", default=False
             )
             if upstream_output_is_none:
                 _logger.warning(
@@ -130,7 +130,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 and not is_all_partitions
             ):
                 partition_filter = get_task_value(
-                    upstream_task_key, "__partition_values__"
+                    upstream_task_key, "__partition_values__", default=None
                 )
             elif (
                 not upstream_meta.io_manager.auto_filter
