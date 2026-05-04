@@ -398,6 +398,71 @@ class TestComputeBackfillCoverage:
         cov = compute_backfill_coverage("j", [], ["k1"])
         assert cov.completed_key_runs == {}
 
+    def test_infers_daily_key_from_start_time(self) -> None:
+        """On-demand runs without backfill_key get credited via start_time."""
+        # 2024-01-15 12:00:00 UTC in epoch millis
+        ts = 1705320000000
+        runs = [
+            RunInfo(1, "SUCCESS", ts, ts + 1000, 1.0, backfill_key=None),
+        ]
+        cov = compute_backfill_coverage("j", runs, ["2024-01-15"], kind="daily")
+        assert cov.coverage_pct == 100.0
+        assert cov.completed_keys == ["2024-01-15"]
+
+    def test_infers_weekly_key_from_start_time(self) -> None:
+        """On-demand runs are credited to the correct ISO week."""
+        # 2024-01-15 is Monday of W03
+        ts = 1705320000000
+        runs = [
+            RunInfo(1, "SUCCESS", ts, ts + 1000, 1.0, backfill_key=None),
+        ]
+        cov = compute_backfill_coverage("j", runs, ["2024-W03"], kind="weekly")
+        assert cov.coverage_pct == 100.0
+        assert cov.completed_keys == ["2024-W03"]
+
+    def test_infers_monthly_key_from_start_time(self) -> None:
+        """On-demand runs are credited to the correct month."""
+        # 2024-01-15 → key should be 2024-01-01
+        ts = 1705320000000
+        runs = [
+            RunInfo(1, "SUCCESS", ts, ts + 1000, 1.0, backfill_key=None),
+        ]
+        cov = compute_backfill_coverage("j", runs, ["2024-01-01"], kind="monthly")
+        assert cov.coverage_pct == 100.0
+        assert cov.completed_keys == ["2024-01-01"]
+
+    def test_infers_hourly_key_from_start_time(self) -> None:
+        """On-demand runs are credited to the correct hour."""
+        # 2024-01-15 12:30:00 UTC → key should be 2024-01-15T12
+        ts = 1705320000000 + 1800000  # +30 min
+        runs = [
+            RunInfo(1, "SUCCESS", ts, ts + 1000, 1.0, backfill_key=None),
+        ]
+        cov = compute_backfill_coverage("j", runs, ["2024-01-15T12"], kind="hourly")
+        assert cov.coverage_pct == 100.0
+        assert cov.completed_keys == ["2024-01-15T12"]
+
+    def test_no_inference_for_static_backfill(self) -> None:
+        """Static backfills cannot infer key from start time."""
+        ts = 1705320000000
+        runs = [
+            RunInfo(1, "SUCCESS", ts, ts + 1000, 1.0, backfill_key=None),
+        ]
+        cov = compute_backfill_coverage("j", runs, ["us", "eu"], kind="static")
+        assert cov.coverage_pct == 0.0
+
+    def test_explicit_key_takes_precedence(self) -> None:
+        """Runs with explicit backfill_key are not overridden by inference."""
+        ts = 1705320000000  # 2024-01-15
+        runs = [
+            RunInfo(1, "SUCCESS", ts, ts + 1000, 1.0, backfill_key="2024-01-10"),
+        ]
+        cov = compute_backfill_coverage(
+            "j", runs, ["2024-01-10", "2024-01-15"], kind="daily"
+        )
+        assert "2024-01-10" in cov.completed_keys
+        assert "2024-01-15" not in cov.completed_keys
+
 
 # ---------------------------------------------------------------------------
 # _filter_past_keys
