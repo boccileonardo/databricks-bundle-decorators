@@ -6,7 +6,7 @@ No I/O — easy to test.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 import whenever
@@ -42,6 +42,49 @@ _WEEK_KEY_RE: re.Pattern[str] = re.compile(r"^(\d{4})-W(\d{2})$")
 
 #: ``whenever`` format for hourly backfill keys.
 _HOURLY_FMT: str = "YYYY-MM-DD'T'hh"
+
+#: ``whenever`` format for daily backfill keys.
+_DAILY_FMT: str = "YYYY-MM-DD"
+
+
+def _infer_key_from_start_time(
+    start_time_ms: int | None, kind: str, tz: str = "UTC"
+) -> str | None:
+    """Infer the backfill key a run would have used based on its start time.
+
+    When a run is triggered on-demand (e.g. via the "Run Now" button)
+    without an explicit ``backfill_key``, the runtime falls back to
+    ``BackfillDef.current_key()`` which derives the key from "now".
+    This function reproduces that logic using the run's start time
+    so the dashboard can credit on-demand runs to the correct partition.
+
+    Returns ``None`` for static backfills or if start_time_ms is absent.
+    """
+    if start_time_ms is None or kind == "static":
+        return None
+
+    # Convert epoch millis to a ZonedDateTime in the backfill's tz
+    utc_dt = datetime.fromtimestamp(start_time_ms / 1000.0, tz=UTC)
+    zdt = whenever.ZonedDateTime(
+        utc_dt.year,
+        utc_dt.month,
+        utc_dt.day,
+        utc_dt.hour,
+        utc_dt.minute,
+        utc_dt.second,
+        tz="UTC",
+    ).to_tz(tz)
+
+    if kind == "daily":
+        return zdt.date().format(_DAILY_FMT)
+    if kind == "weekly":
+        iwd = zdt.date().iso_week_date()
+        return f"{iwd.year}-W{iwd.week:02d}"
+    if kind == "monthly":
+        return zdt.date().replace(day=1).format(_DAILY_FMT)
+    if kind == "hourly":
+        return zdt.replace(minute=0, second=0, nanosecond=0).format(_HOURLY_FMT)
+    return None
 
 
 def _effective_state(
@@ -233,16 +276,22 @@ def compute_backfill_coverage(
     errored: set[str] = set()
     active: set[str] = set()
     for r in runs:
-        if r.backfill_key is None:
+        effective_key = r.backfill_key
+        # On-demand runs (e.g. "Run Now") have no backfill_key but the
+        # runtime falls back to current_key() for time-based backfills.
+        # Infer the key from the run's start time so these runs get credit.
+        if effective_key is None:
+            effective_key = _infer_key_from_start_time(r.start_time_ms, kind, tz)
+        if effective_key is None:
             continue
         if r.result_state == "SUCCESS":
-            prev = key_runs.get(r.backfill_key)
+            prev = key_runs.get(effective_key)
             if prev is None or (r.start_time_ms or 0) > (prev[1] or 0):
-                key_runs[r.backfill_key] = (r.run_id, r.start_time_ms)
+                key_runs[effective_key] = (r.run_id, r.start_time_ms)
         elif _is_terminal_failure(r.result_state, r.life_cycle_state):
-            errored.add(r.backfill_key)
+            errored.add(effective_key)
         elif _is_active(r.result_state, r.life_cycle_state):
-            active.add(r.backfill_key)
+            active.add(effective_key)
 
     # Remove keys that also have a successful run
     errored -= set(key_runs)
