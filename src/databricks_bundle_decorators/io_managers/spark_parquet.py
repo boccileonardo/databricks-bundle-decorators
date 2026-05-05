@@ -20,6 +20,7 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
+    RetryConfig,
     _needs_backfill_key_col,
     _resolve_backfill_key,
     _spark_apply_partition_filter,
@@ -39,11 +40,13 @@ class _SparkParquetBase(IoManager):
         read_options: dict[str, str] | None = None,
         *,
         auto_filter: bool = True,
+        retry: RetryConfig | None = None,
     ) -> None:
         self._base_path = base_path
         self._write_options = write_options or {}
         self._read_options = read_options or {}
         self.auto_filter = auto_filter
+        self.retry = retry
 
     @property
     def base_path(self) -> str:
@@ -168,6 +171,12 @@ class SparkParquetIoManager(_SparkParquetBase):
         Extra Spark writer options applied via ``.option(k, v)``.
     read_options : dict[str, str] | None
         Extra Spark reader options applied via ``.option(k, v)``.
+    retry : `RetryConfig` | None
+        Optional retry configuration for write operations.  When set,
+        failed writes are retried with exponential backoff (powered by
+        `tenacity`).  Useful for handling transient write conflicts
+        during concurrent backfill runs.  Defaults to ``None``
+        (no retries).
 
     Example
     -------
@@ -197,12 +206,14 @@ class SparkParquetIoManager(_SparkParquetBase):
         read_options: dict[str, str] | None = None,
         *,
         auto_filter: bool = True,
+        retry: RetryConfig | None = None,
     ) -> None:
         super().__init__(
             base_path,
             write_options=write_options,
             read_options=read_options,
             auto_filter=auto_filter,
+            retry=retry,
         )
         self._spark_configs = spark_configs
 
@@ -251,6 +262,12 @@ class SparkServerlessParquetIoManager(_SparkParquetBase):
         Extra Spark writer options applied via ``.option(k, v)``.
     read_options : dict[str, str] | None
         Extra Spark reader options applied via ``.option(k, v)``.
+    retry : `RetryConfig` | None
+        Optional retry configuration for write operations.  When set,
+        failed writes are retried with exponential backoff (powered by
+        `tenacity`).  Useful for handling transient write conflicts
+        during concurrent backfill runs.  Defaults to ``None``
+        (no retries).
 
     Example
     -------

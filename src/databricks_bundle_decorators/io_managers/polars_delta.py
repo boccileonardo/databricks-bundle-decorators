@@ -18,6 +18,7 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
+    RetryConfig,
     _build_replace_where,
     _needs_backfill_key_col,
     _polars_apply_partition_filter,
@@ -110,6 +111,12 @@ class PolarsDeltaIoManager(IoManager):
     read_options : dict[str, Any] | None
         Extra keyword arguments forwarded to the Polars read call
         (``read_delta`` / ``scan_delta``).
+    retry : `RetryConfig` | None
+        Optional retry configuration for write operations.  When set,
+        failed writes are retried with exponential backoff (powered by
+        `tenacity`).  Useful for handling transient Delta commit
+        conflicts during concurrent backfill runs on unpartitioned
+        tables.  Defaults to ``None`` (no retries).
 
     Example
     -------
@@ -141,6 +148,7 @@ class PolarsDeltaIoManager(IoManager):
         mode: str = "error",
         *,
         auto_filter: bool = True,
+        retry: RetryConfig | None = None,
     ) -> None:
         _validate_delta_mode(mode, type(self).__name__)
         self._base_path = base_path
@@ -149,6 +157,7 @@ class PolarsDeltaIoManager(IoManager):
         self._read_options = read_options or {}
         self._mode = mode
         self.auto_filter = auto_filter
+        self.retry = retry
 
     @property
     def base_path(self) -> str:

@@ -17,6 +17,7 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
+    RetryConfig,
     _needs_backfill_key_col,
     _polars_apply_partition_filter,
     _polars_extract_partition_values,
@@ -93,6 +94,12 @@ class PolarsParquetIoManager(IoManager):
     read_options : dict[str, Any] | None
         Extra keyword arguments forwarded to the Polars read call
         (``read_parquet`` / ``scan_parquet``).
+    retry : `RetryConfig` | None
+        Optional retry configuration for write operations.  When set,
+        failed writes are retried with exponential backoff (powered by
+        `tenacity`).  Useful for handling transient write conflicts
+        during concurrent backfill runs.  Defaults to ``None``
+        (no retries).
 
     Example
     -------
@@ -124,12 +131,14 @@ class PolarsParquetIoManager(IoManager):
         read_options: dict[str, Any] | None = None,
         *,
         auto_filter: bool = True,
+        retry: RetryConfig | None = None,
     ) -> None:
         self._base_path = base_path
         self._storage_options = storage_options
         self._write_options = write_options or {}
         self._read_options = read_options or {}
         self.auto_filter = auto_filter
+        self.retry = retry
 
     @property
     def base_path(self) -> str:

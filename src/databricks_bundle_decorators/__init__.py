@@ -78,6 +78,7 @@ from databricks_bundle_decorators.discovery import (
 from databricks_bundle_decorators.io_manager import InputContext as InputContext
 from databricks_bundle_decorators.io_manager import IoManager as IoManager
 from databricks_bundle_decorators.io_manager import OutputContext as OutputContext
+from databricks_bundle_decorators.io_manager import RetryConfig as RetryConfig
 from databricks_bundle_decorators.registry import (
     ClusterMeta as ClusterMeta,
 )
@@ -106,6 +107,7 @@ __all__ = [
     "JobConfig",
     "MonthlyBackfill",
     "OutputContext",
+    "RetryConfig",
     "StaticBackfill",
     "TaskConfig",
     "TaskProxy",

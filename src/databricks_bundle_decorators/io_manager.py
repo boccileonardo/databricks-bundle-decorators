@@ -9,12 +9,51 @@ Users implement concrete IoManagers and attach them to tasks via the
 ``io_manager`` parameter of the ``@task`` decorator.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+_logger = logging.getLogger(__name__)
+
 _VALID_DELTA_MODES = frozenset({"error", "overwrite", "append", "ignore"})
+
+
+@dataclass(frozen=True)
+class RetryConfig:
+    """Configuration for retrying IoManager write operations.
+
+    Useful when concurrent writes to the same Delta table cause
+    transient ``CommitFailedError`` conflicts (e.g. during backfills
+    of unpartitioned dimension tables).
+
+    Parameters
+    ----------
+    max_attempts : int
+        Total number of attempts (including the first try).  Must be >= 1.
+    delay : float
+        Initial delay in seconds between retry attempts.
+    backoff_factor : float
+        Multiplier applied to *delay* after each failed attempt.
+        For example, ``delay=1.0, backoff_factor=2.0`` produces waits
+        of 1s, 2s, 4s, …
+    """
+
+    max_attempts: int = 3
+    delay: float = 1.0
+    backoff_factor: float = 2.0
+
+    def __post_init__(self) -> None:
+        if self.max_attempts < 1:
+            msg = f"max_attempts must be >= 1, got {self.max_attempts}"
+            raise ValueError(msg)
+        if self.delay < 0:
+            msg = f"delay must be >= 0, got {self.delay}"
+            raise ValueError(msg)
+        if self.backoff_factor < 0:
+            msg = f"backoff_factor must be >= 0, got {self.backoff_factor}"
+            raise ValueError(msg)
 
 
 def _validate_delta_mode(mode: str, io_manager_name: str) -> None:
@@ -233,6 +272,12 @@ class IoManager(ABC):
     """When True, partition values are pushed via task values on write
     and used to auto-filter reads.  Set to False to disable."""
 
+    retry: RetryConfig | None = None
+    """Optional retry configuration for write operations.
+    When set, `write` calls that raise exceptions will be retried
+    with exponential backoff.  Useful for handling transient Delta
+    commit conflicts during concurrent backfill runs."""
+
     def setup(self) -> None:  # noqa: B027
         """Initialise runtime-only resources.
 
@@ -250,6 +295,35 @@ class IoManager(ABC):
         if not self._is_setup:
             self.setup()
             self._is_setup = True
+
+    def write_with_retry(self, context: "OutputContext", obj: Any) -> None:
+        """Call `write` with optional retry logic.
+
+        If `retry` is configured, retries on any exception using
+        exponential backoff (powered by `tenacity`).  Otherwise, calls
+        `write` directly.
+        """
+        if self.retry is None:
+            self.write(context, obj)
+            return
+
+        from tenacity import (  # noqa: PLC0415
+            before_sleep_log,
+            retry,
+            stop_after_attempt,
+            wait_exponential,
+        )
+
+        retryer = retry(
+            stop=stop_after_attempt(self.retry.max_attempts),
+            wait=wait_exponential(
+                multiplier=self.retry.delay,
+                exp_base=self.retry.backoff_factor,
+            ),
+            reraise=True,
+            before_sleep=before_sleep_log(_logger, logging.WARNING),
+        )
+        retryer(self.write)(context, obj)
 
     def _extract_partition_values(self, context: OutputContext) -> dict[str, list[str]]:  # noqa: ARG002
         """Return partition column values captured during `write`.

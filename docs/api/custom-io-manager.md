@@ -99,6 +99,35 @@ class DeltaReplaceWhereIoManager(IoManager):
         return spark.read.format("delta").load(uri)
 ```
 
+## Write retries
+
+To handle transient or concurrent-write errors, configure `RetryConfig` on your IoManager.  The framework will retry failed writes with exponential backoff (powered
+by [tenacity](https://tenacity.readthedocs.io/)):
+
+```python
+from databricks_bundle_decorators import IoManager, RetryConfig, OutputContext, InputContext
+
+
+class MyIoManager(IoManager):
+    def __init__(self, base_path: str) -> None:
+        self.base_path = base_path
+        self.retry = RetryConfig(max_attempts=5, delay=1.0, backoff_factor=2.0)
+
+    def write(self, context: OutputContext, obj) -> None:
+        ...
+
+    def read(self, context: InputContext):
+        ...
+```
+
+`RetryConfig` parameters:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `max_attempts` | `3` | Total number of attempts (including the first try) |
+| `delay` | `1.0` | Initial delay in seconds between retries |
+| `backoff_factor` | `2.0` | Multiplier applied to delay after each failure (1s → 2s → 4s …) |
+
 ## API Reference
 
 ::: databricks_bundle_decorators.io_manager.IoManager
@@ -106,3 +135,5 @@ class DeltaReplaceWhereIoManager(IoManager):
 ::: databricks_bundle_decorators.io_manager.OutputContext
 
 ::: databricks_bundle_decorators.io_manager.InputContext
+
+::: databricks_bundle_decorators.io_manager.RetryConfig
