@@ -20,6 +20,7 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
+    RetryConfig,
     _build_replace_where,
     _needs_backfill_key_col,
     _resolve_backfill_key,
@@ -42,6 +43,7 @@ class _SparkDeltaBase(IoManager):
         mode: str = "error",
         *,
         auto_filter: bool = True,
+        retry: RetryConfig | None = None,
     ) -> None:
         _validate_delta_mode(mode, type(self).__name__)
         self._base_path = base_path
@@ -49,6 +51,7 @@ class _SparkDeltaBase(IoManager):
         self._read_options = read_options or {}
         self._mode = mode
         self.auto_filter = auto_filter
+        self.retry = retry
 
     @property
     def base_path(self) -> str:
@@ -200,6 +203,12 @@ class SparkDeltaIoManager(_SparkDeltaBase):
         For **merge** operations, ignore this parameter and return a
         fully-configured ``DeltaMergeBuilder`` from your task instead.
         The IoManager will call ``.execute()`` on it automatically.
+    retry : `RetryConfig` | None
+        Optional retry configuration for write operations.  When set,
+        failed writes are retried with exponential backoff (powered by
+        `tenacity`).  Useful for handling transient Delta commit
+        conflicts during concurrent backfill runs on unpartitioned
+        tables.  Defaults to ``None`` (no retries).
 
     Example
     -------
@@ -243,6 +252,7 @@ class SparkDeltaIoManager(_SparkDeltaBase):
         mode: str = "error",
         *,
         auto_filter: bool = True,
+        retry: RetryConfig | None = None,
     ) -> None:
         super().__init__(
             base_path,
@@ -250,6 +260,7 @@ class SparkDeltaIoManager(_SparkDeltaBase):
             read_options=read_options,
             mode=mode,
             auto_filter=auto_filter,
+            retry=retry,
         )
         self._spark_configs = spark_configs
 
@@ -303,6 +314,12 @@ class SparkServerlessDeltaIoManager(_SparkDeltaBase):
         etc.).  Defaults to ``"error"`` to prevent accidental data
         loss.  For merge operations, return a ``DeltaMergeBuilder``
         from your task instead.
+    retry : `RetryConfig` | None
+        Optional retry configuration for write operations.  When set,
+        failed writes are retried with exponential backoff (powered by
+        `tenacity`).  Useful for handling transient Delta commit
+        conflicts during concurrent backfill runs on unpartitioned
+        tables.  Defaults to ``None`` (no retries).
 
     Example
     -------

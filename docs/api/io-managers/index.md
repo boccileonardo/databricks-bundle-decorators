@@ -96,3 +96,31 @@ calls `.execute()` automatically:
 
 When returning a merge builder, the `mode` parameter on the IoManager is
 ignored — the merge builder fully controls how data is written.
+
+## Write Retries
+
+All built-in IoManagers accept an optional `retry` keyword argument of
+type `RetryConfig` to handle transient write failures (e.g. Delta commit
+conflicts during concurrent backfill runs on unpartitioned tables).
+
+```python
+from databricks_bundle_decorators import RetryConfig
+from databricks_bundle_decorators.io_managers import PolarsDeltaIoManager
+
+io = PolarsDeltaIoManager(
+    base_path="abfss://lake@account.dfs.core.windows.net/dims",
+    mode="overwrite",
+    retry=RetryConfig(max_attempts=5, delay=1.0, backoff_factor=2.0),
+)
+```
+
+| Parameter | Default | Description |
+|---|---|---|
+| `max_attempts` | `3` | Total number of attempts (including the first try) |
+| `delay` | `1.0` | Initial delay in seconds between retries |
+| `backoff_factor` | `2.0` | Multiplier applied to delay after each failure (1s → 2s → 4s …) |
+
+Retries use exponential backoff powered by
+[tenacity](https://tenacity.readthedocs.io/).  See
+[Custom IoManagers – Write retries](../custom-io-manager.md#write-retries)
+for details on using retries in custom IoManager implementations.

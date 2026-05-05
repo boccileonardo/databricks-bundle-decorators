@@ -11,7 +11,9 @@ from databricks_bundle_decorators.io_manager import (
     InputContext,
     IoManager,
     OutputContext,
+    RetryConfig,
 )
+from databricks_bundle_decorators.io_managers import PolarsDeltaIoManager
 from databricks_bundle_decorators.registry import (
     _JOB_REGISTRY,
     _TASK_REGISTRY,
@@ -1011,3 +1013,83 @@ class TestOptionalOutput:
         )
 
         assert captured["data"] == {"rows": [1, 2, 3]}
+
+
+class TestWriteRetry:
+    """Tests for IoManager write retry behaviour."""
+
+    def setup_method(self):
+        reset_registries()
+        _MemoryIo.storage = {}
+        _local_task_values.clear()
+
+    def test_retry_succeeds_on_second_attempt(self):
+        """Write succeeds after a transient failure."""
+        call_count = 0
+
+        class _FlakeyIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                nonlocal call_count
+                call_count += 1
+                if call_count < 2:
+                    raise RuntimeError("CommitFailedError: concurrent write")
+                _MemoryIo.storage[context.task_key] = obj
+
+            def read(self, context: InputContext) -> Any:
+                return _MemoryIo.storage.get(context.upstream_task_key)
+
+        io = _FlakeyIo()
+        io.retry = RetryConfig(max_attempts=3, delay=0.01, backoff_factor=1.0)
+
+        _TASK_REGISTRY["j.t"] = TaskMeta(fn=lambda: "data", task_key="t", io_manager=io)
+
+        run_task("t", {"__job_name__": "j", "__task_key__": "t"})
+
+        assert call_count == 2
+        assert _MemoryIo.storage["t"] == "data"
+
+    def test_retry_exhausted_raises(self):
+        """Write raises after all attempts are exhausted."""
+
+        class _AlwaysFailIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                raise RuntimeError("CommitFailedError: concurrent write")
+
+            def read(self, context: InputContext) -> Any:
+                return None
+
+        io = _AlwaysFailIo()
+        io.retry = RetryConfig(max_attempts=3, delay=0.01, backoff_factor=1.0)
+
+        _TASK_REGISTRY["j.t"] = TaskMeta(fn=lambda: "data", task_key="t", io_manager=io)
+
+        with pytest.raises(RuntimeError, match="CommitFailedError"):
+            run_task("t", {"__job_name__": "j", "__task_key__": "t"})
+
+    def test_no_retry_when_not_configured(self):
+        """Without retry config, failure propagates immediately."""
+
+        class _FailOnceIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                raise RuntimeError("write failed")
+
+            def read(self, context: InputContext) -> Any:
+                return None
+
+        io = _FailOnceIo()
+        # retry is None by default
+
+        _TASK_REGISTRY["j.t"] = TaskMeta(fn=lambda: "data", task_key="t", io_manager=io)
+
+        with pytest.raises(RuntimeError, match="write failed"):
+            run_task("t", {"__job_name__": "j", "__task_key__": "t"})
+
+    def test_retry_config_passed_via_constructor(self):
+        """Concrete IoManagers accept retry in __init__."""
+        cfg = RetryConfig(max_attempts=5, delay=2.0, backoff_factor=3.0)
+        io = PolarsDeltaIoManager(base_path="/data/test", retry=cfg)
+
+        assert io.retry is cfg
+        assert io.retry.max_attempts == 5
+        assert io.retry.delay == 2.0
+        assert io.retry.backoff_factor == 3.0

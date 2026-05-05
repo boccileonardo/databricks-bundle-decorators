@@ -190,7 +190,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 backfill_key=backfill_key,
                 partition_by=task_meta.partition_by,
             )
-            task_meta.io_manager.write(context, result)
+            task_meta.io_manager.write_with_retry(context, result)
 
             # Push partition values for downstream auto-filtering
             if task_meta.io_manager.auto_filter and task_meta.partition_by:
