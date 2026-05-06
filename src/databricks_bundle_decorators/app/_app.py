@@ -38,15 +38,17 @@ from databricks_bundle_decorators.app._pages import (
 from databricks_bundle_decorators.backfill import BackfillDef, _deserialize_backfill_tag
 
 
-def _load_registry() -> tuple[set[str], dict[str, BackfillDef]]:
+def _load_registry() -> tuple[set[str], dict[str, BackfillDef], dict[str, str]]:
     """Load job names and backfill definitions from ``registry.json``.
 
-    Returns a set of all job names found in the registry and a dict
+    Returns a set of all job names found in the registry, a dict
     mapping job names to their backfill definitions (only for jobs
-    that have one).
+    that have one), and a dict mapping job names to their Quartz
+    schedule cron expressions (only for jobs that have one).
     """
     all_jobs: set[str] = set()
     backfill_defs: dict[str, BackfillDef] = {}
+    schedule_crons: dict[str, str] = {}
     registry_path = Path(__file__).resolve().parent.parent.parent / "registry.json"
     if not registry_path.exists():
         # Also check relative to cwd (deployed app layout)
@@ -56,8 +58,11 @@ def _load_registry() -> tuple[set[str], dict[str, BackfillDef]]:
         all_jobs.update(raw.keys())
         for job_name, defn_dict in raw.items():
             if defn_dict is not None:
+                cron = defn_dict.pop("schedule_cron", None)
                 backfill_defs[job_name] = _deserialize_backfill_tag(defn_dict)
-    return all_jobs, backfill_defs
+                if cron is not None:
+                    schedule_crons[job_name] = cron
+    return all_jobs, backfill_defs, schedule_crons
 
 
 def run_app(
@@ -98,13 +103,17 @@ def run_app(
     from databricks_bundle_decorators.registry import _JOB_REGISTRY  # noqa: PLC0415
 
     # Load job names and backfill definitions from registry.json
-    all_registry_jobs, backfill_defs = _load_registry()
+    all_registry_jobs, backfill_defs, schedule_crons = _load_registry()
 
     # Merge with live registry (if the pipeline package is imported,
     # the registry takes precedence).
     for name, meta in _JOB_REGISTRY.items():
         if meta.backfill is not None:
             backfill_defs[name] = meta.backfill
+        schedule = meta.sdk_config.get("schedule")
+        cron_expr: str | None = getattr(schedule, "quartz_cron_expression", None)
+        if cron_expr is not None:
+            schedule_crons[name] = cron_expr
 
     # Discover job IDs via SDK (app resource bindings)
     job_id_map = resolve_job_ids_from_sdk()
@@ -167,7 +176,13 @@ def run_app(
                 kind = _backfill_kind(bf)
                 tz = getattr(bf, "tz", "UTC")
                 coverages[name] = compute_backfill_coverage(
-                    name, runs, expected, kind=kind, tz=tz
+                    name,
+                    runs,
+                    expected,
+                    kind=kind,
+                    tz=tz,
+                    backfill=bf,
+                    schedule_cron=schedule_crons.get(name),
                 )
 
         _cache["all_runs"] = all_runs

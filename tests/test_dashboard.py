@@ -463,6 +463,56 @@ class TestComputeBackfillCoverage:
         assert "2024-01-10" in cov.completed_keys
         assert "2024-01-15" not in cov.completed_keys
 
+    def test_schedule_gap_keys_credited(self) -> None:
+        """With collect_schedule_gaps, Monday run credits Sat+Sun gap keys."""
+        bf = DailyBackfill(start_date="2024-01-01", collect_schedule_gaps=True)
+        # Monday 2024-01-08 run. Prev cron fire = Fri 2024-01-05.
+        # Gap keys = Sat 2024-01-06, Sun 2024-01-07.
+        ts = 1704700800000  # 2024-01-08 arbitrary
+        runs = [
+            RunInfo(1, "SUCCESS", ts, ts + 1000, 1.0, backfill_key="2024-01-08"),
+        ]
+        expected = [
+            "2024-01-05",
+            "2024-01-06",
+            "2024-01-07",
+            "2024-01-08",
+        ]
+        cov = compute_backfill_coverage(
+            "j",
+            runs,
+            expected,
+            kind="daily",
+            backfill=bf,
+            schedule_cron="0 0 6 ? * 2-6",  # MON-FRI 6am
+        )
+        # Monday credited directly, Sat+Sun credited via gap
+        assert "2024-01-06" in cov.completed_keys
+        assert "2024-01-07" in cov.completed_keys
+        assert "2024-01-08" in cov.completed_keys
+        # Friday should NOT be credited (it's a separate scheduled run)
+        assert "2024-01-05" not in cov.completed_keys
+
+    def test_schedule_gap_not_credited_without_flag(self) -> None:
+        """Without collect_schedule_gaps, gap keys are not credited."""
+        bf = DailyBackfill(start_date="2024-01-01")
+        ts = 1704700800000
+        runs = [
+            RunInfo(1, "SUCCESS", ts, ts + 1000, 1.0, backfill_key="2024-01-08"),
+        ]
+        expected = ["2024-01-06", "2024-01-07", "2024-01-08"]
+        cov = compute_backfill_coverage(
+            "j",
+            runs,
+            expected,
+            kind="daily",
+            backfill=bf,
+            schedule_cron="0 0 6 ? * 2-6",
+        )
+        assert "2024-01-06" not in cov.completed_keys
+        assert "2024-01-07" not in cov.completed_keys
+        assert "2024-01-08" in cov.completed_keys
+
 
 # ---------------------------------------------------------------------------
 # _filter_past_keys

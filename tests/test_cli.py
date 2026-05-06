@@ -612,7 +612,7 @@ class TestBackfillCmd:
 
         calls: list[list[str]] = []
 
-        def _fake_run(cmd, *, capture_output=False, text=False):
+        def _fake_run(cmd, *, capture_output=False, text=False, check=False):
             calls.append(list(cmd))
             return subprocess.CompletedProcess(cmd, 0, stdout="Run submitted\n")
 
@@ -645,7 +645,7 @@ class TestBackfillCmd:
 
         calls: list[list[str]] = []
 
-        def _fake_run(cmd, *, capture_output=False, text=False):
+        def _fake_run(cmd, *, capture_output=False, text=False, check=False):
             calls.append(list(cmd))
             return subprocess.CompletedProcess(cmd, 0, stdout="OK\n")
 
@@ -677,7 +677,7 @@ class TestBackfillCmd:
 
         calls: list[list[str]] = []
 
-        def _fake_run(cmd, *, capture_output=False, text=False):
+        def _fake_run(cmd, *, capture_output=False, text=False, check=False):
             calls.append(list(cmd))
             return subprocess.CompletedProcess(cmd, 0, stdout="SUCCESS\n")
 
@@ -990,7 +990,7 @@ class TestBackfillCatchupCmd:
 
         submitted_keys: list[str] = []
 
-        def _combined(cmd, *, capture_output=False, text=False):
+        def _combined(cmd, *, capture_output=False, text=False, check=False):
             if "bundle" in cmd and "summary" in cmd:
                 return self._fake_bundle_summary()(
                     cmd, capture_output=capture_output, text=text

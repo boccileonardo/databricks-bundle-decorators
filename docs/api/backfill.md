@@ -14,6 +14,8 @@
 
 ::: databricks_bundle_decorators.backfill.get_backfill_key
 
+::: databricks_bundle_decorators.backfill.get_backfill_keys
+
 ::: databricks_bundle_decorators.backfill.get_run_logical_date
 
 ## Cross-partition reads

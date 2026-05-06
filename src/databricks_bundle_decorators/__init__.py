@@ -58,6 +58,9 @@ from databricks_bundle_decorators.backfill import (
     get_backfill_key as get_backfill_key,
 )
 from databricks_bundle_decorators.backfill import (
+    get_backfill_keys as get_backfill_keys,
+)
+from databricks_bundle_decorators.backfill import (
     get_run_logical_date as get_run_logical_date,
 )
 from databricks_bundle_decorators.codegen import (
@@ -119,6 +122,7 @@ __all__ = [
     "for_each_task",
     "generate_resources",
     "get_backfill_key",
+    "get_backfill_keys",
     "get_dbutils",
     "get_run_logical_date",
     "get_task_value",
