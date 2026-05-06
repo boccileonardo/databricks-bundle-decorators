@@ -383,6 +383,31 @@ targets:
 """
 
 
+def _uv_lock_app_dir(cwd: Path) -> bool:
+    """Run ``uv lock`` inside the app/ directory to keep the lockfile in sync.
+
+    Returns ``True`` if the lock was successfully run, ``False`` otherwise.
+    """
+    app_dir = cwd / "app"
+    if not app_dir.exists():
+        return False
+    uv_bin = shutil.which("uv")
+    if uv_bin is None:
+        print(
+            "Warning: uv not found on PATH. "
+            "Run 'uv lock' inside app/ manually to update uv.lock.",
+            file=sys.stderr,
+        )
+        return False
+    subprocess.run(  # noqa: S603
+        [uv_bin, "lock"],
+        cwd=app_dir,
+        check=True,
+        capture_output=True,
+    )
+    return True
+
+
 def _add_entry_point_to_pyproject(cwd: Path, package_name: str) -> bool:
     """Append the pipeline entry-point section to *pyproject.toml*.
 
@@ -538,25 +563,6 @@ def _cmd_init(
             APP_PYPROJECT_TEMPLATE,
         )
 
-        # Generate uv.lock so Databricks Apps uses uv (not pip)
-        app_dir = cwd / "app"
-        if not (app_dir / "uv.lock").exists():
-            uv_bin = shutil.which("uv")
-            if uv_bin is None:
-                print(
-                    "Warning: uv not found on PATH. "
-                    "Run 'uv lock' inside app/ manually to generate uv.lock.",
-                    file=sys.stderr,
-                )
-            else:
-                subprocess.run(  # noqa: S603
-                    [uv_bin, "lock"],
-                    cwd=app_dir,
-                    check=True,
-                    capture_output=True,
-                )
-                created.append("app/uv.lock")
-
         # Generate resources/app.yml from registry (always overwrite)
         _generate_app_yml(
             cwd=cwd,
@@ -564,6 +570,10 @@ def _cmd_init(
             permission=permission,
             created=created,
         )
+
+        # Keep uv.lock in sync with app/pyproject.toml and registry.json
+        if _uv_lock_app_dir(cwd):
+            created.append("app/uv.lock")
 
     # --- Summary -----------------------------------------------------------
     print()
@@ -1182,6 +1192,11 @@ def app_config(
     _generate_app_yml(
         cwd=cwd, app_name=app_name, permission=permission, created=created
     )
+
+    # Keep uv.lock in sync with app/pyproject.toml and registry.json
+    if _uv_lock_app_dir(cwd):
+        created.append("app/uv.lock")
+
     for f in created:
         print(f"Generated: {f}")
 
