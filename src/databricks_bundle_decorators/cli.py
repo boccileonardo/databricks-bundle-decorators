@@ -9,6 +9,7 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import shutil
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from databricks.sdk import WorkspaceClient
 
 from databricks_bundle_decorators.backfill import (
     BACKFILL_KEY_PARAM,
@@ -709,6 +711,10 @@ def _cmd_backfill(
     )
 
 
+#: Maximum number of concurrent job runs polling when --wait is used.
+_MAX_CONCURRENT_WAITS: int = 8
+
+
 def _submit_backfill_runs(
     *,
     job_name: str,
@@ -718,55 +724,43 @@ def _submit_backfill_runs(
     target: str | None = None,
     profile: str | None = None,
 ) -> None:
-    """Submit one ``databricks bundle run`` per backfill key.
+    """Submit one Databricks job run per backfill key via the SDK.
 
-    Runs are submitted sequentially in the order of *key_list*.
-    Databricks handles concurrency via its job-level
-    ``max_concurrent_runs`` setting and run queue.
+    Uses ``databricks bundle summary`` once to resolve the numeric job
+    ID (handles dev-mode prefixes), then submits runs directly via the
+    Databricks SDK — one fast HTTP call per key with no subprocess
+    overhead.
+
+    Submissions are strictly sequential to guarantee ordering: key[0]
+    is accepted by the API before key[1] is sent.
+
+    When *wait* is ``True``, all runs are submitted first (in order),
+    then polled concurrently until they all complete.
 
     Shared by ``backfill`` and ``catchup`` commands.
     """
-    if shutil.which("databricks") is None:
-        print(
-            "Error: 'databricks' CLI not found on PATH. "
-            "Install it: https://docs.databricks.com/dev-tools/cli/install.html",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    job_id = _get_job_id_from_bundle(job_name, target, profile)
 
-    base_cmd: list[str] = ["databricks", "bundle", "run", job_name]
-    if target:
-        base_cmd += ["--target", target]
-    if profile:
-        base_cmd += ["--profile", profile]
+    w = WorkspaceClient(profile=profile)
 
     submitted: list[str] = []
     failed: list[str] = []
+    waiters: list[tuple[str, object]] = []
 
     for key in key_list:
-        params_val = f"{BACKFILL_KEY_PARAM}={key}"
+        params: dict[str, str] = {BACKFILL_KEY_PARAM: key}
         if exact:
-            params_val += f",{EXACT_BACKFILL_PARAM}=1"
-        cmd = [*base_cmd, "--params", params_val]
-        if not wait:
-            cmd.append("--no-wait")
+            params[EXACT_BACKFILL_PARAM] = "1"
         try:
-            result = subprocess.run(  # noqa: S603
-                cmd, capture_output=True, text=True, check=False
+            waiter = w.jobs.run_now(
+                job_id=int(job_id),
+                job_parameters=params,
             )
-            if result.returncode == 0:
-                output = result.stdout.strip()
-                label = "OK" if wait else "submitted"
-                msg = f"  {key} -> {label}"
-                if output:
-                    last_line = output.splitlines()[-1]
-                    msg = f"  {key} -> {last_line}"
-                submitted.append(key)
-                print(msg)
-            else:
-                failed.append(key)
-                err = result.stderr.strip() or result.stdout.strip()
-                print(f"  {key} -> FAILED: {err}", file=sys.stderr)
+            submitted.append(key)
+            run_id = waiter.run_id
+            print(f"  {key} -> submitted (run_id={run_id})")
+            if wait:
+                waiters.append((key, waiter))
         except KeyboardInterrupt:
             print("\nBackfill interrupted.", file=sys.stderr)
             sys.exit(130)
@@ -774,14 +768,71 @@ def _submit_backfill_runs(
             failed.append(key)
             print(f"  {key} -> FAILED: {exc}", file=sys.stderr)
 
-    action = "Completed" if wait else "Submitted"
-    print(f"\n{action} {len(submitted)}/{len(key_list)} runs.")
+    if not wait:
+        print(f"\nSubmitted {len(submitted)}/{len(key_list)} runs.")
+        if failed:
+            print(
+                f"Failed keys ({len(failed)}): {', '.join(failed)}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return
+
+    # Wait mode: poll all submitted runs concurrently.
+    print(
+        f"\nSubmitted {len(submitted)}/{len(key_list)} runs. Waiting for completion..."
+    )
+    poll_failed: list[str] = []
+    try:
+        asyncio.run(_poll_runs(waiters, poll_failed))
+    except KeyboardInterrupt:
+        print("\nInterrupted while waiting.", file=sys.stderr)
+        sys.exit(130)
+
+    failed.extend(poll_failed)
+    completed = len(submitted) - len(poll_failed)
+    print(f"\nCompleted {completed}/{len(key_list)} runs.")
     if failed:
         print(
             f"Failed keys ({len(failed)}): {', '.join(failed)}",
             file=sys.stderr,
         )
         sys.exit(1)
+
+
+async def _poll_runs(
+    waiters: list[tuple[str, object]],
+    failed: list[str],
+) -> None:
+    """Poll run waiters concurrently with bounded parallelism."""
+    from typing import Any  # noqa: PLC0415
+
+    semaphore = asyncio.Semaphore(_MAX_CONCURRENT_WAITS)
+
+    async def _wait_one(key: str, waiter: Any) -> None:
+        async with semaphore:
+            # The SDK waiter's .result() is synchronous/blocking, so
+            # run it in a thread to avoid blocking the event loop.
+            loop = asyncio.get_running_loop()
+            try:
+                run = await loop.run_in_executor(None, waiter.result)
+                state = run.state
+                result_state = (
+                    state.result_state.value
+                    if state and state.result_state
+                    else "UNKNOWN"
+                )
+                if result_state == "SUCCESS":
+                    print(f"  {key} -> OK ({result_state})")
+                else:
+                    failed.append(key)
+                    print(f"  {key} -> FAILED ({result_state})", file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001
+                failed.append(key)
+                print(f"  {key} -> FAILED: {exc}", file=sys.stderr)
+
+    tasks = [asyncio.create_task(_wait_one(key, waiter)) for key, waiter in waiters]
+    await asyncio.gather(*tasks)
 
 
 def _get_job_id_from_bundle(
