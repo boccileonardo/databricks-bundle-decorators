@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from delta.tables import DeltaTable
 from pyspark.sql import SparkSession
 
 from databricks_bundle_decorators.io_manager import InputContext, OutputContext
@@ -263,58 +262,118 @@ class TestSparkDeltaMode:
 # ---------------------------------------------------------------------------
 
 
-class TestSparkDeltaMergeBuilder:
-    def test_merge_upsert(self, spark: SparkSession, tmp_path):
-        """Full merge round-trip: insert initial data, then upsert."""
+# ---------------------------------------------------------------------------
+# DeltaMerge (declarative) with Spark
+# ---------------------------------------------------------------------------
+
+
+class TestSparkDeltaMerge:
+    def test_delta_merge_upsert(self, spark: SparkSession, tmp_path):
+        """DeltaMerge upsert with Spark DataFrame source."""
+        from databricks_bundle_decorators import DeltaMerge  # noqa: PLC0415
+
         io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
         io.setup()
 
         # Write initial data
         initial = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
-        io.write(_output_ctx("merge_task"), initial)
+        io.write(_output_ctx("dm_task"), initial)
 
-        # Build a real DeltaMergeBuilder for upsert
-        dt = DeltaTable.forPath(spark, io._uri("merge_task"))
+        # Build DeltaMerge
         updates = spark.createDataFrame([(2, "B"), (3, "c")], ["id", "val"])
-        builder = (
-            dt.alias("t")
-            .merge(updates.alias("s"), "t.id = s.id")
-            .whenMatchedUpdateAll()
-            .whenNotMatchedInsertAll()
+        merge = (
+            DeltaMerge(source=updates, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
         )
 
-        io.write(_output_ctx("merge_task"), builder)
+        io.write(_output_ctx("dm_task"), merge)
 
-        result = io.read(_input_ctx("merge_task"))
+        assert io._last_partition_values == {}
+
+        result = io.read(_input_ctx("dm_task"))
         rows = sorted(result.collect(), key=lambda r: r["id"])
         assert len(rows) == 3
-        assert rows[0]["val"] == "a"  # id=1 unchanged
-        assert rows[1]["val"] == "B"  # id=2 updated
-        assert rows[2]["val"] == "c"  # id=3 inserted
+        assert rows[0]["val"] == "a"
+        assert rows[1]["val"] == "B"
+        assert rows[2]["val"] == "c"
 
-    def test_serverless_merge_upsert(self, spark: SparkSession, tmp_path):
-        io = SparkServerlessDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+    def test_delta_merge_first_write_creates_table(self, spark: SparkSession, tmp_path):
+        """DeltaMerge on non-existent table does an initial write."""
+        from databricks_bundle_decorators import DeltaMerge  # noqa: PLC0415
+
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
         io.setup()
 
-        initial = spark.createDataFrame([(1, "x")], ["id", "val"])
-        io.write(_output_ctx("merge_s"), initial)
-
-        dt = DeltaTable.forPath(spark, io._uri("merge_s"))
-        updates = spark.createDataFrame([(1, "X"), (2, "y")], ["id", "val"])
-        builder = (
-            dt.alias("t")
-            .merge(updates.alias("s"), "t.id = s.id")
-            .whenMatchedUpdateAll()
-            .whenNotMatchedInsertAll()
+        source = spark.createDataFrame([(1, "x"), (2, "y")], ["id", "val"])
+        merge = (
+            DeltaMerge(source=source, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
         )
 
-        io.write(_output_ctx("merge_s"), builder)
+        io.write(_output_ctx("new_task"), merge)
 
-        result = io.read(_input_ctx("merge_s"))
+        result = io.read(_input_ctx("new_task"))
         rows = sorted(result.collect(), key=lambda r: r["id"])
         assert len(rows) == 2
-        assert rows[0]["val"] == "X"
+        assert rows[0]["val"] == "x"
         assert rows[1]["val"] == "y"
+
+    def test_delta_merge_matched_delete(self, spark: SparkSession, tmp_path):
+        """DeltaMerge with when_matched_delete removes matching rows."""
+        from databricks_bundle_decorators import DeltaMerge  # noqa: PLC0415
+
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        initial = spark.createDataFrame([(1, "a"), (2, "b"), (3, "c")], ["id", "val"])
+        io.write(_output_ctx("del_task"), initial)
+
+        # Delete rows with id=2
+        deletes = spark.createDataFrame([(2, "ignored")], ["id", "val"])
+        merge = DeltaMerge(
+            source=deletes, predicate="s.id = t.id"
+        ).when_matched_delete()
+
+        io.write(_output_ctx("del_task"), merge)
+
+        result = io.read(_input_ctx("del_task"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 2
+        assert rows[0]["id"] == 1
+        assert rows[1]["id"] == 3
+
+    def test_delta_merge_first_write_then_merge(self, spark: SparkSession, tmp_path):
+        """First write creates table, second write merges."""
+        from databricks_bundle_decorators import DeltaMerge  # noqa: PLC0415
+
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        # First write — table doesn't exist yet
+        source1 = spark.createDataFrame([(1, "a")], ["id", "val"])
+        merge1 = (
+            DeltaMerge(source=source1, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+        io.write(_output_ctx("fw_task"), merge1)
+
+        # Second write — table exists, merge
+        source2 = spark.createDataFrame([(1, "A"), (2, "b")], ["id", "val"])
+        merge2 = (
+            DeltaMerge(source=source2, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+        io.write(_output_ctx("fw_task"), merge2)
+
+        result = io.read(_input_ctx("fw_task"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 2
+        assert rows[0]["val"] == "A"
+        assert rows[1]["val"] == "b"
 
 
 # ---------------------------------------------------------------------------

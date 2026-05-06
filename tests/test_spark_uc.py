@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from delta.tables import DeltaTable
 from pyspark.sql import DataFrameWriter, SparkSession
 
 from databricks_bundle_decorators.io_manager import InputContext, OutputContext
@@ -159,35 +158,67 @@ class TestSparkUCTableRoundTrip:
         assert io.read(_input_ctx("opts")).count() == 1
 
 
-class TestSparkUCTableMergeBuilder:
-    def test_merge_upsert(self, spark: SparkSession, uc_schema: str):
+# ===========================================================================
+# SparkUCTableIoManager - DeltaMerge (declarative)
+# ===========================================================================
+
+
+class TestSparkUCTableDeltaMerge:
+    def test_delta_merge_upsert(self, spark: SparkSession, uc_schema: str, monkeypatch):
+        from databricks_bundle_decorators import DeltaMerge  # noqa: PLC0415
+
         io = SparkUCTableIoManager(
             catalog="spark_catalog", schema=uc_schema, mode="error"
         )
         io.setup()
+        # OSS Spark needs backtick-escaped schema for forName
+        monkeypatch.setattr(io, "_table_name", lambda key: f"`{uc_schema}`.{key}")
 
         initial = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
-        io.write(_output_ctx("merge_tbl"), initial)
+        io.write(_output_ctx("dm_tbl"), initial)
 
-        # DeltaTable.forName with 3-level names fails in OSS Spark;
-        # use the schema-qualified name directly.
-        dt = DeltaTable.forName(spark, f"`{uc_schema}`.merge_tbl")
         updates = spark.createDataFrame([(2, "B"), (3, "c")], ["id", "val"])
-        builder = (
-            dt.alias("t")
-            .merge(updates.alias("s"), "t.id = s.id")
-            .whenMatchedUpdateAll()
-            .whenNotMatchedInsertAll()
+        merge = (
+            DeltaMerge(source=updates, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
         )
 
-        io.write(_output_ctx("merge_tbl"), builder)
+        io.write(_output_ctx("dm_tbl"), merge)
 
-        result = io.read(_input_ctx("merge_tbl"))
+        assert io._last_partition_values == {}
+
+        result = io.read(_input_ctx("dm_tbl"))
         rows = sorted(result.collect(), key=lambda r: r["id"])
         assert len(rows) == 3
         assert rows[0]["val"] == "a"
         assert rows[1]["val"] == "B"
         assert rows[2]["val"] == "c"
+
+    def test_delta_merge_first_write_creates_table(
+        self, spark: SparkSession, uc_schema: str, monkeypatch
+    ):
+        from databricks_bundle_decorators import DeltaMerge  # noqa: PLC0415
+
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="error"
+        )
+        io.setup()
+        monkeypatch.setattr(io, "_table_name", lambda key: f"`{uc_schema}`.{key}")
+
+        source = spark.createDataFrame([(1, "x")], ["id", "val"])
+        merge = (
+            DeltaMerge(source=source, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+
+        io.write(_output_ctx("new_dm"), merge)
+
+        result = io.read(_input_ctx("new_dm"))
+        rows = result.collect()
+        assert len(rows) == 1
+        assert rows[0]["val"] == "x"
 
 
 # ===========================================================================
@@ -328,36 +359,59 @@ class TestSparkUCVolumeDeltaRoundTrip:
         assert result.count() == 1
 
 
-class TestSparkUCVolumeDeltaMergeBuilder:
-    def test_merge_upsert(self, spark: SparkSession, tmp_path, monkeypatch):
+class TestSparkUCVolumeDeltaMerge:
+    def test_delta_merge_upsert(self, spark: SparkSession, tmp_path, monkeypatch):
+        from databricks_bundle_decorators import DeltaMerge  # noqa: PLC0415
+
         io = SparkUCVolumeDeltaIoManager(
             catalog="main", schema="staging", volume="raw_data", mode="overwrite"
         )
         io.setup()
-
-        def uri_fn(key: str) -> str:
-            return str(tmp_path / key)
-
-        monkeypatch.setattr(io, "_uri", uri_fn)
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
 
         initial = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
-        io.write(_output_ctx("merge_vol"), initial)
+        io.write(_output_ctx("dm_vol"), initial)
 
-        dt = DeltaTable.forPath(spark, str(tmp_path / "merge_vol"))
         updates = spark.createDataFrame([(2, "B"), (3, "c")], ["id", "val"])
-        builder = (
-            dt.alias("t")
-            .merge(updates.alias("s"), "t.id = s.id")
-            .whenMatchedUpdateAll()
-            .whenNotMatchedInsertAll()
+        merge = (
+            DeltaMerge(source=updates, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
         )
 
-        io.write(_output_ctx("merge_vol"), builder)
+        io.write(_output_ctx("dm_vol"), merge)
 
-        result = io.read(_input_ctx("merge_vol"))
+        assert io._last_partition_values == {}
+
+        result = io.read(_input_ctx("dm_vol"))
         rows = sorted(result.collect(), key=lambda r: r["id"])
         assert len(rows) == 3
+        assert rows[0]["val"] == "a"
         assert rows[1]["val"] == "B"
+        assert rows[2]["val"] == "c"
+
+    def test_delta_merge_first_write(self, spark: SparkSession, tmp_path, monkeypatch):
+        from databricks_bundle_decorators import DeltaMerge  # noqa: PLC0415
+
+        io = SparkUCVolumeDeltaIoManager(
+            catalog="main", schema="staging", volume="raw_data", mode="overwrite"
+        )
+        io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
+
+        source = spark.createDataFrame([(1, "x")], ["id", "val"])
+        merge = (
+            DeltaMerge(source=source, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+
+        io.write(_output_ctx("new_vol"), merge)
+
+        result = io.read(_input_ctx("new_vol"))
+        rows = result.collect()
+        assert len(rows) == 1
+        assert rows[0]["val"] == "x"
 
 
 # ===========================================================================

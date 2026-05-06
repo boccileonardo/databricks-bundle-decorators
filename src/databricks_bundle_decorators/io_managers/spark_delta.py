@@ -65,27 +65,25 @@ class _SparkDeltaBase(IoManager):
         return f"{self.base_path}/{key}"
 
     def write(self, context: OutputContext, obj: Any) -> None:
-        """Write a PySpark DataFrame or execute a DeltaMergeBuilder.
+        """Write a PySpark DataFrame or `DeltaMerge`.
 
-        - If *obj* is a ``DeltaMergeBuilder`` (from ``delta.tables``),
-          calls ``.execute()`` and returns immediately.
+        - If *obj* is a `DeltaMerge`, builds and executes a merge.
         - Otherwise builds a DataFrameWriter with the configured
           ``mode``, ``partition_by``, and ``write_options``.
 
         When ``partition_by`` includes ``"backfill_key"``, the column
         is injected automatically from the context.
         """
-        # Handle merge builders first.
-        _merge_cls: type | None = None
-        try:
-            from delta.tables import DeltaMergeBuilder  # noqa: PLC0415
+        from databricks_bundle_decorators.merge import DeltaMerge  # noqa: PLC0415
 
-            _merge_cls = DeltaMergeBuilder
-        except ImportError:
-            pass
-
-        if _merge_cls is not None and isinstance(obj, _merge_cls):
-            obj.execute()
+        if isinstance(obj, DeltaMerge):
+            uri = self._uri(context.task_key)
+            builder = obj._build_spark_merger(uri)
+            if builder is None:
+                obj._initial_spark_write(uri)
+            else:
+                builder.execute()
+            self._last_partition_values = {}
             return
 
         partition_by = context.partition_by
@@ -204,8 +202,7 @@ class SparkDeltaIoManager(_SparkDeltaBase):
         Defaults to ``"error"`` to prevent accidental data loss.
 
         For **merge** operations, ignore this parameter and return a
-        fully-configured ``DeltaMergeBuilder`` from your task instead.
-        The IoManager will call ``.execute()`` on it automatically.
+        `DeltaMerge` from your task instead.
     retry : `RetryConfig` | None
         Optional retry configuration for write operations.  When set,
         failed writes are retried with exponential backoff (powered by
@@ -315,7 +312,7 @@ class SparkServerlessDeltaIoManager(_SparkDeltaBase):
     mode : str
         Delta write mode (``"error"``, ``"overwrite"``, ``"append"``,
         etc.).  Defaults to ``"error"`` to prevent accidental data
-        loss.  For merge operations, return a ``DeltaMergeBuilder``
+        loss.  For merge operations, return a `DeltaMerge`
         from your task instead.
     retry : `RetryConfig` | None
         Optional retry configuration for write operations.  When set,

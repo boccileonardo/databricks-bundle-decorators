@@ -11,8 +11,11 @@ Requires the ``polars`` and ``deltalake`` optional dependencies::
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any, cast
+
+from tenacity import before_sleep_log, retry, stop_after_attempt, wait_exponential
 
 from databricks_bundle_decorators.io_manager import (
     InputContext,
@@ -27,6 +30,9 @@ from databricks_bundle_decorators.io_manager import (
     _should_inject_backfill_key,
     _validate_delta_mode,
 )
+from databricks_bundle_decorators.merge import DeltaMerge
+
+_logger = logging.getLogger(__name__)
 
 
 class PolarsDeltaIoManager(IoManager):
@@ -36,8 +42,7 @@ class PolarsDeltaIoManager(IoManager):
 
     - `polars.DataFrame` → ``write_delta``
     - `polars.LazyFrame` → ``sink_delta``
-    - `deltalake.table.TableMerger` → ``.execute()``
-      (for merge operations with predicate / action chaining)
+    - `DeltaMerge` → merge/upsert operation
 
     On the **read** side, the downstream task's parameter type annotation
     determines the method used.  Annotate the parameter as
@@ -105,10 +110,8 @@ class PolarsDeltaIoManager(IoManager):
         Delta write mode.  One of ``"overwrite"``, ``"append"``,
         ``"error"``, or ``"ignore"``.  Defaults to ``"error"``.
 
-        For **merge** operations, ignore this parameter and return a
-        fully-configured `deltalake.table.TableMerger` from your task
-        instead.  The IoManager will call ``.execute()`` on it
-        automatically.
+        For **merge** operations, return a `DeltaMerge` from your task
+        instead.
     read_options : dict[str, Any] | None
         Extra keyword arguments forwarded to the Polars read call
         (``read_delta`` / ``scan_delta``).
@@ -178,27 +181,25 @@ class PolarsDeltaIoManager(IoManager):
         return f"{self.base_path}/{key}"
 
     def write(self, context: OutputContext, obj: Any) -> None:
-        """Write a Polars DataFrame, LazyFrame, or TableMerger.
+        """Write a Polars DataFrame, LazyFrame, or DeltaMerge.
 
         - `polars.DataFrame` → ``write_delta``
         - `polars.LazyFrame` → ``sink_delta``
-        - `deltalake.table.TableMerger` → ``.execute()``
+        - `DeltaMerge` → merge/upsert operation
 
         When ``partition_by`` is set on the ``@task`` decorator, writes
         with ``delta_write_options={"partition_by": ...}``.
         """
-        # Handle merge builders first (no import guard needed — duck-type
-        # check avoids requiring deltalake at import time).
-        _merger_cls: type | None = None
-        try:
-            from deltalake.table import TableMerger  # noqa: PLC0415
-
-            _merger_cls = TableMerger
-        except ImportError:
-            pass
-
-        if _merger_cls is not None and isinstance(obj, _merger_cls):
-            obj.execute()
+        # Handle DeltaMerge definitions — build a fresh merger and execute.
+        if isinstance(obj, DeltaMerge):
+            uri = self._uri(context.task_key)
+            merger = obj._build_merger(uri, storage_options=self.storage_options)
+            if merger is None:
+                # Target table doesn't exist yet — write source data directly.
+                obj._initial_write(uri, storage_options=self.storage_options)
+            else:
+                merger.execute()
+            self._last_partition_values = {}
             return
 
         import polars as pl  # noqa: PLC0415
@@ -254,10 +255,46 @@ class PolarsDeltaIoManager(IoManager):
         else:
             msg = (
                 f"PolarsDeltaIoManager.write() expects a polars.DataFrame, "
-                f"polars.LazyFrame, or deltalake TableMerger, "
+                f"polars.LazyFrame, or DeltaMerge, "
                 f"got {type(obj).__name__}"
             )
             raise TypeError(msg)
+
+    def write_with_retry(self, context: OutputContext, obj: Any) -> None:
+        """Write with retry logic.
+
+        `DeltaMerge` and DataFrame/LazyFrame writes are all retried
+        when `RetryConfig` is configured.
+        """
+        # DeltaMerge — retry-safe path: rebuild merger on each attempt.
+        if isinstance(obj, DeltaMerge):
+            if self.retry is None:
+                self.write(context, obj)
+                return
+
+            uri = self._uri(context.task_key)
+
+            def _execute_merge() -> None:
+                merger = obj._build_merger(uri, storage_options=self.storage_options)
+                if merger is None:
+                    obj._initial_write(uri, storage_options=self.storage_options)
+                else:
+                    merger.execute()
+
+            retryer = retry(
+                stop=stop_after_attempt(self.retry.max_attempts),
+                wait=wait_exponential(
+                    multiplier=self.retry.delay,
+                    exp_base=self.retry.backoff_factor,
+                ),
+                reraise=True,
+                before_sleep=before_sleep_log(_logger, logging.WARNING),
+            )
+            retryer(_execute_merge)()
+            self._last_partition_values = {}
+            return
+
+        super().write_with_retry(context, obj)
 
     def read(self, context: InputContext) -> Any:
         """Read a Delta table as a LazyFrame or DataFrame.

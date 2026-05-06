@@ -6,14 +6,15 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from deltalake import DeltaTable
 
 from databricks_bundle_decorators.io_manager import (
     InputContext,
     OutputContext,
+    RetryConfig,
     _build_replace_where,
 )
 from databricks_bundle_decorators.io_managers import PolarsDeltaIoManager
+from databricks_bundle_decorators.merge import DeltaMerge
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -223,56 +224,155 @@ class TestOptions:
 
 
 # ---------------------------------------------------------------------------
-# TableMerger support
+# DeltaMerge
 # ---------------------------------------------------------------------------
 
 
-class TestTableMerger:
-    def test_table_merger_executes_merge(self, tmp_path: Path) -> None:
+class TestDeltaMerge:
+    def test_delta_merge_upsert(self, tmp_path: Path) -> None:
+        """DeltaMerge performs merge correctly."""
+
         io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
 
         # Write initial data
         initial = pl.DataFrame({"id": [1, 2, 3], "val": ["a", "b", "c"]})
         io.write(_output_ctx("t"), initial)
 
-        # Build a real merge
-        dt = DeltaTable(str(tmp_path / "t"))
-        new_data = pl.DataFrame({"id": [2, 4], "val": ["B", "d"]}).to_arrow()
-        merger = (
-            dt.merge(
-                new_data,
-                predicate="s.id = t.id",
-                source_alias="s",
-                target_alias="t",
-            )
+        # Define merge
+        new_data = pl.DataFrame({"id": [2, 4], "val": ["B", "d"]})
+        merge_def = (
+            DeltaMerge(source=new_data, predicate="s.id = t.id")
             .when_matched_update_all()
             .when_not_matched_insert_all()
         )
 
-        io.write(_output_ctx("t"), merger)
+        io.write(_output_ctx("t"), merge_def)
 
         result = io.read(_input_ctx("t", expected_type=pl.DataFrame))
         result = result.sort("id")
         assert result["id"].to_list() == [1, 2, 3, 4]
         assert result["val"].to_list() == ["a", "B", "c", "d"]
 
-    def test_table_merger_skips_normal_write(self, tmp_path: Path) -> None:
-        """When a TableMerger is written, DataFrame write path is NOT used."""
+    def test_delta_merge_sets_empty_partition_values(self, tmp_path: Path) -> None:
+        """DeltaMerge write sets _last_partition_values to {}."""
+
         io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
 
         initial = pl.DataFrame({"id": [1], "val": ["a"]})
         io.write(_output_ctx("t"), initial)
 
-        dt = DeltaTable(str(tmp_path / "t"))
-        new_data = pl.DataFrame({"id": [1], "val": ["A"]}).to_arrow()
-        merger = dt.merge(
-            new_data,
-            predicate="s.id = t.id",
-            source_alias="s",
-            target_alias="t",
+        merge_def = DeltaMerge(
+            source=pl.DataFrame({"id": [1], "val": ["X"]}), predicate="s.id = t.id"
         ).when_matched_update_all()
-        # Should succeed without errors — only calls execute()
-        io.write(_output_ctx("t"), merger)
+        io.write(_output_ctx("t"), merge_def)
+        assert io._last_partition_values == {}
+
+    def test_delta_merge_with_retry(self, tmp_path: Path) -> None:
+        """DeltaMerge works with write_with_retry (retry-safe)."""
+
+        io = PolarsDeltaIoManager(
+            base_path=str(tmp_path), mode="overwrite", retry=RetryConfig()
+        )
+
+        initial = pl.DataFrame({"id": [1, 2], "val": ["a", "b"]})
+        io.write(_output_ctx("t"), initial)
+
+        new_data = pl.DataFrame({"id": [2, 3], "val": ["B", "c"]})
+        merge_def = (
+            DeltaMerge(source=new_data, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+
+        io.write_with_retry(_output_ctx("t"), merge_def)
+
+        result = io.read(_input_ctx("t", expected_type=pl.DataFrame))
+        result = result.sort("id")
+        assert result["id"].to_list() == [1, 2, 3]
+        assert result["val"].to_list() == ["a", "B", "c"]
+
+    def test_delta_merge_with_lazyframe_source(self, tmp_path: Path) -> None:
+        """DeltaMerge accepts LazyFrame as source."""
+
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        initial = pl.DataFrame({"id": [1], "val": ["a"]})
+        io.write(_output_ctx("t"), initial)
+
+        source = pl.LazyFrame({"id": [1], "val": ["X"]})
+        merge_def = DeltaMerge(
+            source=source, predicate="s.id = t.id"
+        ).when_matched_update_all()
+        io.write(_output_ctx("t"), merge_def)
+
+        result = io.read(_input_ctx("t", expected_type=pl.DataFrame))
+        assert result["val"].to_list() == ["X"]
+
+    def test_delta_merge_when_matched_delete(self, tmp_path: Path) -> None:
+        """DeltaMerge supports when_matched_delete."""
+
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        initial = pl.DataFrame({"id": [1, 2, 3], "val": ["a", "b", "c"]})
+        io.write(_output_ctx("t"), initial)
+
+        # Delete rows where id matches
+        source = pl.DataFrame({"id": [2]})
+        merge_def = DeltaMerge(
+            source=source, predicate="s.id = t.id"
+        ).when_matched_delete()
+        io.write(_output_ctx("t"), merge_def)
+
+        result = io.read(_input_ctx("t", expected_type=pl.DataFrame))
+        result = result.sort("id")
+        assert result["id"].to_list() == [1, 3]
+
+    def test_delta_merge_first_write_creates_table(self, tmp_path: Path) -> None:
+        """DeltaMerge creates the table on first write when it doesn't exist."""
+
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        # No initial write — table doesn't exist yet.
+        source = pl.DataFrame({"id": [1, 2], "val": ["a", "b"]})
+        merge_def = (
+            DeltaMerge(source=source, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+        io.write(_output_ctx("t"), merge_def)
+
+        result = io.read(_input_ctx("t", expected_type=pl.DataFrame))
+        result = result.sort("id")
+        assert result["id"].to_list() == [1, 2]
+        assert result["val"].to_list() == ["a", "b"]
+
+    def test_delta_merge_first_write_then_merge(self, tmp_path: Path) -> None:
+        """DeltaMerge creates table on first run, merges on second run."""
+
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        # First write — table doesn't exist
+        source1 = pl.DataFrame({"id": [1, 2], "val": ["a", "b"]})
+        merge_def1 = (
+            DeltaMerge(source=source1, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+        io.write(_output_ctx("t"), merge_def1)
+
+        # Second write — table exists, actual merge
+        source2 = pl.DataFrame({"id": [2, 3], "val": ["B", "c"]})
+        merge_def2 = (
+            DeltaMerge(source=source2, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+        io.write(_output_ctx("t"), merge_def2)
+
+        result = io.read(_input_ctx("t", expected_type=pl.DataFrame))
+        result = result.sort("id")
+        assert result["id"].to_list() == [1, 2, 3]
+        assert result["val"].to_list() == ["a", "B", "c"]
 
 
 # ---------------------------------------------------------------------------
