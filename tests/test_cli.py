@@ -405,6 +405,10 @@ class TestMainCli:
             "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
+        )
 
         main()
 
@@ -1179,6 +1183,10 @@ class TestAppConfigNameResolution:
             "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
+        )
 
         app_config(permission="CAN_VIEW", name="custom-name")
 
@@ -1193,6 +1201,10 @@ class TestAppConfigNameResolution:
         monkeypatch.setattr(
             "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
+        )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
         )
         # Pre-create app.yml with a user-edited name
         (tmp_path / "resources").mkdir(parents=True)
@@ -1219,6 +1231,10 @@ class TestAppConfigNameResolution:
             "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
+        )
 
         app_config(permission="CAN_VIEW", name=None)
 
@@ -1233,6 +1249,10 @@ class TestAppConfigNameResolution:
         monkeypatch.setattr(
             "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
+        )
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            lambda *a, **kw: None,
         )
         # Pre-create app.yml with one name
         (tmp_path / "resources").mkdir(parents=True)
@@ -1249,3 +1269,30 @@ class TestAppConfigNameResolution:
         content = (tmp_path / "resources" / "app.yml").read_text()
         assert "name: new-name" in content
         assert "old-app" not in content
+
+    def test_app_config_runs_uv_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """app_config runs uv lock in the app directory."""
+        self._make_project(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.discover_pipelines",
+            lambda: None,
+        )
+
+        calls: list[list[str]] = []
+
+        def _mock_run(*args, **kwargs):
+            if args:
+                calls.append(list(args[0]))
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.subprocess.run",
+            _mock_run,
+        )
+
+        app_config(permission="CAN_VIEW", name="my-app")
+
+        # Verify uv lock was called in the app directory
+        assert any("lock" in cmd for cmd in calls)
