@@ -59,13 +59,13 @@ The mechanism varies by format:
 
 !!! note "Merge operations are partition-safe by design"
     When a task returns a `DeltaMergeBuilder` (PySpark) or
-    `TableMerger` (Polars / deltalake), the IoManager calls
-    `.execute()` directly — it bypasses the overwrite path
+    `DeltaMerge` (Polars), the IoManager executes the merge
+    directly — it bypasses the overwrite path
     entirely.  The merge predicate (e.g. `t.id = s.id`) controls
     which rows are touched, so other partitions are never at risk.
     You can safely combine `partition_by` with merge; the
     `replaceWhere` / `partitionOverwriteMode` mechanisms above
-    only apply to regular DataFrame writes, not merge builders.
+    only apply to regular DataFrame writes, not merge operations.
 
     See [Delta Write Modes & Merge](../api/io-managers/index.md#delta-write-modes--merge)
     for full merge examples.

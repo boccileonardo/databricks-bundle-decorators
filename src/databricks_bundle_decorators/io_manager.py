@@ -57,18 +57,13 @@ class RetryConfig:
 
 
 def _validate_delta_mode(mode: str, io_manager_name: str) -> None:
-    """Raise ValueError if *mode* is not a valid Delta write mode.
-
-    In particular, ``"merge"`` is not a write mode — users should return a
-    ``TableMerger`` or ``DeltaMergeBuilder`` from the task function instead.
-    """
+    """Raise ValueError if *mode* is not a valid Delta write mode."""
     if mode == "merge":
         msg = (
             f'{io_manager_name}: mode="merge" is not supported. '
-            f"To perform merge/upsert operations, return a fully-configured "
-            f"TableMerger (deltalake) or DeltaMergeBuilder (delta-spark) "
-            f"from your task function instead. The IoManager will call "
-            f".execute() on it automatically."
+            f"To perform merge/upsert operations, return a DeltaMerge "
+            f"(Polars) or DeltaMergeBuilder (Spark) from your task "
+            f"function instead."
         )
         raise ValueError(msg)
     if mode not in _VALID_DELTA_MODES:

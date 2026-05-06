@@ -20,6 +20,10 @@ DAG wiring:
 Data management:
     ``IoManager``, ``OutputContext``, ``InputContext``
 
+Merge operations:
+    ``DeltaMerge`` — declarative merge definition for Delta
+    IoManagers.  Return from a ``@task`` to perform upserts.
+
 Cross-partition reads:
     ``all_partitions()`` — wrap a ``TaskProxy`` to read all partitions
     from that upstream dependency instead of only the current one.
@@ -82,6 +86,7 @@ from databricks_bundle_decorators.io_manager import InputContext as InputContext
 from databricks_bundle_decorators.io_manager import IoManager as IoManager
 from databricks_bundle_decorators.io_manager import OutputContext as OutputContext
 from databricks_bundle_decorators.io_manager import RetryConfig as RetryConfig
+from databricks_bundle_decorators.merge import DeltaMerge as DeltaMerge
 from databricks_bundle_decorators.registry import (
     ClusterMeta as ClusterMeta,
 )
@@ -103,6 +108,7 @@ __all__ = [
     "ClusterConfig",
     "ClusterMeta",
     "DailyBackfill",
+    "DeltaMerge",
     "DuplicateResourceError",
     "HourlyBackfill",
     "InputContext",

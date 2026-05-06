@@ -27,8 +27,8 @@ def extract(): ...
 !!! tip "Merge / Upsert"
 
     `mode="merge"` is **not** a valid write mode and will raise a `ValueError`.
-    To perform merge/upsert operations, return a `delta.tables.DeltaMergeBuilder`
-    from your task function — the IoManager calls `.execute()` automatically.
+    To perform merge/upsert operations, return a `DeltaMerge` from your task
+    function.
     See [Delta Write Modes & Merge](index.md#delta-write-modes-merge) for
     full examples.
 
