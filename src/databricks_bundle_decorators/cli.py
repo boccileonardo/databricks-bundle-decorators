@@ -30,7 +30,7 @@ from databricks_bundle_decorators.registry import _JOB_REGISTRY
 try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
-    import tomli as tomllib  # ty: ignore[unresolved-import]
+    import tomli as tomllib
 
 app = typer.Typer(
     name="dbxdec",

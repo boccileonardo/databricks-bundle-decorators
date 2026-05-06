@@ -255,7 +255,7 @@ def task(
             task_key=task_key,
             io_manager=io_manager,
             partition_by=_normalize_partition_by(partition_by),
-            sdk_config=dict(kwargs),
+            sdk_config={**kwargs},
             depends_on=depends_on_keys,
         )
 
@@ -387,7 +387,7 @@ def job_cluster(
         `ClusterConfig` for the
         full list of supported fields.
     """
-    meta = ClusterMeta(name=name, spec=dict(kwargs))
+    meta = ClusterMeta(name=name, spec={**kwargs})
     _register_unique(_CLUSTER_REGISTRY, name, meta, "job_cluster")
     return meta
 
@@ -540,7 +540,7 @@ def job(
             dag=dag,
             dag_edges=dag_edges,
             all_partitions_edges=all_partitions_edges,
-            sdk_config=dict(kwargs),
+            sdk_config={**kwargs},
             for_each_tasks=for_each_tasks,
             backfill=backfill,
         )
@@ -747,7 +747,7 @@ def for_each_task(
             fn=fn,
             task_key=task_key,
             io_manager=io_manager,
-            sdk_config=dict(kwargs),
+            sdk_config={**kwargs},
             depends_on=all_dep_keys,
         )
 
