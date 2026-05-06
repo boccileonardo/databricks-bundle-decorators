@@ -9,7 +9,6 @@ Usage::
 
 from __future__ import annotations
 
-import asyncio
 import importlib
 import json
 import shutil
@@ -20,14 +19,18 @@ from typing import Annotated
 
 import typer
 
-from databricks_bundle_decorators.backfill import BACKFILL_KEY_PARAM, BackfillDef
+from databricks_bundle_decorators.backfill import (
+    BACKFILL_KEY_PARAM,
+    EXACT_BACKFILL_PARAM,
+    BackfillDef,
+)
 from databricks_bundle_decorators.discovery import discover_pipelines
 from databricks_bundle_decorators.registry import _JOB_REGISTRY
 
 try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
-    import tomli as tomllib  # ty: ignore[unresolved-import]
+    import tomli as tomllib
 
 app = typer.Typer(
     name="dbxdec",
@@ -620,9 +623,10 @@ def _cmd_backfill(
     start: str | None = None,
     end: str | None = None,
     keys: str | None = None,
-    max_concurrent: int | None = None,
     dry_run: bool = False,
     wait: bool = False,
+    exact: bool = False,
+    reverse: bool = False,
     target: str | None = None,
     profile: str | None = None,
 ) -> None:
@@ -667,6 +671,9 @@ def _cmd_backfill(
     else:
         key_list = []
 
+    # 3. Sort keys (ascending by default, descending with --reverse)
+    key_list = sorted(key_list, reverse=reverse)
+
     if not key_list:
         print("No backfill keys to process.", file=sys.stderr)
         sys.exit(1)
@@ -685,8 +692,8 @@ def _cmd_backfill(
     _submit_backfill_runs(
         job_name=job_name,
         key_list=key_list,
-        max_concurrent=max_concurrent,
         wait=wait,
+        exact=exact,
         target=target,
         profile=profile,
     )
@@ -696,12 +703,16 @@ def _submit_backfill_runs(
     *,
     job_name: str,
     key_list: list[str],
-    max_concurrent: int | None = None,
     wait: bool = False,
+    exact: bool = False,
     target: str | None = None,
     profile: str | None = None,
 ) -> None:
     """Submit one ``databricks bundle run`` per backfill key.
+
+    Runs are submitted sequentially in the order of *key_list*.
+    Databricks handles concurrency via its job-level
+    ``max_concurrent_runs`` setting and run queue.
 
     Shared by ``backfill`` and ``catchup`` commands.
     """
@@ -719,55 +730,39 @@ def _submit_backfill_runs(
     if profile:
         base_cmd += ["--profile", profile]
 
-    concurrency: int = max_concurrent or len(key_list)
     submitted: list[str] = []
     failed: list[str] = []
 
-    async def _submit_all() -> None:
-        sem = asyncio.Semaphore(concurrency)
-
-        async def _run_one(key: str) -> None:
-            async with sem:
-                cmd = [
-                    *base_cmd,
-                    "--params",
-                    f"{BACKFILL_KEY_PARAM}={key}",
-                ]
-                if not wait:
-                    cmd.append("--no-wait")
-                try:
-                    result = await asyncio.to_thread(
-                        subprocess.run,
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                    )
-                    if result.returncode == 0:
-                        output = result.stdout.strip()
-                        label = "OK" if wait else "submitted"
-                        msg = f"  {key} -> {label}"
-                        if output:
-                            last_line = output.splitlines()[-1]
-                            msg = f"  {key} -> {last_line}"
-                        submitted.append(key)
-                        print(msg)
-                    else:
-                        failed.append(key)
-                        err = result.stderr.strip() or result.stdout.strip()
-                        print(f"  {key} -> FAILED: {err}", file=sys.stderr)
-                except Exception as exc:  # noqa: BLE001
-                    failed.append(key)
-                    print(f"  {key} -> FAILED: {exc}", file=sys.stderr)
-
-        async with asyncio.TaskGroup() as tg:
-            for key in key_list:
-                tg.create_task(_run_one(key))
-
-    try:
-        asyncio.run(_submit_all())
-    except KeyboardInterrupt:
-        print("\nBackfill interrupted.", file=sys.stderr)
-        sys.exit(130)
+    for key in key_list:
+        params_val = f"{BACKFILL_KEY_PARAM}={key}"
+        if exact:
+            params_val += f",{EXACT_BACKFILL_PARAM}=1"
+        cmd = [*base_cmd, "--params", params_val]
+        if not wait:
+            cmd.append("--no-wait")
+        try:
+            result = subprocess.run(  # noqa: S603
+                cmd, capture_output=True, text=True, check=False
+            )
+            if result.returncode == 0:
+                output = result.stdout.strip()
+                label = "OK" if wait else "submitted"
+                msg = f"  {key} -> {label}"
+                if output:
+                    last_line = output.splitlines()[-1]
+                    msg = f"  {key} -> {last_line}"
+                submitted.append(key)
+                print(msg)
+            else:
+                failed.append(key)
+                err = result.stderr.strip() or result.stdout.strip()
+                print(f"  {key} -> FAILED: {err}", file=sys.stderr)
+        except KeyboardInterrupt:
+            print("\nBackfill interrupted.", file=sys.stderr)
+            sys.exit(130)
+        except Exception as exc:  # noqa: BLE001
+            failed.append(key)
+            print(f"  {key} -> FAILED: {exc}", file=sys.stderr)
 
     action = "Completed" if wait else "Submitted"
     print(f"\n{action} {len(submitted)}/{len(key_list)} runs.")
@@ -895,9 +890,9 @@ def _get_launched_backfill_keys(
 def _cmd_backfill_catchup(
     *,
     job_name: str,
-    max_concurrent: int | None = None,
     dry_run: bool = False,
     wait: bool = False,
+    reverse: bool = False,
     target: str | None = None,
     profile: str | None = None,
 ) -> None:
@@ -944,9 +939,11 @@ def _cmd_backfill_catchup(
     # 4. Get already-launched keys (active + successful) from Databricks
     launched_keys = _get_launched_backfill_keys(job_id, target, profile)
 
-    # 5. Compute missing
+    # 5. Compute missing (sorted ascending; reversed if --reverse)
     all_keys_set = set(all_keys)
-    missing_keys = [k for k in all_keys if k not in launched_keys]
+    missing_keys = sorted(
+        [k for k in all_keys if k not in launched_keys], reverse=reverse
+    )
 
     print(f"Job: {job_name}")
     print(f"All backfill keys: {len(all_keys)}")
@@ -970,7 +967,6 @@ def _cmd_backfill_catchup(
     _submit_backfill_runs(
         job_name=job_name,
         key_list=missing_keys,
-        max_concurrent=max_concurrent,
         wait=wait,
         target=target,
         profile=profile,
@@ -1029,10 +1025,6 @@ def backfill(
         str | None,
         typer.Option(help="Comma-separated list of explicit backfill keys"),
     ] = None,
-    max_concurrent: Annotated[
-        int | None,
-        typer.Option(help="Maximum number of concurrent run submissions"),
-    ] = None,
     dry_run: Annotated[  # noqa: FBT002
         bool,
         typer.Option("--dry-run", help="Print backfill keys without submitting runs"),
@@ -1040,6 +1032,21 @@ def backfill(
     wait: Annotated[  # noqa: FBT002
         bool,
         typer.Option(help="Wait for all runs to complete and report success/failure"),
+    ] = False,
+    exact: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--exact",
+            help="Bypass lookback and schedule-gap expansion; each key "
+            "processes only its own partition.",
+        ),
+    ] = False,
+    reverse: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--reverse",
+            help="Submit keys in descending order (most recent first).",
+        ),
     ] = False,
     target: Annotated[
         str | None,
@@ -1060,9 +1067,10 @@ def backfill(
         start=start,
         end=end,
         keys=keys,
-        max_concurrent=max_concurrent,
         dry_run=dry_run,
         wait=wait,
+        exact=exact,
+        reverse=reverse,
         target=target,
         profile=profile,
     )
@@ -1074,10 +1082,6 @@ def catchup(
         str,
         typer.Argument(help="Name of the @job to catch up"),
     ],
-    max_concurrent: Annotated[
-        int | None,
-        typer.Option(help="Maximum number of concurrent run submissions"),
-    ] = None,
     dry_run: Annotated[  # noqa: FBT002
         bool,
         typer.Option("--dry-run", help="Print missing keys without submitting runs"),
@@ -1085,6 +1089,13 @@ def catchup(
     wait: Annotated[  # noqa: FBT002
         bool,
         typer.Option(help="Wait for all runs to complete and report success/failure"),
+    ] = False,
+    reverse: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--reverse",
+            help="Submit keys in descending order (most recent first).",
+        ),
     ] = False,
     target: Annotated[
         str | None,
@@ -1107,9 +1118,9 @@ def catchup(
     """
     _cmd_backfill_catchup(
         job_name=job_name,
-        max_concurrent=max_concurrent,
         dry_run=dry_run,
         wait=wait,
+        reverse=reverse,
         target=target,
         profile=profile,
     )

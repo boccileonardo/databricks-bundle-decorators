@@ -218,6 +218,131 @@ All time-based definitions accept `start_date`, `end_date` (optional,
 defaults to "most recent complete period"), and `tz` (IANA timezone).
 Key formats are fixed to ISO-8601-compatible strings.
 
+### Multi-key backfill
+
+Time-based backfill definitions support two additional parameters for
+producing **multiple keys per run**:
+
+| Parameter | Purpose | Applies during explicit backfill? |
+|-----------|---------|-----------------------------------|
+| `lookback` | Include *N* prior keys (rolling restatement) | **Yes** |
+| `collect_schedule_gaps` | Include keys between previous cron fire and current key | **No** |
+
+Use `get_backfill_keys()` (plural) at runtime to retrieve the full
+list of keys for the current run.
+
+#### Rolling restatement (`lookback`)
+
+When the data source delivers corrections for a rolling window on
+every delivery — e.g. a file on Wednesday contains corrected data
+for Monday and Tuesday plus new data for Wednesday:
+
+```python
+from databricks_bundle_decorators import (
+    DailyBackfill, get_backfill_keys, job, task,
+)
+
+@job(backfill=DailyBackfill(start_date="2024-01-01", lookback=2))
+def corrections_pipeline():
+    @task(io_manager=io, partition_by="backfill_key")
+    def extract() -> pl.DataFrame:
+        # Returns 3 keys: [T-2, T-1, T]
+        keys = get_backfill_keys()
+        frames = [fetch_and_tag(k) for k in keys]
+        return pl.concat(frames)
+    ...
+```
+
+`lookback` always applies — both for scheduled runs and for explicit
+`dbxdec backfill --keys "2026-01-08"` invocations — because the
+source's corrections exist regardless of how the run was triggered.
+
+#### Schedule gap collection (`collect_schedule_gaps`)
+
+When a job runs Mon–Fri only (cron excludes weekends) and the source
+has one file per calendar day, Monday's run needs to collect
+Saturday's and Sunday's files too:
+
+```python
+from databricks.bundles.jobs import CronSchedule
+
+@job(
+    backfill=DailyBackfill(
+        start_date="2024-01-01",
+        collect_schedule_gaps=True,
+    ),
+    schedule=CronSchedule(
+        quartz_cron_expression="0 0 6 ? * 2-6",  # MON-FRI 6am
+        timezone_id="UTC",
+    ),
+)
+def weekday_pipeline():
+    @task(io_manager=io, partition_by="backfill_key")
+    def extract() -> pl.DataFrame:
+        keys = get_backfill_keys()  # Monday: [Sat, Sun, Mon]
+        frames = [fetch_and_tag(k) for k in keys]
+        return pl.concat(frames)
+    ...
+```
+
+Schedule gap logic is **stateless** — determined entirely from the
+job's cron expression + the current key, with no run history needed.
+It is **bypassed** during explicit `dbxdec backfill --keys` invocations
+since targeting Saturday explicitly means you want only Saturday's data.
+
+#### Combined usage
+
+Both options can be used together. The result is the **sorted union**:
+
+```python
+DailyBackfill(start_date="2024-01-01", lookback=3, collect_schedule_gaps=True)
+```
+
+| Scenario | Schedule gaps | Lookback (3 prior) | Union |
+|----------|-------------|-------------------|-------|
+| Scheduled Monday | Sat, Sun, Mon | Fri, Sat, Sun, Mon | **Fri, Sat, Sun, Mon** |
+| Scheduled Wednesday | Wed (no gap) | Sun, Mon, Tue, Wed | **Sun, Mon, Tue, Wed** |
+| Explicit backfill Saturday | *(bypassed)* | Wed, Thu, Fri, Sat | **Wed, Thu, Fri, Sat** |
+
+#### `--exact` flag
+
+To bypass **both** lookback and schedule gap expansion (e.g. when
+corrections have already been applied by subsequent runs):
+
+```bash
+uv run dbxdec backfill my_pipeline --keys "2026-01-03" --exact
+```
+
+#### Auto-injection with multi-key
+
+When `partition_by="backfill_key"` and multi-key backfill is active,
+the framework **cannot** auto-inject the `backfill_key` column
+(different rows belong to different keys). Your task must stamp each
+row with the correct key from `get_backfill_keys()`:
+
+```python
+@task(io_manager=io, partition_by="backfill_key")
+def extract() -> pl.DataFrame:
+    keys = get_backfill_keys()
+    frames = [
+        fetch_data(k).with_columns(pl.lit(k).alias("backfill_key"))
+        for k in keys
+    ]
+    return pl.concat(frames)
+```
+
+If the DataFrame already contains a `backfill_key` column,
+auto-injection is suppressed. If it's absent and multiple keys are
+active, the framework raises `ValueError` rather than silently
+picking one.
+
+!!! warning "Concurrency with overlapping partitions"
+    With `lookback > 0`, adjacent scheduled runs write overlapping
+    partitions. For **merge mode** this is safe (Delta optimistic
+    concurrency). For **overwrite mode** this can cause data loss.
+    Use merge mode or set `max_concurrent_runs = 1` on the job when
+    using lookback.
+
 ### Timezone-aware defaults
 
 All time-based definitions default to `tz="UTC"`.  The `tz` parameter
@@ -253,8 +378,8 @@ uv run dbxdec backfill my_pipeline --dry-run
 # Explicit keys (works even without a job-level backfill definition)
 uv run dbxdec backfill my_pipeline --keys "2024-01-01,2024-01-02,2024-01-03"
 
-# Limit concurrency
-uv run dbxdec backfill my_pipeline --max-concurrent 5
+# Submit most recent keys first
+uv run dbxdec backfill my_pipeline --start 2024-01-01 --end 2024-03-31 --reverse
 
 # Wait for all runs to complete and report success/failure
 uv run dbxdec backfill my_pipeline --start 2024-01-01 --end 2024-01-07 --wait
@@ -267,11 +392,16 @@ uv run dbxdec backfill my_pipeline --start 2024-01-01 --end 2024-01-07 --wait
 | `--start` | Start of range (inclusive) |
 | `--end` | End of range (inclusive) |
 | `--keys` | Comma-separated explicit keys |
-| `--max-concurrent` | Limit parallel run submissions |
+| `--exact` | Disable lookback and schedule-gap expansion (run exactly the specified keys) |
+| `--reverse` | Submit keys in descending order (most recent first) |
 | `--dry-run` | Print keys without submitting |
 | `--wait` | Wait for all runs to complete and exit non-zero on failure |
 | `--target`, `-t` | Databricks bundle target (e.g. `dev`, `staging`, `prod`) |
 | `--profile` | Databricks CLI profile name |
+
+Runs are submitted sequentially in key order.  Databricks handles
+concurrency via the job's `max_concurrent_runs` setting and its
+built-in run queue.
 
 Under the hood the command calls `databricks bundle run`, which
 automatically resolves the deployed job name — including any

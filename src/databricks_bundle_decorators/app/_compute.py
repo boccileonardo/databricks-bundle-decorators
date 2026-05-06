@@ -234,6 +234,24 @@ def _filter_past_keys(keys: list[str], kind: str, tz: str = "UTC") -> list[str]:
     return keys
 
 
+def _safe_compute_gap_keys(
+    backfill: Any, primary_key: str, quartz_cron: str
+) -> list[str]:
+    """Compute schedule gap keys, returning [] on any error.
+
+    Wraps ``_compute_schedule_gap_keys`` so that failures (e.g.
+    malformed cron, key format mismatch) don't crash the dashboard.
+    """
+    from databricks_bundle_decorators.backfill import (  # noqa: PLC0415
+        _compute_schedule_gap_keys,
+    )
+
+    try:
+        return _compute_schedule_gap_keys(backfill, primary_key, quartz_cron)
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def compute_backfill_coverage(
     job_name: str,
     runs: list[RunInfo],
@@ -241,6 +259,8 @@ def compute_backfill_coverage(
     *,
     kind: str = "static",
     tz: str = "UTC",
+    backfill: Any = None,
+    schedule_cron: str | None = None,
 ) -> BackfillCoverage:
     """Compute backfill coverage by matching run parameters to expected keys.
 
@@ -248,6 +268,11 @@ def compute_backfill_coverage(
     against the expected keys from the job's `BackfillDef`.  This
     gives **exact key-level matching** — unlike the approximate
     count-based approach that system tables would provide.
+
+    When ``collect_schedule_gaps`` is enabled on the backfill definition
+    and a ``schedule_cron`` is provided, successful runs also credit
+    their schedule gap keys (keys between the previous cron fire and
+    the primary key that the run processed as part of gap collection).
 
     Future keys (time periods that have not completed yet) are
     automatically excluded so they are not counted as missing.
@@ -267,9 +292,22 @@ def compute_backfill_coverage(
         ``"hourly"``, or ``"static"``.
     tz:
         IANA timezone name used by the backfill definition.
+    backfill:
+        The ``BackfillDef`` instance (optional). Required for
+        schedule gap crediting.
+    schedule_cron:
+        Quartz cron expression for the job's schedule (optional).
+        Required for schedule gap crediting.
     """
     # Filter out future keys so they aren't counted as missing
     due_keys = _filter_past_keys(expected_keys, kind, tz=tz)
+
+    # Determine if schedule gap crediting is applicable
+    collect_gaps = (
+        backfill is not None
+        and schedule_cron is not None
+        and getattr(backfill, "collect_schedule_gaps", False)
+    )
 
     # Single pass over runs to classify by backfill key.
     key_runs: dict[str, tuple[int, int | None]] = {}
@@ -288,6 +326,17 @@ def compute_backfill_coverage(
             prev = key_runs.get(effective_key)
             if prev is None or (r.start_time_ms or 0) > (prev[1] or 0):
                 key_runs[effective_key] = (r.run_id, r.start_time_ms)
+            # Credit schedule gap keys covered by this run
+            if collect_gaps and schedule_cron is not None:
+                gap_keys = _safe_compute_gap_keys(
+                    backfill,
+                    effective_key,
+                    schedule_cron,
+                )
+                for gk in gap_keys:
+                    prev_gk = key_runs.get(gk)
+                    if prev_gk is None or (r.start_time_ms or 0) > (prev_gk[1] or 0):
+                        key_runs[gk] = (r.run_id, r.start_time_ms)
         elif _is_terminal_failure(r.result_state, r.life_cycle_state):
             errored.add(effective_key)
         elif _is_active(r.result_state, r.life_cycle_state):

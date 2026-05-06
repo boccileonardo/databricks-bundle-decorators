@@ -197,7 +197,13 @@ def generate_registry_json() -> str:
     registry: dict[str, Any] = {}
     for name, meta in sorted(_JOB_REGISTRY.items()):
         if meta.backfill is not None:
-            registry[name] = json.loads(_serialize_backfill_tag(meta.backfill))
+            entry: dict[str, Any] = json.loads(_serialize_backfill_tag(meta.backfill))
+            # Include schedule cron for gap-key crediting in the app
+            schedule = meta.sdk_config.get("schedule")
+            cron_expr: str | None = getattr(schedule, "quartz_cron_expression", None)
+            if cron_expr is not None:
+                entry["schedule_cron"] = cron_expr
+            registry[name] = entry
         else:
             registry[name] = None
     return json.dumps(registry, indent=2) + "\n"

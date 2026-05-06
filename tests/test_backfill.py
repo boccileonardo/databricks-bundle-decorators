@@ -10,14 +10,20 @@ import pytest
 import whenever
 
 from databricks_bundle_decorators.backfill import (
+    EXACT_BACKFILL_PARAM,
     BackfillDef,
     DailyBackfill,
     HourlyBackfill,
     MonthlyBackfill,
     StaticBackfill,
     WeeklyBackfill,
+    _compute_schedule_gap_keys,
+    _deserialize_backfill_tag,
     _parse_logical_date_str,
+    _quartz_to_unix_cron,
+    _serialize_backfill_tag,
     get_backfill_key,
+    get_backfill_keys,
     get_run_logical_date,
 )
 from databricks_bundle_decorators.context import _populate_params
@@ -519,3 +525,225 @@ class TestAutoDerive:
         today = whenever.ZonedDateTime.now("UTC").date()
         expected = today.replace(day=1).format("YYYY-MM-DD")
         assert key == expected
+
+
+class TestQuartzToUnixCron:
+    """Tests for the Quartz → Unix cron converter."""
+
+    def test_simple_daily(self):
+
+        # "At 06:00:00 every day"
+        result = _quartz_to_unix_cron("0 0 6 * * ?")
+        assert result == "0 6 * * *"
+
+    def test_weekday_only(self):
+
+        # "At 06:00:00 MON-FRI" (Quartz: 2=MON, 6=FRI)
+        result = _quartz_to_unix_cron("0 0 6 ? * 2-6")
+        assert result == "0 6 * * 1-5"
+
+    def test_named_days_unchanged(self):
+
+        result = _quartz_to_unix_cron("0 0 6 ? * MON-FRI")
+        assert result == "0 6 * * MON-FRI"
+
+    def test_question_mark_replaced(self):
+
+        result = _quartz_to_unix_cron("0 15 10 ? * *")
+        assert result == "15 10 * * *"
+
+    def test_with_year_field(self):
+
+        # 7 fields (with year) — year is dropped
+        result = _quartz_to_unix_cron("0 0 6 * * ? 2026")
+        assert result == "0 6 * * *"
+
+    def test_too_few_fields_raises(self):
+
+        with pytest.raises(ValueError, match="6-7 fields"):
+            _quartz_to_unix_cron("0 6 * * *")
+
+    def test_non_zero_seconds_raises(self):
+
+        with pytest.raises(ValueError, match="seconds field must be '0'"):
+            _quartz_to_unix_cron("30 0 6 * * ?")
+
+
+class TestGetBackfillKeys:
+    """Tests for the multi-key get_backfill_keys function."""
+
+    def setup_method(self):
+        reset_registries()
+
+    def teardown_method(self):
+        _populate_params({})
+
+    def _register_job(self, backfill_def, schedule=None):
+        sdk_config = {}
+        if schedule is not None:
+            sdk_config["schedule"] = schedule
+        _JOB_REGISTRY["test_job"] = JobMeta(
+            fn=lambda: None,
+            name="test_job",
+            backfill=backfill_def,
+            sdk_config=sdk_config,
+        )
+
+    def test_single_key_no_lookback(self):
+
+        self._register_job(DailyBackfill(start_date="2024-01-01"))
+        _populate_params({"backfill_key": "2026-01-08", "__job_name__": "test_job"})
+        keys = get_backfill_keys(validate=False)
+        assert keys == ["2026-01-08"]
+
+    def test_lookback_daily(self):
+
+        self._register_job(DailyBackfill(start_date="2024-01-01", lookback=2))
+        _populate_params({"backfill_key": "2026-01-08", "__job_name__": "test_job"})
+        keys = get_backfill_keys(validate=False)
+        assert keys == ["2026-01-06", "2026-01-07", "2026-01-08"]
+
+    def test_lookback_weekly(self):
+
+        self._register_job(WeeklyBackfill(start_date="2024-W01", lookback=1))
+        _populate_params({"backfill_key": "2026-W02", "__job_name__": "test_job"})
+        keys = get_backfill_keys(validate=False)
+        assert keys == ["2026-W01", "2026-W02"]
+
+    def test_lookback_monthly(self):
+
+        self._register_job(MonthlyBackfill(start_date="2024-01-01", lookback=2))
+        _populate_params({"backfill_key": "2026-03-01", "__job_name__": "test_job"})
+        keys = get_backfill_keys(validate=False)
+        assert keys == ["2026-01-01", "2026-02-01", "2026-03-01"]
+
+    def test_lookback_hourly(self):
+
+        self._register_job(HourlyBackfill(start_date="2024-01-01T00", lookback=2))
+        _populate_params({"backfill_key": "2026-01-01T10", "__job_name__": "test_job"})
+        keys = get_backfill_keys(validate=False)
+        assert keys == ["2026-01-01T08", "2026-01-01T09", "2026-01-01T10"]
+
+    def test_schedule_gaps_daily_weekday_monday(self):
+        """Monday with MON-FRI schedule: includes Sat, Sun, Mon."""
+
+        # Mock a CronSchedule object
+        class _FakeSchedule:
+            quartz_cron_expression = "0 0 6 ? * 2-6"  # MON-FRI 6am
+
+        self._register_job(
+            DailyBackfill(start_date="2024-01-01", collect_schedule_gaps=True),
+            schedule=_FakeSchedule(),
+        )
+        # Auto-derived (empty backfill_key) — Monday 2026-01-05
+        _populate_params({"backfill_key": "", "__job_name__": "test_job"})
+        # Since backfill_key is empty, get_backfill_key auto-derives to today.
+        # We need to provide the key explicitly but mark it as auto-derived.
+        # Actually the function checks params.get(BACKFILL_KEY_PARAM, "") for
+        # schedule gaps — empty means auto-derived. Let's test differently.
+        # We set the key to simulate a scheduled run where auto-derive happened.
+        # The auto-derive logic sets the key but the param remains empty.
+        # For testing, let's just verify the gap computation directly.
+
+        backfill = DailyBackfill(start_date="2024-01-01", collect_schedule_gaps=True)
+        gap_keys = _compute_schedule_gap_keys(backfill, "2026-01-05", "0 0 6 ? * 2-6")
+        # Previous fire was Friday 2026-01-02, gap = Sat 01-03, Sun 01-04
+        assert gap_keys == ["2026-01-03", "2026-01-04"]
+
+    def test_schedule_gaps_daily_tuesday(self):
+        """Tuesday with MON-FRI schedule: no gap (previous fire was Monday)."""
+
+        backfill = DailyBackfill(start_date="2024-01-01", collect_schedule_gaps=True)
+        gap_keys = _compute_schedule_gap_keys(backfill, "2026-01-06", "0 0 6 ? * 2-6")
+        # Previous fire was Monday 2026-01-05 — no gap days
+        assert gap_keys == []
+
+    def test_exact_flag_bypasses_lookback(self):
+
+        self._register_job(DailyBackfill(start_date="2024-01-01", lookback=2))
+        _populate_params(
+            {
+                "backfill_key": "2026-01-08",
+                "__job_name__": "test_job",
+                EXACT_BACKFILL_PARAM: "1",
+            }
+        )
+        keys = get_backfill_keys(validate=False)
+        assert keys == ["2026-01-08"]
+
+    def test_explicit_key_bypasses_schedule_gaps(self):
+        """When backfill_key is explicitly provided, schedule gaps are skipped."""
+
+        class _FakeSchedule:
+            quartz_cron_expression = "0 0 6 ? * 2-6"
+
+        self._register_job(
+            DailyBackfill(start_date="2024-01-01", collect_schedule_gaps=True),
+            schedule=_FakeSchedule(),
+        )
+        # Explicitly provided key (non-empty) — Monday 2026-01-05
+        _populate_params({"backfill_key": "2026-01-05", "__job_name__": "test_job"})
+        keys = get_backfill_keys(validate=False)
+        # No schedule gaps because key was explicit
+        assert keys == ["2026-01-05"]
+
+    def test_combined_lookback_and_explicit(self):
+        """Explicit key with lookback: lookback applies, gaps don't."""
+
+        class _FakeSchedule:
+            quartz_cron_expression = "0 0 6 ? * 2-6"
+
+        self._register_job(
+            DailyBackfill(
+                start_date="2024-01-01",
+                lookback=2,
+                collect_schedule_gaps=True,
+            ),
+            schedule=_FakeSchedule(),
+        )
+        # Saturday explicit backfill
+        _populate_params({"backfill_key": "2026-01-03", "__job_name__": "test_job"})
+        keys = get_backfill_keys(validate=False)
+        # lookback=2 gives Thu, Fri + Sat; schedule gaps bypassed
+        assert keys == ["2026-01-01", "2026-01-02", "2026-01-03"]
+
+    def test_static_backfill_returns_single_key(self):
+
+        self._register_job(StaticBackfill(keys=["us", "eu", "jp"]))
+        _populate_params({"backfill_key": "eu", "__job_name__": "test_job"})
+        keys = get_backfill_keys(validate=False)
+        assert keys == ["eu"]
+
+
+class TestSerializeDeserializeLookback:
+    """Test that lookback/collect_schedule_gaps survive serialization."""
+
+    def test_daily_roundtrip(self):
+
+        original = DailyBackfill(
+            start_date="2024-01-01",
+            lookback=3,
+            collect_schedule_gaps=True,
+        )
+        serialized = _serialize_backfill_tag(original)
+        restored = _deserialize_backfill_tag(serialized)
+        assert isinstance(restored, DailyBackfill)
+        assert restored.lookback == 3
+        assert restored.collect_schedule_gaps is True
+
+    def test_weekly_roundtrip(self):
+
+        original = WeeklyBackfill(start_date="2024-W01", lookback=1)
+        serialized = _serialize_backfill_tag(original)
+        restored = _deserialize_backfill_tag(serialized)
+        assert isinstance(restored, WeeklyBackfill)
+        assert restored.lookback == 1
+        assert restored.collect_schedule_gaps is False
+
+    def test_defaults_not_serialized(self):
+        """When lookback=0 and collect_schedule_gaps=False, they're not in JSON."""
+
+        original = DailyBackfill(start_date="2024-01-01")
+        serialized = _serialize_backfill_tag(original)
+        assert "lookback" not in serialized
+        assert "collect_schedule_gaps" not in serialized

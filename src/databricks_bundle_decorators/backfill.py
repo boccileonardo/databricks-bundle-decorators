@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 import whenever
+from croniter import croniter
 
 from databricks_bundle_decorators.context import params
 from databricks_bundle_decorators.registry import _JOB_REGISTRY
@@ -37,9 +38,77 @@ _logger = logging.getLogger(__name__)
 #: The fixed job-parameter name that carries the backfill key.
 BACKFILL_KEY_PARAM: str = "backfill_key"
 
+#: When set to ``"1"`` in job parameters, ``get_backfill_keys()``
+#: returns only the primary key (both lookback and schedule gap
+#: logic are bypassed).  Used by ``dbxdec backfill --exact``.
+EXACT_BACKFILL_PARAM: str = "__exact_backfill__"
+
 #: Tag key used to store the serialised backfill definition on
 #: the deployed Databricks job.
 BACKFILL_TAG: str = "dbxdec.backfill"
+
+# Quartz day-of-week uses 1=SUN..7=SAT; Unix cron uses 0=SUN..6=SAT.
+_QUARTZ_DOW_MAP: dict[str, str] = {
+    "1": "0",
+    "2": "1",
+    "3": "2",
+    "4": "3",
+    "5": "4",
+    "6": "5",
+    "7": "6",
+}
+
+
+def _quartz_to_unix_cron(quartz: str) -> str:
+    """Convert a Quartz cron expression to a standard 5-field Unix cron.
+
+    Databricks schedules use Quartz format (6-7 fields):
+    ``seconds minutes hours day-of-month month day-of-week [year]``
+
+    This strips the seconds and optional year fields, replaces ``?``
+    with ``*``, and converts numeric day-of-week from Quartz (1=SUN)
+    to Unix (0=SUN) notation.  Named days (MON, TUE, etc.) are left
+    unchanged as ``croniter`` handles them directly.
+    """
+    parts = quartz.strip().split()
+    if len(parts) < 6:
+        msg = (
+            f"Expected a Quartz cron expression with 6-7 fields, "
+            f"got {len(parts)}: {quartz!r}"
+        )
+        raise ValueError(msg)
+
+    # Drop seconds (index 0) and optional year (index 6)
+    seconds_field = parts[0]
+    if seconds_field != "0":
+        msg = (
+            f"Quartz cron seconds field must be '0' (got {seconds_field!r}). "
+            f"Sub-minute precision is not supported because Unix cron has no "
+            f"seconds field."
+        )
+        raise ValueError(msg)
+
+    minute, hour, dom, month, dow = parts[1], parts[2], parts[3], parts[4], parts[5]
+
+    # Replace Quartz '?' (no-specific-value) with '*'
+    dom = dom.replace("?", "*")
+    dow = dow.replace("?", "*")
+
+    # Convert numeric day-of-week values (Quartz 1-7 → Unix 0-6)
+    def _convert_dow_token(token: str) -> str:
+        """Convert a single DOW token, handling ranges and lists."""
+        # Handle ranges like 2-6 → 1-5
+        if "-" in token:
+            left, right = token.split("-", 1)
+            left = _QUARTZ_DOW_MAP.get(left, left)
+            right = _QUARTZ_DOW_MAP.get(right, right)
+            return f"{left}-{right}"
+        return _QUARTZ_DOW_MAP.get(token, token)
+
+    if dow != "*":
+        dow = ",".join(_convert_dow_token(t) for t in dow.split(","))
+
+    return f"{minute} {hour} {dom} {month} {dow}"
 
 
 def _serialize_backfill_tag(defn: BackfillDef) -> str:
@@ -64,6 +133,10 @@ def _serialize_backfill_tag(defn: BackfillDef) -> str:
             d["end_date"] = defn.end_date
         if defn.tz != "UTC":
             d["tz"] = defn.tz
+        if defn.lookback != 0:
+            d["lookback"] = defn.lookback
+        if defn.collect_schedule_gaps:
+            d["collect_schedule_gaps"] = True
     else:
         msg = f"Unsupported BackfillDef type: {type(defn).__name__}"
         raise TypeError(msg)
@@ -96,6 +169,8 @@ def _deserialize_backfill_tag(raw: str | dict[str, Any]) -> BackfillDef:
         start_date=d["start_date"],
         end_date=d.get("end_date"),
         tz=d.get("tz", "UTC"),
+        lookback=d.get("lookback", 0),
+        collect_schedule_gaps=d.get("collect_schedule_gaps", False),
     )
 
 
@@ -151,6 +226,16 @@ class DailyBackfill(BackfillDef):
     tz:
         IANA timezone name (e.g. ``"UTC"``, ``"Europe/Berlin"``).
         Used to determine "yesterday" when *end_date* is omitted.
+    lookback:
+        Number of additional prior keys to include.  For example,
+        ``lookback=2`` with key ``"2026-01-08"`` yields
+        ``["2026-01-06", "2026-01-07", "2026-01-08"]``.
+        Applies in all run modes (scheduled and explicit backfill).
+    collect_schedule_gaps:
+        When ``True``, `get_backfill_keys` also returns keys for
+        days between the previous cron fire date and the current key.
+        Only applies to auto-derived keys (scheduled runs); bypassed
+        during explicit ``dbxdec backfill --keys`` invocations.
     """
 
     _FMT: ClassVar[str] = "YYYY-MM-DD"
@@ -158,6 +243,8 @@ class DailyBackfill(BackfillDef):
     start_date: str
     end_date: str | None = None
     tz: str = "UTC"
+    lookback: int = 0
+    collect_schedule_gaps: bool = False
 
     def _parse(self, key: str) -> whenever.Date:
         return whenever.Date.parse(key, format=self._FMT)
@@ -200,11 +287,18 @@ class WeeklyBackfill(BackfillDef):
     tz:
         IANA timezone name.  Used to determine "today" when
         *end_date* is omitted.
+    lookback:
+        Number of additional prior keys (weeks) to include.
+    collect_schedule_gaps:
+        When ``True``, `get_backfill_keys` also returns keys for
+        weeks between the previous cron fire and the current key.
     """
 
     start_date: str
     end_date: str | None = None
     tz: str = "UTC"
+    lookback: int = 0
+    collect_schedule_gaps: bool = False
 
     @staticmethod
     def _fmt_iso_week(date: whenever.Date) -> str:
@@ -258,6 +352,11 @@ class MonthlyBackfill(BackfillDef):
     tz:
         IANA timezone name.  Used to determine "today" when
         *end_date* is omitted.
+    lookback:
+        Number of additional prior keys (months) to include.
+    collect_schedule_gaps:
+        When ``True``, `get_backfill_keys` also returns keys for
+        months between the previous cron fire and the current key.
     """
 
     _FMT: ClassVar[str] = "YYYY-MM-DD"
@@ -265,6 +364,8 @@ class MonthlyBackfill(BackfillDef):
     start_date: str
     end_date: str | None = None
     tz: str = "UTC"
+    lookback: int = 0
+    collect_schedule_gaps: bool = False
 
     def _parse_month(self, key: str) -> whenever.Date:
         """Parse a month key into the first day of that month."""
@@ -315,6 +416,11 @@ class HourlyBackfill(BackfillDef):
     tz:
         IANA timezone name (e.g. ``"UTC"``, ``"America/New_York"``).
         Defaults to ``"UTC"`` to sidestep daylight-saving issues.
+    lookback:
+        Number of additional prior keys (hours) to include.
+    collect_schedule_gaps:
+        When ``True``, `get_backfill_keys` also returns keys for
+        hours between the previous cron fire and the current key.
     """
 
     _FMT: ClassVar[str] = "YYYY-MM-DD'T'hh"
@@ -322,6 +428,8 @@ class HourlyBackfill(BackfillDef):
     start_date: str
     end_date: str | None = None
     tz: str = "UTC"
+    lookback: int = 0
+    collect_schedule_gaps: bool = False
 
     def _parse_hour(self, key: str) -> whenever.ZonedDateTime:
         """Parse an hour key into a ``ZonedDateTime``.
@@ -441,6 +549,213 @@ def get_backfill_key(*, validate: bool = True) -> str:
         _validate_backfill_key(raw, job_name)
 
     return raw
+
+
+def get_backfill_keys(*, validate: bool = True) -> list[str]:
+    """Return all backfill keys for the current run.
+
+    When neither ``lookback`` nor ``collect_schedule_gaps`` is
+    configured, this returns a single-element list equivalent to
+    ``[get_backfill_key()]``.
+
+    With ``lookback=N``, the result includes *N* prior keys plus the
+    current key.  This applies in **all** run modes (scheduled and
+    explicit backfill).
+
+    With ``collect_schedule_gaps=True``, keys between the previous
+    cron fire date and the current key are included.  This only
+    applies to auto-derived keys (scheduled runs); when
+    ``backfill_key`` is explicitly provided (via ``dbxdec backfill
+    --keys``), schedule gap logic is bypassed.
+
+    When both are configured the result is the sorted union.
+
+    Parameters
+    ----------
+    validate:
+        When ``True`` (the default), verify that the primary key is
+        valid for the job's `BackfillDef`.
+
+    Returns
+    -------
+    list[str]
+        Sorted list of backfill key strings (ascending).
+    """
+    primary_key = get_backfill_key(validate=validate)
+
+    job_name: str | None = params.get("__job_name__")
+    if job_name is None:
+        return [primary_key]
+
+    job_meta = _JOB_REGISTRY.get(job_name)
+    if job_meta is None or job_meta.backfill is None:
+        return [primary_key]
+
+    backfill = job_meta.backfill
+
+    # StaticBackfill has no lookback/schedule_gaps support
+    if isinstance(backfill, StaticBackfill):
+        return [primary_key]
+
+    # --exact flag: bypass all multi-key expansion
+    if params.get(EXACT_BACKFILL_PARAM, "") == "1":
+        return [primary_key]
+
+    lookback: int = getattr(backfill, "lookback", 0)
+    collect_gaps: bool = getattr(backfill, "collect_schedule_gaps", False)
+
+    if lookback == 0 and not collect_gaps:
+        return [primary_key]
+
+    all_keys: set[str] = {primary_key}
+
+    # Lookback: always applies
+    if lookback > 0:
+        all_keys.update(_compute_lookback_keys(backfill, primary_key, lookback))
+
+    # Schedule gaps: only when key was auto-derived (not explicitly provided)
+    if collect_gaps:
+        explicitly_provided = bool(params.get(BACKFILL_KEY_PARAM, ""))
+        if not explicitly_provided:
+            schedule_cron = _get_job_schedule_cron(job_name)
+            if schedule_cron is not None:
+                all_keys.update(
+                    _compute_schedule_gap_keys(backfill, primary_key, schedule_cron)
+                )
+
+    return sorted(all_keys)
+
+
+def _compute_lookback_keys(
+    backfill: BackfillDef, primary_key: str, lookback: int
+) -> list[str]:
+    """Compute lookback keys by stepping backwards from *primary_key*."""
+    if isinstance(backfill, DailyBackfill):
+        d = whenever.Date.parse(primary_key, format="YYYY-MM-DD")
+        return [d.subtract(days=i).format("YYYY-MM-DD") for i in range(1, lookback + 1)]
+    if isinstance(backfill, WeeklyBackfill):
+        d = backfill._parse_iso_week(primary_key)
+        return [
+            backfill._fmt_iso_week(d.subtract(weeks=i)) for i in range(1, lookback + 1)
+        ]
+    if isinstance(backfill, MonthlyBackfill):
+        d = backfill._parse_month(primary_key)
+        return [
+            d.subtract(months=i).format("YYYY-MM-DD") for i in range(1, lookback + 1)
+        ]
+    if isinstance(backfill, HourlyBackfill):
+        zdt = backfill._parse_hour(primary_key)
+        return [
+            zdt.subtract(hours=i).format("YYYY-MM-DD'T'hh")
+            for i in range(1, lookback + 1)
+        ]
+    return []
+
+
+def _get_job_schedule_cron(job_name: str) -> str | None:
+    """Extract the Quartz cron expression from a job's SDK config."""
+    job_meta = _JOB_REGISTRY.get(job_name)
+    if job_meta is None:
+        return None
+    schedule = job_meta.sdk_config.get("schedule")
+    if schedule is None:
+        return None
+    # CronSchedule dataclass has quartz_cron_expression attr
+    cron_expr: str | None = getattr(schedule, "quartz_cron_expression", None)
+    return cron_expr
+
+
+def _compute_schedule_gap_keys(
+    backfill: BackfillDef, primary_key: str, quartz_cron: str
+) -> list[str]:
+    """Compute keys between the previous cron fire and *primary_key*.
+
+    Uses the Quartz cron expression (converted to Unix cron for
+    ``croniter``) to find the previous scheduled fire time, then
+    enumerates all keys in the gap.
+    """
+    unix_cron = _quartz_to_unix_cron(quartz_cron)
+
+    if isinstance(backfill, DailyBackfill):
+        current_date = datetime.fromisoformat(primary_key).replace(tzinfo=UTC)
+        cron = croniter(unix_cron, current_date)
+        # get_prev returns the fire time AT or BEFORE current_date
+        # We need the fire BEFORE the current one, so step back twice
+        # if the current time matches a fire time.
+        prev_fire = cron.get_prev(datetime)
+        if prev_fire.date() == current_date.date():
+            prev_fire = cron.get_prev(datetime)
+        # Enumerate days from prev_fire+1 to primary_key-1
+        prev_date = whenever.Date(prev_fire.year, prev_fire.month, prev_fire.day)
+        current = whenever.Date.parse(primary_key, format="YYYY-MM-DD")
+        gap_keys: list[str] = []
+        cursor = prev_date.add(days=1)
+        while cursor < current:
+            gap_keys.append(cursor.format("YYYY-MM-DD"))
+            cursor = cursor.add(days=1)
+        return gap_keys
+
+    if isinstance(backfill, HourlyBackfill):
+        current_dt = datetime.strptime(primary_key, "%Y-%m-%dT%H").replace(tzinfo=UTC)
+        cron = croniter(unix_cron, current_dt)
+        prev_fire = cron.get_prev(datetime)
+        if prev_fire == current_dt:
+            prev_fire = cron.get_prev(datetime)
+        # Enumerate hours from prev_fire+1h to primary_key-1h
+        gap_keys = []
+        cursor_zdt = whenever.ZonedDateTime(
+            prev_fire.year,
+            prev_fire.month,
+            prev_fire.day,
+            prev_fire.hour,
+            tz="UTC",
+        ).add(hours=1)
+        current_zdt = whenever.ZonedDateTime(
+            current_dt.year,
+            current_dt.month,
+            current_dt.day,
+            current_dt.hour,
+            tz="UTC",
+        )
+        while cursor_zdt < current_zdt:
+            gap_keys.append(cursor_zdt.format("YYYY-MM-DD'T'hh"))
+            cursor_zdt = cursor_zdt.add(hours=1)
+        return gap_keys
+
+    # Weekly/Monthly: less common but supported
+    if isinstance(backfill, WeeklyBackfill):
+        current_date = datetime.fromisoformat(
+            str(backfill._parse_iso_week(primary_key))
+        ).replace(tzinfo=UTC)
+        cron = croniter(unix_cron, current_date)
+        prev_fire = cron.get_prev(datetime)
+        if prev_fire.date() == current_date.date():
+            prev_fire = cron.get_prev(datetime)
+        prev_d = whenever.Date(prev_fire.year, prev_fire.month, prev_fire.day)
+        current_d = backfill._parse_iso_week(primary_key)
+        gap_keys = []
+        cursor = prev_d.add(weeks=1)
+        while cursor < current_d:
+            gap_keys.append(backfill._fmt_iso_week(cursor))
+            cursor = cursor.add(weeks=1)
+        return gap_keys
+
+    if isinstance(backfill, MonthlyBackfill):
+        current_date = datetime.fromisoformat(primary_key).replace(tzinfo=UTC)
+        cron = croniter(unix_cron, current_date)
+        prev_fire = cron.get_prev(datetime)
+        if prev_fire.date() == current_date.date():
+            prev_fire = cron.get_prev(datetime)
+        gap_keys = []
+        prev_d = whenever.Date(prev_fire.year, prev_fire.month, 1)
+        current_d = whenever.Date.parse(primary_key, format="YYYY-MM-DD")
+        cursor = prev_d.add(months=1)
+        while cursor < current_d:
+            gap_keys.append(cursor.format("YYYY-MM-DD"))
+            cursor = cursor.add(months=1)
+        return gap_keys
+
+    return []
 
 
 def _auto_derive_backfill_key() -> str:

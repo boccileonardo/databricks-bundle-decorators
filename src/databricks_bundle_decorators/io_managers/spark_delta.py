@@ -24,6 +24,7 @@ from databricks_bundle_decorators.io_manager import (
     _build_replace_where,
     _needs_backfill_key_col,
     _resolve_backfill_key,
+    _should_inject_backfill_key,
     _spark_apply_partition_filter,
     _spark_extract_partition_values,
     _validate_delta_mode,
@@ -90,7 +91,9 @@ class _SparkDeltaBase(IoManager):
         partition_by = context.partition_by
 
         # Inject backfill_key column if it's a partition column
-        if _needs_backfill_key_col(partition_by):
+        if _should_inject_backfill_key(
+            partition_by, has_backfill_key_col="backfill_key" in obj.columns
+        ):
             from pyspark.sql import functions as F  # noqa: N812, PLC0415
 
             bk = _resolve_backfill_key(context.backfill_key)

@@ -95,6 +95,54 @@ def _needs_backfill_key_col(partition_by: list[str] | None) -> bool:
     return partition_by is not None and "backfill_key" in partition_by
 
 
+def _should_inject_backfill_key(
+    partition_by: list[str] | None,
+    *,
+    has_backfill_key_col: bool,
+) -> bool:
+    """Determine whether the framework should auto-inject ``backfill_key``.
+
+    Returns ``True`` if the column should be injected.  Raises
+    ``ValueError`` if the column is absent but multi-key backfill is
+    active (the user must stamp rows themselves).
+
+    Parameters
+    ----------
+    partition_by:
+        The partition columns for the IoManager.
+    has_backfill_key_col:
+        Whether the DataFrame already contains a ``backfill_key`` column.
+    """
+    if not _needs_backfill_key_col(partition_by):
+        return False
+
+    if has_backfill_key_col:
+        # User already stamped the column — suppress injection.
+        return False
+
+    # Check if multi-key backfill is active
+    from databricks_bundle_decorators.backfill import get_backfill_keys  # noqa: PLC0415
+
+    try:
+        keys = get_backfill_keys(validate=False)
+    except RuntimeError:
+        # No backfill context available — fall back to single-key injection
+        return True
+
+    if len(keys) > 1:
+        msg = (
+            "Multi-key backfill is active (get_backfill_keys() returned "
+            f"{len(keys)} keys) but the DataFrame does not contain a "
+            "'backfill_key' column. When using lookback or "
+            "collect_schedule_gaps with partition_by='backfill_key', "
+            "your task must add a 'backfill_key' column to each row "
+            "indicating which partition it belongs to."
+        )
+        raise ValueError(msg)
+
+    return True
+
+
 def _resolve_backfill_key(backfill_key: str | None) -> str:
     """Return *backfill_key*, falling back to today's date when ``None``."""
     if backfill_key is not None:

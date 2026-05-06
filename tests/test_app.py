@@ -397,6 +397,33 @@ class TestGenerateRegistryJson:
 
         assert restored.keys() == bf.keys()
 
+    def test_schedule_cron_included(self) -> None:
+        class _FakeSchedule:
+            quartz_cron_expression = "0 0 6 ? * 2-6"
+
+        _JOB_REGISTRY["sched_job"] = JobMeta(
+            fn=_dummy_fn,
+            name="sched_job",
+            dag={},
+            backfill=DailyBackfill(start_date="2024-01-01", collect_schedule_gaps=True),
+            sdk_config={"schedule": _FakeSchedule()},
+        )
+
+        result = json.loads(generate_registry_json())
+        assert result["sched_job"]["schedule_cron"] == "0 0 6 ? * 2-6"
+        assert result["sched_job"]["collect_schedule_gaps"] is True
+
+    def test_no_schedule_cron_when_no_schedule(self) -> None:
+        _JOB_REGISTRY["no_sched"] = JobMeta(
+            fn=_dummy_fn,
+            name="no_sched",
+            dag={},
+            backfill=DailyBackfill(start_date="2024-01-01"),
+        )
+
+        result = json.loads(generate_registry_json())
+        assert "schedule_cron" not in result["no_sched"]
+
 
 class TestSyncRegistryJson:
     """Tests for sync_registry_json."""

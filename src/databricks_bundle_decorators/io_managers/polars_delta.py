@@ -24,6 +24,7 @@ from databricks_bundle_decorators.io_manager import (
     _polars_apply_partition_filter,
     _polars_extract_partition_values,
     _resolve_backfill_key,
+    _should_inject_backfill_key,
     _validate_delta_mode,
 )
 
@@ -206,7 +207,14 @@ class PolarsDeltaIoManager(IoManager):
         partition_by = context.partition_by
 
         # Inject backfill_key column if it's a partition column
-        if _needs_backfill_key_col(partition_by):
+        has_bk_col = isinstance(
+            obj, (pl.DataFrame, pl.LazyFrame)
+        ) and "backfill_key" in (
+            obj.collect_schema().names()
+            if isinstance(obj, pl.LazyFrame)
+            else obj.columns
+        )
+        if _should_inject_backfill_key(partition_by, has_backfill_key_col=has_bk_col):
             bk = _resolve_backfill_key(context.backfill_key)
             obj = obj.with_columns(pl.lit(bk).alias("backfill_key"))
 

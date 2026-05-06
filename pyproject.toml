@@ -16,8 +16,9 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
+  "croniter>=6",
   "databricks-bundles>=0.275",
-  "tenacity>=9.1.4",
+  "tenacity>=9",
   "typer>=0.16",
   "whenever>=0.10",
 ]
