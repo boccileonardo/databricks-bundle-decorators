@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -26,6 +27,45 @@ from databricks_bundle_decorators.registry import reset_registries
 
 def _raise_import_error(name: str) -> None:
     raise ImportError(name)
+
+
+def _mock_sdk_submission(monkeypatch, *, run_id: int = 42):
+    """Patch SDK and bundle summary for backfill submission tests.
+
+    Returns a list that accumulates (job_id, job_parameters) tuples
+    for each ``run_now`` call.
+    """
+    calls: list[tuple[int, dict]] = []
+
+    # Mock _get_job_id_from_bundle to return a fake job ID
+    monkeypatch.setattr(
+        "databricks_bundle_decorators.cli._get_job_id_from_bundle",
+        lambda job_name, target, profile: "12345",
+    )
+
+    # Mock WorkspaceClient
+    mock_waiter = MagicMock()
+    mock_waiter.run_id = run_id
+
+    mock_jobs = MagicMock()
+
+    def _fake_run_now(job_id, *, job_parameters=None):
+        calls.append((job_id, job_parameters or {}))
+        waiter = MagicMock()
+        waiter.run_id = run_id
+        return waiter
+
+    mock_jobs.run_now = _fake_run_now
+
+    mock_client = MagicMock()
+    mock_client.jobs = mock_jobs
+
+    monkeypatch.setattr(
+        "databricks_bundle_decorators.cli.WorkspaceClient",
+        lambda **kwargs: mock_client,
+    )
+
+    return calls
 
 
 class TestReadPyproject:
@@ -604,23 +644,16 @@ class TestBackfillCmd:
                 keys=",,,",
             )
 
-    def test_submit_runs_via_bundle_run(self, monkeypatch, capsys):
-        """Non-dry-run submits via ``databricks bundle run``."""
+    def test_submit_runs_via_sdk(self, monkeypatch, capsys):
+        """Non-dry-run submits via the Databricks SDK."""
         self._make_job_with_partition()
 
         monkeypatch.setattr(
             "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
 
-        calls: list[list[str]] = []
-
-        def _fake_run(cmd, *, capture_output=False, text=False, check=False):
-            calls.append(list(cmd))
-            return subprocess.CompletedProcess(cmd, 0, stdout="Run submitted\n")
-
-        monkeypatch.setattr("subprocess.run", _fake_run)
+        calls = _mock_sdk_submission(monkeypatch)
 
         _cmd_backfill(
             job_name="test_pipeline",
@@ -628,32 +661,54 @@ class TestBackfillCmd:
         )
 
         assert len(calls) == 2
-        # Each call should use 'databricks bundle run'
-        for call in calls:
-            assert call[:4] == ["databricks", "bundle", "run", "test_pipeline"]
-            assert "--no-wait" in call
-            assert any("backfill_key=" in arg for arg in call)
+        # Each call should pass the correct job_id and backfill_key
+        for _i, (job_id, params) in enumerate(calls):
+            assert job_id == 12345
+            assert "backfill_key" in params
+        assert calls[0][1]["backfill_key"] == "2024-01-01"
+        assert calls[1][1]["backfill_key"] == "2024-01-02"
 
         out = capsys.readouterr().out
         assert "Submitted 2/2" in out
 
     def test_submit_with_target_and_profile(self, monkeypatch, capsys):
-        """--target and --profile are forwarded to ``databricks bundle run``."""
+        """--target and --profile are forwarded to bundle summary and SDK."""
         self._make_job_with_partition()
 
         monkeypatch.setattr(
             "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
 
-        calls: list[list[str]] = []
+        # Track what _get_job_id_from_bundle receives
+        summary_args: list[tuple] = []
 
-        def _fake_run(cmd, *, capture_output=False, text=False, check=False):
-            calls.append(list(cmd))
-            return subprocess.CompletedProcess(cmd, 0, stdout="OK\n")
+        def _fake_get_job_id(job_name, target, profile):
+            summary_args.append((job_name, target, profile))
+            return "12345"
 
-        monkeypatch.setattr("subprocess.run", _fake_run)
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli._get_job_id_from_bundle",
+            _fake_get_job_id,
+        )
+
+        # Track WorkspaceClient kwargs
+        client_kwargs: list[dict] = []
+        mock_jobs = MagicMock()
+        mock_waiter = MagicMock()
+        mock_waiter.run_id = 42
+        mock_jobs.run_now = MagicMock(return_value=mock_waiter)
+        mock_client = MagicMock()
+        mock_client.jobs = mock_jobs
+
+        def _fake_client(**kwargs):
+            client_kwargs.append(kwargs)
+            return mock_client
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.WorkspaceClient",
+            _fake_client,
+        )
 
         _cmd_backfill(
             job_name="test_pipeline",
@@ -662,30 +717,44 @@ class TestBackfillCmd:
             profile="myprofile",
         )
 
-        assert len(calls) == 1
-        cmd = calls[0]
-        assert "--target" in cmd
-        assert cmd[cmd.index("--target") + 1] == "dev"
-        assert "--profile" in cmd
-        assert cmd[cmd.index("--profile") + 1] == "myprofile"
+        # Bundle summary should receive target and profile
+        assert summary_args[0] == ("test_pipeline", "dev", "myprofile")
+        # WorkspaceClient should receive the profile
+        assert client_kwargs[0]["profile"] == "myprofile"
 
-    def test_wait_omits_no_wait_flag(self, monkeypatch, capsys):
-        """--wait causes ``databricks bundle run`` to block (no --no-wait)."""
+    def test_wait_polls_runs(self, monkeypatch, capsys):
+        """--wait submits then polls runs until completion."""
         self._make_job_with_partition()
 
         monkeypatch.setattr(
             "databricks_bundle_decorators.cli.discover_pipelines",
             lambda: None,
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
 
-        calls: list[list[str]] = []
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli._get_job_id_from_bundle",
+            lambda job_name, target, profile: "12345",
+        )
 
-        def _fake_run(cmd, *, capture_output=False, text=False, check=False):
-            calls.append(list(cmd))
-            return subprocess.CompletedProcess(cmd, 0, stdout="SUCCESS\n")
+        # Create a waiter mock that simulates a successful run
+        mock_state = MagicMock()
+        mock_state.result_state.value = "SUCCESS"
+        mock_run = MagicMock()
+        mock_run.state = mock_state
 
-        monkeypatch.setattr("subprocess.run", _fake_run)
+        mock_waiter = MagicMock()
+        mock_waiter.run_id = 99
+        mock_waiter.result = MagicMock(return_value=mock_run)
+
+        mock_jobs = MagicMock()
+        mock_jobs.run_now = MagicMock(return_value=mock_waiter)
+        mock_client = MagicMock()
+        mock_client.jobs = mock_jobs
+
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.WorkspaceClient",
+            lambda **kwargs: mock_client,
+        )
 
         _cmd_backfill(
             job_name="test_pipeline",
@@ -693,14 +762,11 @@ class TestBackfillCmd:
             wait=True,
         )
 
-        assert len(calls) == 1
-        assert "--no-wait" not in calls[0]
-
         out = capsys.readouterr().out
         assert "Completed 1/1" in out
 
     def test_missing_databricks_cli_exits(self, monkeypatch):
-        """Exit with error when databricks CLI is not on PATH."""
+        """Exit with error when databricks CLI is not on PATH (for bundle summary)."""
         self._make_job_with_partition()
 
         monkeypatch.setattr(
@@ -971,7 +1037,7 @@ class TestBackfillCatchupCmd:
         assert "entry point" in err
 
     def test_submits_missing_keys(self, monkeypatch, capsys):
-        """Non-dry-run submits only missing keys via ``databricks bundle run``."""
+        """Non-dry-run submits only missing keys via the SDK."""
         self._make_job_with_backfill()
 
         monkeypatch.setattr(
@@ -992,8 +1058,6 @@ class TestBackfillCatchupCmd:
             },
         ]
 
-        submitted_keys: list[str] = []
-
         def _combined(cmd, *, capture_output=False, text=False, check=False):
             if "bundle" in cmd and "summary" in cmd:
                 return self._fake_bundle_summary()(
@@ -1003,17 +1067,28 @@ class TestBackfillCatchupCmd:
                 return self._fake_list_runs(runs)(
                     cmd, capture_output=capture_output, text=text
                 )
-            if "bundle" in cmd and "run" in cmd:
-                # Extract the backfill_key from --params
-                submitted_keys.extend(
-                    arg.split("=", 1)[1]
-                    for arg in cmd
-                    if arg.startswith("backfill_key=")
-                )
-                return subprocess.CompletedProcess(cmd, 0, stdout="Run submitted\n")
             raise AssertionError(f"Unexpected command: {cmd}")
 
         monkeypatch.setattr("subprocess.run", _combined)
+
+        # Mock SDK submission
+        submitted_keys: list[str] = []
+        mock_waiter = MagicMock()
+        mock_waiter.run_id = 42
+        mock_jobs = MagicMock()
+
+        def _fake_run_now(job_id, *, job_parameters=None):
+            if job_parameters:
+                submitted_keys.append(job_parameters["backfill_key"])
+            return mock_waiter
+
+        mock_jobs.run_now = _fake_run_now
+        mock_client = MagicMock()
+        mock_client.jobs = mock_jobs
+        monkeypatch.setattr(
+            "databricks_bundle_decorators.cli.WorkspaceClient",
+            lambda **kwargs: mock_client,
+        )
 
         _cmd_backfill_catchup(job_name="test_pipeline")
 
