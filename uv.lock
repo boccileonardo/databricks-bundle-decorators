@@ -653,7 +653,7 @@ wheels = [
 
 [[package]]
 name = "databricks-bundle-decorators"
-version = "0.11.0"
+version = "0.11.1"
 source = { editable = "." }
 dependencies = [
     { name = "croniter" },
@@ -737,7 +737,7 @@ requires-dist = [
     { name = "polars", marker = "extra == 'polars'" },
     { name = "polars", marker = "extra == 'polars-delta'" },
     { name = "s3fs", marker = "extra == 'aws'" },
-    { name = "tenacity", specifier = ">=9" },
+    { name = "tenacity", specifier = ">=8" },
     { name = "typer", specifier = ">=0.16" },
     { name = "whenever", specifier = ">=0.10" },
 ]
