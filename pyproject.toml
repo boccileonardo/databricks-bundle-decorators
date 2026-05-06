@@ -18,7 +18,7 @@ classifiers = [
 dependencies = [
   "croniter>=6",
   "databricks-bundles>=0.275",
-  "tenacity>=9",
+  "tenacity>=8",
   "typer>=0.16",
   "whenever>=0.10",
 ]
