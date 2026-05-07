@@ -48,7 +48,7 @@ _DAILY_FMT: str = "YYYY-MM-DD"
 
 
 def _infer_key_from_start_time(
-    start_time_ms: int | None, kind: str, tz: str = "UTC"
+    start_time_ms: int | None, kind: str, tz: str = "UTC", data_lag: int = 0
 ) -> str | None:
     """Infer the backfill key a run would have used based on its start time.
 
@@ -76,14 +76,26 @@ def _infer_key_from_start_time(
     ).to_tz(tz)
 
     if kind == "daily":
-        return zdt.date().format(_DAILY_FMT)
+        d = zdt.date()
+        if data_lag:
+            d = d.subtract(days=data_lag)
+        return d.format(_DAILY_FMT)
     if kind == "weekly":
-        iwd = zdt.date().iso_week_date()
+        d = zdt.date()
+        if data_lag:
+            d = d.subtract(weeks=data_lag)
+        iwd = d.iso_week_date()
         return f"{iwd.year}-W{iwd.week:02d}"
     if kind == "monthly":
-        return zdt.date().replace(day=1).format(_DAILY_FMT)
+        d = zdt.date()
+        if data_lag:
+            d = d.subtract(months=data_lag)
+        return d.replace(day=1).format(_DAILY_FMT)
     if kind == "hourly":
-        return zdt.replace(minute=0, second=0, nanosecond=0).format(_HOURLY_FMT)
+        h = zdt.replace(minute=0, second=0, nanosecond=0)
+        if data_lag:
+            h = h.subtract(hours=data_lag)
+        return h.format(_HOURLY_FMT)
     return None
 
 
@@ -309,6 +321,9 @@ def compute_backfill_coverage(
         and getattr(backfill, "collect_schedule_gaps", False)
     )
 
+    # Extract data_lag for key inference on on-demand runs
+    data_lag: int = getattr(backfill, "data_lag", 0) if backfill is not None else 0
+
     # Single pass over runs to classify by backfill key.
     key_runs: dict[str, tuple[int, int | None]] = {}
     errored: set[str] = set()
@@ -319,7 +334,9 @@ def compute_backfill_coverage(
         # runtime falls back to current_key() for time-based backfills.
         # Infer the key from the run's start time so these runs get credit.
         if effective_key is None:
-            effective_key = _infer_key_from_start_time(r.start_time_ms, kind, tz)
+            effective_key = _infer_key_from_start_time(
+                r.start_time_ms, kind, tz, data_lag
+            )
         if effective_key is None:
             continue
         if r.result_state == "SUCCESS":

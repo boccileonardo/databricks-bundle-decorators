@@ -137,6 +137,8 @@ def _serialize_backfill_tag(defn: BackfillDef) -> str:
             d["lookback"] = defn.lookback
         if defn.collect_schedule_gaps:
             d["collect_schedule_gaps"] = True
+        if defn.data_lag != 0:
+            d["data_lag"] = defn.data_lag
     else:
         msg = f"Unsupported BackfillDef type: {type(defn).__name__}"
         raise TypeError(msg)
@@ -171,6 +173,7 @@ def _deserialize_backfill_tag(raw: str | dict[str, Any]) -> BackfillDef:
         tz=d.get("tz", "UTC"),
         lookback=d.get("lookback", 0),
         collect_schedule_gaps=d.get("collect_schedule_gaps", False),
+        data_lag=d.get("data_lag", 0),
     )
 
 
@@ -236,6 +239,13 @@ class DailyBackfill(BackfillDef):
         days between the previous cron fire date and the current key.
         Only applies to auto-derived keys (scheduled runs); bypassed
         during explicit ``dbxdec backfill --keys`` invocations.
+    data_lag:
+        Number of periods to subtract from the default end bound.
+        Use ``data_lag=1`` when the data source provides data for
+        T-1 (yesterday) rather than T (today).  Only affects the
+        default end when *end_date* is ``None`` and no explicit
+        ``--end`` is passed to the CLI.  Also shifts
+        `current_key` backwards by the same amount.
     """
 
     _FMT: ClassVar[str] = "YYYY-MM-DD"
@@ -245,13 +255,17 @@ class DailyBackfill(BackfillDef):
     tz: str = "UTC"
     lookback: int = 0
     collect_schedule_gaps: bool = False
+    data_lag: int = 0
 
     def _parse(self, key: str) -> whenever.Date:
         return whenever.Date.parse(key, format=self._FMT)
 
     def current_key(self) -> str:
-        """Today's date in the configured timezone."""
-        return whenever.ZonedDateTime.now(self.tz).date().format(self._FMT)
+        """Today's date in the configured timezone, shifted by `data_lag`."""
+        d = whenever.ZonedDateTime.now(self.tz).date()
+        if self.data_lag:
+            d = d.subtract(days=self.data_lag)
+        return d.format(self._FMT)
 
     def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
         s = self._parse(start or self.start_date)
@@ -261,6 +275,8 @@ class DailyBackfill(BackfillDef):
             e = self._parse(self.end_date)
         else:
             e = whenever.ZonedDateTime.now(self.tz).date()
+            if self.data_lag:
+                e = e.subtract(days=self.data_lag)
 
         keys: list[str] = []
         while s <= e:
@@ -292,6 +308,10 @@ class WeeklyBackfill(BackfillDef):
     collect_schedule_gaps:
         When ``True``, `get_backfill_keys` also returns keys for
         weeks between the previous cron fire and the current key.
+    data_lag:
+        Number of periods (weeks) to subtract from the default
+        end bound.  Use ``data_lag=1`` when data arrives one week
+        late.  Also shifts `current_key` backwards.
     """
 
     start_date: str
@@ -299,6 +319,7 @@ class WeeklyBackfill(BackfillDef):
     tz: str = "UTC"
     lookback: int = 0
     collect_schedule_gaps: bool = False
+    data_lag: int = 0
 
     @staticmethod
     def _fmt_iso_week(date: whenever.Date) -> str:
@@ -313,8 +334,10 @@ class WeeklyBackfill(BackfillDef):
         )
 
     def current_key(self) -> str:
-        """Current ISO week in the configured timezone."""
+        """Current ISO week in the configured timezone, shifted by `data_lag`."""
         today = whenever.ZonedDateTime.now(self.tz).date()
+        if self.data_lag:
+            today = today.subtract(weeks=self.data_lag)
         return self._fmt_iso_week(today)
 
     def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
@@ -325,6 +348,8 @@ class WeeklyBackfill(BackfillDef):
             e = self._parse_iso_week(self.end_date)
         else:
             today = whenever.ZonedDateTime.now(self.tz).date()
+            if self.data_lag:
+                today = today.subtract(weeks=self.data_lag)
             # Monday of the current ISO week
             weekday_offset = today.day_of_week().value - 1  # 0 for Monday
             e = today.subtract(days=weekday_offset)
@@ -357,6 +382,10 @@ class MonthlyBackfill(BackfillDef):
     collect_schedule_gaps:
         When ``True``, `get_backfill_keys` also returns keys for
         months between the previous cron fire and the current key.
+    data_lag:
+        Number of periods (months) to subtract from the default
+        end bound.  Use ``data_lag=1`` when data arrives one month
+        late.  Also shifts `current_key` backwards.
     """
 
     _FMT: ClassVar[str] = "YYYY-MM-DD"
@@ -366,6 +395,7 @@ class MonthlyBackfill(BackfillDef):
     tz: str = "UTC"
     lookback: int = 0
     collect_schedule_gaps: bool = False
+    data_lag: int = 0
 
     def _parse_month(self, key: str) -> whenever.Date:
         """Parse a month key into the first day of that month."""
@@ -373,8 +403,10 @@ class MonthlyBackfill(BackfillDef):
         return d.replace(day=1)
 
     def current_key(self) -> str:
-        """First day of the current month in the configured timezone."""
+        """First day of the current month in the configured timezone, shifted by `data_lag`."""
         today = whenever.ZonedDateTime.now(self.tz).date()
+        if self.data_lag:
+            today = today.subtract(months=self.data_lag)
         return today.replace(day=1).format(self._FMT)
 
     def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
@@ -385,6 +417,8 @@ class MonthlyBackfill(BackfillDef):
             e = self._parse_month(self.end_date)
         else:
             today = whenever.ZonedDateTime.now(self.tz).date()
+            if self.data_lag:
+                today = today.subtract(months=self.data_lag)
             # Current month
             e = today.replace(day=1)
 
@@ -421,6 +455,10 @@ class HourlyBackfill(BackfillDef):
     collect_schedule_gaps:
         When ``True``, `get_backfill_keys` also returns keys for
         hours between the previous cron fire and the current key.
+    data_lag:
+        Number of periods (hours) to subtract from the default
+        end bound.  Use ``data_lag=1`` when data arrives one hour
+        late.  Also shifts `current_key` backwards.
     """
 
     _FMT: ClassVar[str] = "YYYY-MM-DD'T'hh"
@@ -430,6 +468,7 @@ class HourlyBackfill(BackfillDef):
     tz: str = "UTC"
     lookback: int = 0
     collect_schedule_gaps: bool = False
+    data_lag: int = 0
 
     def _parse_hour(self, key: str) -> whenever.ZonedDateTime:
         """Parse an hour key into a ``ZonedDateTime``.
@@ -443,9 +482,12 @@ class HourlyBackfill(BackfillDef):
         )
 
     def current_key(self) -> str:
-        """Current hour in the configured timezone."""
+        """Current hour in the configured timezone, shifted by `data_lag`."""
         now = whenever.ZonedDateTime.now(self.tz)
-        return now.replace(minute=0, second=0, nanosecond=0).format(self._FMT)
+        now = now.replace(minute=0, second=0, nanosecond=0)
+        if self.data_lag:
+            now = now.subtract(hours=self.data_lag)
+        return now.format(self._FMT)
 
     def keys(self, start: str | None = None, end: str | None = None) -> list[str]:
         s = self._parse_hour(start or self.start_date)
@@ -457,6 +499,8 @@ class HourlyBackfill(BackfillDef):
             now = whenever.ZonedDateTime.now(self.tz)
             # Current hour
             e = now.replace(minute=0, second=0, nanosecond=0)
+            if self.data_lag:
+                e = e.subtract(hours=self.data_lag)
 
         keys: list[str] = []
         seen: set[str] = set()

@@ -451,6 +451,20 @@ class TestComputeBackfillCoverage:
         cov = compute_backfill_coverage("j", runs, ["us", "eu"], kind="static")
         assert cov.coverage_pct == 0.0
 
+    def test_infer_daily_with_data_lag(self) -> None:
+        """On-demand run with data_lag=1 is credited to T-1."""
+        # 2024-01-15 12:00:00 UTC → with lag=1 should credit 2024-01-14
+        ts = 1705320000000
+        bf = DailyBackfill(start_date="2024-01-01", data_lag=1)
+        runs = [
+            RunInfo(1, "SUCCESS", ts, ts + 1000, 1.0, backfill_key=None),
+        ]
+        cov = compute_backfill_coverage(
+            "j", runs, ["2024-01-14"], kind="daily", backfill=bf
+        )
+        assert cov.coverage_pct == 100.0
+        assert cov.completed_keys == ["2024-01-14"]
+
     def test_explicit_key_takes_precedence(self) -> None:
         """Runs with explicit backfill_key are not overridden by inference."""
         ts = 1705320000000  # 2024-01-15
