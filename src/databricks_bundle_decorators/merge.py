@@ -82,9 +82,8 @@ class DeltaMerge:
 
         @task(io_manager=io)
         def upsert(upstream: pl.LazyFrame) -> DeltaMerge:
-            df = upstream.collect()
             return (
-                DeltaMerge(source=df, predicate="s.id = t.id")
+                DeltaMerge(source=upstream, predicate="s.id = t.id")
                 .when_matched_update_all()
                 .when_not_matched_insert_all()
             )
@@ -189,21 +188,23 @@ class DeltaMerge:
         if not DeltaTable.is_deltatable(table_uri, storage_options=storage_options):
             return None
 
-        dt = DeltaTable(table_uri, storage_options=storage_options)
-
         import polars as pl  # noqa: PLC0415
+
+        merge_options: dict[str, Any] = {
+            "predicate": self.predicate,
+            "source_alias": self.source_alias,
+            "target_alias": self.target_alias,
+        }
 
         source = self.source
         if isinstance(source, pl.DataFrame):
-            source = source.to_arrow()
-        elif isinstance(source, pl.LazyFrame):
-            source = source.collect().to_arrow()
+            source = source.lazy()
 
-        merger = dt.merge(
-            source=source,
-            predicate=self.predicate,
-            source_alias=self.source_alias,
-            target_alias=self.target_alias,
+        merger = source.sink_delta(
+            table_uri,
+            mode="merge",
+            storage_options=storage_options,
+            delta_merge_options=merge_options,
         )
 
         for action in self._actions:

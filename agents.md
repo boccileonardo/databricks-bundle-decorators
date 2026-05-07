@@ -136,3 +136,10 @@ Docs are built with **Zensical** (compatible with MkDocs config) and **mkdocstri
 - **Registry cleanup in tests:** Forgetting `reset_registries()` causes test pollution — tasks/jobs from previous tests leak into the registry.
 - **`@job` body execution:** The `@job` decorator immediately calls `fn()` at decoration time. If the body has side effects beyond `@task` calls, they'll run at import time.
 - **`examples/` is not tested:** The example pipeline uses `polars` and `requests` which are not project dependencies. It exists for documentation purposes only.
+
+## Polars Best Practices (CRITICAL)
+
+- **Never call `.collect()` on a LazyFrame in IoManager/merge code.** This materializes the entire dataset into RAM and causes OOM on large data. Keep data lazy until the sink.
+- **Use `sink_delta(mode="merge", delta_merge_options={...})` for Delta merges.** This streams the LazyFrame through Polars' streaming engine into deltalake's Rust merge, avoiding full materialization. See: https://docs.pola.rs/api/python/stable/reference/api/polars.LazyFrame.sink_delta.html
+- **Use `sink_delta` / `sink_csv` / `sink_parquet` for writes, not `write_delta` / `write_csv` / `write_parquet`.** The `sink_*` methods operate on LazyFrames and use the streaming engine. Convert `DataFrame` to lazy with `.lazy()` before sinking.
+- **The Polars IoManagers should never handle non-Polars types (PyArrow, pandas, etc.).** Each IoManager family handles only its own type system.
