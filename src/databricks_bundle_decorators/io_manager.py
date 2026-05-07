@@ -354,13 +354,13 @@ class IoManager(ABC):
             before_sleep_log,
             retry,
             stop_after_attempt,
-            wait_exponential,
+            wait_exponential_jitter,
         )
 
         retryer = retry(
             stop=stop_after_attempt(self.retry.max_attempts),
-            wait=wait_exponential(
-                multiplier=self.retry.delay,
+            wait=wait_exponential_jitter(
+                initial=self.retry.delay,
                 exp_base=self.retry.backoff_factor,
             ),
             reraise=True,
