@@ -162,6 +162,10 @@ A warning is logged when this happens.
 | `MonthlyBackfill` | First of the current month (e.g. `2024-06-01`) |
 | `HourlyBackfill` | Current hour (e.g. `2024-06-15T14`) |
 
+When `data_lag` is configured, the auto-derived key is shifted
+backwards by that many periods (e.g. `data_lag=1` on a
+`DailyBackfill` derives *yesterday* instead of today).
+
 This means scheduled runs "just work" without requiring the
 trigger to supply the key explicitly.
 
@@ -215,7 +219,8 @@ parameter.
 | `StaticBackfill` | Fixed list of strings | `["us", "eu", "jp"]` |
 
 All time-based definitions accept `start_date`, `end_date` (optional,
-defaults to "most recent complete period"), and `tz` (IANA timezone).
+defaults to "most recent complete period"), `tz` (IANA timezone),
+and `data_lag` (number of periods to subtract from the default end).
 Key formats are fixed to ISO-8601-compatible strings.
 
 ### Multi-key backfill

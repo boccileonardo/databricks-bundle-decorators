@@ -437,6 +437,99 @@ class TestCurrentKey:
         assert key == expected
 
 
+class TestDataLag:
+    """Tests for the data_lag parameter on time-based backfill defs."""
+
+    def test_daily_current_key_with_lag(self):
+        p = DailyBackfill(start_date="2024-01-01", data_lag=1)
+        key = p.current_key()
+        yesterday = (
+            whenever.ZonedDateTime.now("UTC")
+            .date()
+            .subtract(days=1)
+            .format("YYYY-MM-DD")
+        )
+        assert key == yesterday
+
+    def test_daily_keys_default_end_with_lag(self):
+        today = whenever.ZonedDateTime.now("UTC").date()
+        yesterday = today.subtract(days=1).format("YYYY-MM-DD")
+        p = DailyBackfill(start_date=yesterday, data_lag=1)
+        keys = p.keys()
+        assert yesterday in keys
+        assert today.format("YYYY-MM-DD") not in keys
+
+    def test_daily_keys_explicit_end_ignores_lag(self):
+        """When --end is explicitly provided, data_lag does not apply."""
+        p = DailyBackfill(start_date="2024-01-01", data_lag=1)
+        keys = p.keys(end="2024-01-05")
+        assert keys == [
+            "2024-01-01",
+            "2024-01-02",
+            "2024-01-03",
+            "2024-01-04",
+            "2024-01-05",
+        ]
+
+    def test_daily_lag_2(self):
+        p = DailyBackfill(start_date="2024-01-01", data_lag=2)
+        key = p.current_key()
+        expected = (
+            whenever.ZonedDateTime.now("UTC")
+            .date()
+            .subtract(days=2)
+            .format("YYYY-MM-DD")
+        )
+        assert key == expected
+
+    def test_weekly_current_key_with_lag(self):
+        p = WeeklyBackfill(start_date="2024-W01", data_lag=1)
+        key = p.current_key()
+        last_week = whenever.ZonedDateTime.now("UTC").date().subtract(weeks=1)
+        iwd = last_week.iso_week_date()
+        expected = f"{iwd.year}-W{iwd.week:02d}"
+        assert key == expected
+
+    def test_monthly_current_key_with_lag(self):
+        p = MonthlyBackfill(start_date="2024-01-01", data_lag=1)
+        key = p.current_key()
+        last_month = (
+            whenever.ZonedDateTime.now("UTC")
+            .date()
+            .subtract(months=1)
+            .replace(day=1)
+            .format("YYYY-MM-DD")
+        )
+        assert key == last_month
+
+    def test_hourly_current_key_with_lag(self):
+        p = HourlyBackfill(start_date="2024-01-01T00", data_lag=1)
+        key = p.current_key()
+        now = whenever.ZonedDateTime.now("UTC")
+        expected = (
+            now.replace(minute=0, second=0, nanosecond=0)
+            .subtract(hours=1)
+            .format("YYYY-MM-DD'T'hh")
+        )
+        assert key == expected
+
+    def test_default_lag_is_zero(self):
+        p = DailyBackfill(start_date="2024-01-01")
+        assert p.data_lag == 0
+
+    def test_lag_serialization_roundtrip(self):
+        original = DailyBackfill(start_date="2024-01-01", data_lag=1)
+        raw = _serialize_backfill_tag(original)
+        restored = _deserialize_backfill_tag(raw)
+        assert isinstance(restored, DailyBackfill)
+        assert restored.data_lag == 1
+
+    def test_lag_zero_not_serialized(self):
+        p = DailyBackfill(start_date="2024-01-01", data_lag=0)
+        raw = _serialize_backfill_tag(p)
+        assert "data_lag" not in raw
+
+
 class TestAutoDerive:
     """Tests for auto-deriving backfill_key when not explicitly provided."""
 
