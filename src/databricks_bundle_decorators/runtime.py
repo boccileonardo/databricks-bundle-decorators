@@ -90,6 +90,10 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
     # An empty string is treated as absent.
     backfill_key: str | None = cli_params.get("backfill_key") or None
 
+    _logger.info(
+        "Running task '%s' (job=%s, backfill_key=%s)", task_key, job_name, backfill_key
+    )
+
     # ---- resolve type hints for expected_type ----------------------------
     try:
         type_hints = typing.get_type_hints(task_meta.fn)
@@ -120,6 +124,13 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 continue
 
             upstream_meta.io_manager._ensure_setup()
+
+            _logger.info(
+                "Reading upstream '%s' for param '%s' via %s",
+                upstream_task_key,
+                param_name,
+                type(upstream_meta.io_manager).__name__,
+            )
 
             # Retrieve partition filter from upstream task values
             partition_filter: dict[str, list[str]] | None = None
@@ -183,6 +194,11 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
         # ---- persist output via IoManager.write() ------------------------
         if result is not None and task_meta.io_manager:
             task_meta.io_manager._ensure_setup()
+            _logger.info(
+                "Writing output of task '%s' via %s",
+                task_key,
+                type(task_meta.io_manager).__name__,
+            )
             context = OutputContext(
                 job_name=job_name,
                 task_key=task_key,
@@ -196,6 +212,10 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
             if task_meta.io_manager.auto_filter and task_meta.partition_by:
                 partition_values = task_meta.io_manager._extract_partition_values(
                     context
+                )
+                _logger.info(
+                    "Pushing partition values for downstream filtering: %s",
+                    partition_values,
                 )
                 set_task_value("__partition_values__", partition_values)  # ty: ignore[invalid-argument-type]
         elif result is None and task_meta.io_manager:

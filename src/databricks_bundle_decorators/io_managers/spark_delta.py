@@ -13,6 +13,7 @@ Requires PySpark, which is pre-installed on Databricks clusters.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -29,6 +30,8 @@ from databricks_bundle_decorators.io_manager import (
     _spark_extract_partition_values,
     _validate_delta_mode,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 class _SparkDeltaBase(IoManager):
@@ -78,6 +81,12 @@ class _SparkDeltaBase(IoManager):
 
         if isinstance(obj, DeltaMerge):
             uri = self._uri(context.task_key)
+            _logger.info(
+                "Merging into %s (predicate=%r, actions=%s)",
+                uri,
+                obj.predicate,
+                obj._describe_actions(),
+            )
             builder = obj._build_spark_merger(uri)
             if builder is None:
                 obj._initial_spark_write(uri)
@@ -98,6 +107,9 @@ class _SparkDeltaBase(IoManager):
             obj = obj.withColumn("backfill_key", F.lit(bk))
 
         uri = self._uri(context.task_key)
+        _logger.info(
+            "Writing to %s (mode=%s, partition_by=%s)", uri, self._mode, partition_by
+        )
         writer = obj.write.format("delta").mode(self._mode)
         if partition_by:
             # Extract partition values from data before writing
@@ -124,6 +136,9 @@ class _SparkDeltaBase(IoManager):
         task uses ``@task(all_partitions=True)``.
         """
         uri = self._uri(context.upstream_task_key)
+        _logger.info(
+            "Reading from %s (partition_filter=%s)", uri, context.partition_filter
+        )
         reader = self._spark.read.format("delta")
         for k, v in self._read_options.items():
             reader = reader.option(k, v)

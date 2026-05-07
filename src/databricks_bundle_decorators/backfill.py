@@ -667,7 +667,17 @@ def get_backfill_keys(*, validate: bool = True) -> list[str]:
                     _compute_schedule_gap_keys(backfill, primary_key, schedule_cron)
                 )
 
-    return sorted(all_keys)
+    result = sorted(all_keys)
+    if len(result) > 1:
+        _logger.info(
+            "Expanded backfill_key %r to %d keys (lookback=%d, collect_schedule_gaps=%s): %s",
+            primary_key,
+            len(result),
+            lookback,
+            collect_gaps,
+            result,
+        )
+    return result
 
 
 def _compute_lookback_keys(

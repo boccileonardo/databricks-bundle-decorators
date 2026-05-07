@@ -19,6 +19,7 @@ Requires PySpark, which is pre-installed on Databricks clusters.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from databricks_bundle_decorators.io_manager import (
@@ -34,6 +35,8 @@ from databricks_bundle_decorators.io_manager import (
     _spark_extract_partition_values,
     _validate_delta_mode,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 class SparkUCTableIoManager(IoManager):
@@ -136,6 +139,12 @@ class SparkUCTableIoManager(IoManager):
 
         if isinstance(obj, DeltaMerge):
             table = self._table_name(context.task_key)
+            _logger.info(
+                "Merging into %s (predicate=%r, actions=%s)",
+                table,
+                obj.predicate,
+                obj._describe_actions(),
+            )
             builder = obj._build_spark_merger(table)
             if builder is None:
                 obj._initial_spark_write(table)
@@ -156,6 +165,9 @@ class SparkUCTableIoManager(IoManager):
             obj = obj.withColumn("backfill_key", F.lit(bk))
 
         table = self._table_name(context.task_key)
+        _logger.info(
+            "Writing to %s (mode=%s, partition_by=%s)", table, self._mode, partition_by
+        )
         writer = obj.write.format("delta").mode(self._mode)
         if partition_by:
             # Extract partition values from data before writing
@@ -183,6 +195,9 @@ class SparkUCTableIoManager(IoManager):
         task uses ``@task(all_partitions=True)``.
         """
         table = self._table_name(context.upstream_task_key)
+        _logger.info(
+            "Reading from %s (partition_filter=%s)", table, context.partition_filter
+        )
         result = self._spark.table(table)
 
         if context.partition_filter and not context.all_partitions:
@@ -302,6 +317,12 @@ class SparkUCVolumeDeltaIoManager(IoManager):
 
         if isinstance(obj, DeltaMerge):
             uri = self._uri(context.task_key)
+            _logger.info(
+                "Merging into %s (predicate=%r, actions=%s)",
+                uri,
+                obj.predicate,
+                obj._describe_actions(),
+            )
             builder = obj._build_spark_merger(uri)
             if builder is None:
                 obj._initial_spark_write(uri)
@@ -322,6 +343,9 @@ class SparkUCVolumeDeltaIoManager(IoManager):
             obj = obj.withColumn("backfill_key", F.lit(bk))
 
         uri = self._uri(context.task_key)
+        _logger.info(
+            "Writing to %s (mode=%s, partition_by=%s)", uri, self._mode, partition_by
+        )
         writer = obj.write.format("delta").mode(self._mode)
         if partition_by:
             # Extract partition values from data before writing
@@ -348,6 +372,9 @@ class SparkUCVolumeDeltaIoManager(IoManager):
         task uses ``@task(all_partitions=True)``.
         """
         uri = self._uri(context.upstream_task_key)
+        _logger.info(
+            "Reading from %s (partition_filter=%s)", uri, context.partition_filter
+        )
         reader = self._spark.read.format("delta")
         for k, v in self._read_options.items():
             reader = reader.option(k, v)
@@ -466,6 +493,7 @@ class SparkUCVolumeParquetIoManager(IoManager):
             obj = obj.withColumn("backfill_key", F.lit(bk))
 
         uri = self._uri(context.task_key)
+        _logger.info("Writing to %s (partition_by=%s)", uri, partition_by)
         writer = obj.write.format("parquet").mode("overwrite")
         if partition_by:
             # Extract partition values from data before writing
@@ -488,6 +516,9 @@ class SparkUCVolumeParquetIoManager(IoManager):
         task uses ``@task(all_partitions=True)``.
         """
         uri = self._uri(context.upstream_task_key)
+        _logger.info(
+            "Reading from %s (partition_filter=%s)", uri, context.partition_filter
+        )
         reader = self._spark.read.format("parquet")
         for k, v in self._read_options.items():
             reader = reader.option(k, v)

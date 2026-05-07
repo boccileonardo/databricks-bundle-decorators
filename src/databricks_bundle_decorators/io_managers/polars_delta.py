@@ -193,6 +193,12 @@ class PolarsDeltaIoManager(IoManager):
         # Handle DeltaMerge definitions — build a fresh merger and execute.
         if isinstance(obj, DeltaMerge):
             uri = self._uri(context.task_key)
+            _logger.info(
+                "Merging into %s (predicate=%r, actions=%s)",
+                uri,
+                obj.predicate,
+                obj._describe_actions(),
+            )
             merger = obj._build_merger(uri, storage_options=self.storage_options)
             if merger is None:
                 # Target table doesn't exist yet — write source data directly.
@@ -237,6 +243,10 @@ class PolarsDeltaIoManager(IoManager):
             delta_opts.setdefault(
                 "predicate", _build_replace_where(self._last_partition_values)
             )
+
+        _logger.info(
+            "Writing to %s (mode=%s, partition_by=%s)", uri, self._mode, partition_by
+        )
 
         if isinstance(obj, pl.LazyFrame):
             obj.sink_delta(
@@ -312,6 +322,9 @@ class PolarsDeltaIoManager(IoManager):
         import polars as pl  # noqa: PLC0415
 
         uri = self._uri(context.upstream_task_key)
+        _logger.info(
+            "Reading from %s (partition_filter=%s)", uri, context.partition_filter
+        )
 
         if context.expected_type is pl.DataFrame:
             result = pl.read_delta(

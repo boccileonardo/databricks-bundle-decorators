@@ -13,6 +13,7 @@ Requires PySpark, which is pre-installed on Databricks clusters.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -27,6 +28,8 @@ from databricks_bundle_decorators.io_manager import (
     _spark_apply_partition_filter,
     _spark_extract_partition_values,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 class _SparkParquetBase(IoManager):
@@ -80,6 +83,7 @@ class _SparkParquetBase(IoManager):
             obj = obj.withColumn("backfill_key", F.lit(bk))
 
         uri = self._uri(context.task_key)
+        _logger.info("Writing to %s (partition_by=%s)", uri, partition_by)
         writer = obj.write.format("parquet").mode("overwrite")
         if partition_by:
             # Extract partition values from data before writing
@@ -102,6 +106,9 @@ class _SparkParquetBase(IoManager):
         task uses ``@task(all_partitions=True)``.
         """
         uri = self._uri(context.upstream_task_key)
+        _logger.info(
+            "Reading from %s (partition_filter=%s)", uri, context.partition_filter
+        )
         reader = self._spark.read.format("parquet")
         for k, v in self._read_options.items():
             reader = reader.option(k, v)
