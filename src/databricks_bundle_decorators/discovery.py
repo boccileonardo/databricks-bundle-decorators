@@ -31,7 +31,7 @@ def discover_pipelines() -> None:
     )
     loaded: list[str] = []
     for ep in eps:
-        _logger.debug("Loading pipeline entry point: %s (%s)", ep.name, ep.value)
+        _logger.info("Loading pipeline entry point: %s (%s)", ep.name, ep.value)
         try:
             ep.load()  # imports the module, triggering decorator registration
         except Exception as exc:
@@ -43,4 +43,4 @@ def discover_pipelines() -> None:
             raise
         loaded.append(ep.name)
     if not loaded:
-        _logger.debug("No pipeline entry points found.")
+        _logger.warning("No pipeline entry points found.")

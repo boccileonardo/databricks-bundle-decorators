@@ -10,6 +10,7 @@ Requires the ``polars`` optional dependency::
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -24,6 +25,8 @@ from databricks_bundle_decorators.io_manager import (
     _resolve_backfill_key,
     _should_inject_backfill_key,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 class PolarsParquetIoManager(IoManager):
@@ -171,6 +174,7 @@ class PolarsParquetIoManager(IoManager):
 
         base_uri = self._uri(context.task_key)
         partition_by = context.partition_by
+        _logger.info("Writing to %s (partition_by=%s)", base_uri, partition_by)
 
         # Inject backfill_key column if it's a partition column
         has_bk_col = isinstance(
@@ -246,6 +250,9 @@ class PolarsParquetIoManager(IoManager):
 
         base_uri = self._uri(context.upstream_task_key)
         partition_by = context.partition_by
+        _logger.info(
+            "Reading from %s (partition_filter=%s)", base_uri, context.partition_filter
+        )
 
         if partition_by:
             glob_uri = f"{base_uri}/**/*.parquet"

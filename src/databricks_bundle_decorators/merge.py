@@ -173,6 +173,27 @@ class DeltaMerge:
         self._actions.append(_NotMatchedBySourceDelete(predicate=predicate))
         return self
 
+    def _describe_actions(self) -> list[str]:
+        """Return a human-readable list of merge action names."""
+        names: list[str] = []
+        for action in self._actions:
+            match action:
+                case _MatchedUpdateAll():
+                    names.append("when_matched_update_all")
+                case _MatchedUpdate():
+                    names.append("when_matched_update")
+                case _MatchedDelete():
+                    names.append("when_matched_delete")
+                case _NotMatchedInsertAll():
+                    names.append("when_not_matched_insert_all")
+                case _NotMatchedInsert():
+                    names.append("when_not_matched_insert")
+                case _NotMatchedBySourceUpdate():
+                    names.append("when_not_matched_by_source_update")
+                case _NotMatchedBySourceDelete():
+                    names.append("when_not_matched_by_source_delete")
+        return names
+
     def _build_merger(
         self, table_uri: str, storage_options: dict[str, str] | None = None
     ) -> Any:
