@@ -278,6 +278,27 @@ class DailyBackfill(BackfillDef):
             if self.data_lag:
                 e = e.subtract(days=self.data_lag)
 
+        # Clamp overrides to definition bounds
+        defn_start = self._parse(self.start_date)
+        if s < defn_start:
+            _logger.warning(
+                "Start '%s' is before the backfill start_date '%s'; "
+                "skipping out-of-range periods",
+                start,
+                self.start_date,
+            )
+            s = defn_start
+        if self.end_date is not None:
+            defn_end = self._parse(self.end_date)
+            if e > defn_end:
+                _logger.warning(
+                    "End '%s' is after the backfill end_date '%s'; "
+                    "skipping out-of-range periods",
+                    end,
+                    self.end_date,
+                )
+                e = defn_end
+
         keys: list[str] = []
         while s <= e:
             keys.append(s.format(self._FMT))
@@ -354,6 +375,27 @@ class WeeklyBackfill(BackfillDef):
             weekday_offset = today.day_of_week().value - 1  # 0 for Monday
             e = today.subtract(days=weekday_offset)
 
+        # Clamp overrides to definition bounds
+        defn_start = self._parse_iso_week(self.start_date)
+        if s < defn_start:
+            _logger.warning(
+                "Start '%s' is before the backfill start_date '%s'; "
+                "skipping out-of-range periods",
+                start,
+                self.start_date,
+            )
+            s = defn_start
+        if self.end_date is not None:
+            defn_end = self._parse_iso_week(self.end_date)
+            if e > defn_end:
+                _logger.warning(
+                    "End '%s' is after the backfill end_date '%s'; "
+                    "skipping out-of-range periods",
+                    end,
+                    self.end_date,
+                )
+                e = defn_end
+
         keys: list[str] = []
         while s <= e:
             keys.append(self._fmt_iso_week(s))
@@ -421,6 +463,27 @@ class MonthlyBackfill(BackfillDef):
                 today = today.subtract(months=self.data_lag)
             # Current month
             e = today.replace(day=1)
+
+        # Clamp overrides to definition bounds
+        defn_start = self._parse_month(self.start_date)
+        if s < defn_start:
+            _logger.warning(
+                "Start '%s' is before the backfill start_date '%s'; "
+                "skipping out-of-range periods",
+                start,
+                self.start_date,
+            )
+            s = defn_start
+        if self.end_date is not None:
+            defn_end = self._parse_month(self.end_date)
+            if e > defn_end:
+                _logger.warning(
+                    "End '%s' is after the backfill end_date '%s'; "
+                    "skipping out-of-range periods",
+                    end,
+                    self.end_date,
+                )
+                e = defn_end
 
         keys: list[str] = []
         while s <= e:
@@ -501,6 +564,27 @@ class HourlyBackfill(BackfillDef):
             e = now.replace(minute=0, second=0, nanosecond=0)
             if self.data_lag:
                 e = e.subtract(hours=self.data_lag)
+
+        # Clamp overrides to definition bounds
+        defn_start = self._parse_hour(self.start_date)
+        if s < defn_start:
+            _logger.warning(
+                "Start '%s' is before the backfill start_date '%s'; "
+                "skipping out-of-range periods",
+                start,
+                self.start_date,
+            )
+            s = defn_start
+        if self.end_date is not None:
+            defn_end = self._parse_hour(self.end_date)
+            if e > defn_end:
+                _logger.warning(
+                    "End '%s' is after the backfill end_date '%s'; "
+                    "skipping out-of-range periods",
+                    end,
+                    self.end_date,
+                )
+                e = defn_end
 
         keys: list[str] = []
         seen: set[str] = set()
