@@ -254,7 +254,7 @@ class TestDeltaMerge:
         assert result["val"].to_list() == ["a", "B", "c", "d"]
 
     def test_delta_merge_sets_empty_partition_values(self, tmp_path: Path) -> None:
-        """DeltaMerge write sets _last_partition_values to {}."""
+        """DeltaMerge write sets _last_partition_values to {} when no partition_by."""
 
         io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
 
@@ -266,6 +266,65 @@ class TestDeltaMerge:
         ).when_matched_update_all()
         io.write(_output_ctx("t"), merge_def)
         assert io._last_partition_values == {}
+
+    def test_delta_merge_extracts_partition_values(self, tmp_path: Path) -> None:
+        """DeltaMerge write extracts partition values from source when partition_by is set."""
+
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        initial = pl.DataFrame(
+            {"id": [1, 2], "region": ["us", "eu"], "val": ["a", "b"]}
+        )
+        io.write(_output_ctx("t", partition_by=["region"]), initial)
+
+        source = pl.DataFrame({"id": [2, 3], "region": ["eu", "us"], "val": ["B", "c"]})
+        merge_def = (
+            DeltaMerge(source=source, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+        io.write(_output_ctx("t", partition_by=["region"]), merge_def)
+        assert io._last_partition_values == {"region": ["eu", "us"]}
+
+    def test_delta_merge_extracts_partition_values_lazyframe(
+        self, tmp_path: Path
+    ) -> None:
+        """DeltaMerge write extracts partition values from LazyFrame source."""
+
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        initial = pl.DataFrame({"id": [1], "region": ["us"], "val": ["a"]})
+        io.write(_output_ctx("t", partition_by=["region"]), initial)
+
+        source = pl.LazyFrame({"id": [1], "region": ["us"], "val": ["X"]})
+        merge_def = DeltaMerge(
+            source=source, predicate="s.id = t.id"
+        ).when_matched_update_all()
+        io.write(_output_ctx("t", partition_by=["region"]), merge_def)
+        assert io._last_partition_values == {"region": ["us"]}
+
+    def test_delta_merge_with_retry_extracts_partition_values(
+        self, tmp_path: Path
+    ) -> None:
+        """DeltaMerge write_with_retry extracts partition values when partition_by is set."""
+
+        io = PolarsDeltaIoManager(
+            base_path=str(tmp_path), mode="overwrite", retry=RetryConfig()
+        )
+
+        initial = pl.DataFrame(
+            {"id": [1, 2], "region": ["us", "eu"], "val": ["a", "b"]}
+        )
+        io.write(_output_ctx("t", partition_by=["region"]), initial)
+
+        source = pl.DataFrame({"id": [2, 3], "region": ["eu", "us"], "val": ["B", "c"]})
+        merge_def = (
+            DeltaMerge(source=source, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+        io.write_with_retry(_output_ctx("t", partition_by=["region"]), merge_def)
+        assert io._last_partition_values == {"region": ["eu", "us"]}
 
     def test_delta_merge_with_retry(self, tmp_path: Path) -> None:
         """DeltaMerge works with write_with_retry (retry-safe)."""
