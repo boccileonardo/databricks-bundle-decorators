@@ -76,6 +76,35 @@ class TestDailyBackfill:
         p = DailyBackfill(start_date="2024-01-01")
         assert isinstance(p, BackfillDef)
 
+    def test_start_before_definition_clamps(self, caplog):
+        p = DailyBackfill(start_date="2024-03-01", end_date="2024-03-10")
+        with caplog.at_level(logging.WARNING):
+            keys = p.keys(start="2024-02-25")
+        assert keys[0] == "2024-03-01"
+        assert "before the backfill start_date" in caplog.text
+
+    def test_end_after_definition_clamps(self, caplog):
+        p = DailyBackfill(start_date="2024-03-01", end_date="2024-03-10")
+        with caplog.at_level(logging.WARNING):
+            keys = p.keys(end="2024-03-15")
+        assert keys[-1] == "2024-03-10"
+        assert "after the backfill end_date" in caplog.text
+
+    def test_both_out_of_range_clamps_both(self, caplog):
+        p = DailyBackfill(start_date="2024-03-05", end_date="2024-03-10")
+        with caplog.at_level(logging.WARNING):
+            keys = p.keys(start="2024-03-01", end="2024-03-15")
+        assert keys[0] == "2024-03-05"
+        assert keys[-1] == "2024-03-10"
+
+    def test_no_end_date_skips_end_clamp(self, caplog):
+        """When end_date is None, end override is not clamped."""
+        p = DailyBackfill(start_date="2024-01-01")
+        with caplog.at_level(logging.WARNING):
+            keys = p.keys(end="2099-01-01")
+        assert "after the backfill end_date" not in caplog.text
+        assert len(keys) > 0
+
 
 class TestWeeklyBackfill:
     def test_basic_range(self):
@@ -94,6 +123,20 @@ class TestWeeklyBackfill:
     def test_single_week(self):
         p = WeeklyBackfill(start_date="2024-W05", end_date="2024-W05")
         assert len(p.keys()) == 1
+
+    def test_start_before_definition_clamps(self, caplog):
+        p = WeeklyBackfill(start_date="2024-W10", end_date="2024-W20")
+        with caplog.at_level(logging.WARNING):
+            keys = p.keys(start="2024-W05")
+        assert keys[0] == "2024-W10"
+        assert "before the backfill start_date" in caplog.text
+
+    def test_end_after_definition_clamps(self, caplog):
+        p = WeeklyBackfill(start_date="2024-W10", end_date="2024-W20")
+        with caplog.at_level(logging.WARNING):
+            keys = p.keys(end="2024-W25")
+        assert keys[-1] == "2024-W20"
+        assert "after the backfill end_date" in caplog.text
 
 
 class TestMonthlyBackfill:
@@ -124,6 +167,20 @@ class TestMonthlyBackfill:
         p = MonthlyBackfill(start_date="2024-07-01", end_date="2024-07-01")
         keys = p.keys()
         assert keys == ["2024-07-01"]
+
+    def test_start_before_definition_clamps(self, caplog):
+        p = MonthlyBackfill(start_date="2024-03-01", end_date="2024-06-01")
+        with caplog.at_level(logging.WARNING):
+            keys = p.keys(start="2024-01-01")
+        assert keys[0] == "2024-03-01"
+        assert "before the backfill start_date" in caplog.text
+
+    def test_end_after_definition_clamps(self, caplog):
+        p = MonthlyBackfill(start_date="2024-03-01", end_date="2024-06-01")
+        with caplog.at_level(logging.WARNING):
+            keys = p.keys(end="2024-09-01")
+        assert keys[-1] == "2024-06-01"
+        assert "after the backfill end_date" in caplog.text
 
 
 class TestHourlyBackfill:
@@ -167,6 +224,26 @@ class TestHourlyBackfill:
         )
         keys = p.keys(start="2024-01-01T10", end="2024-01-01T12")
         assert len(keys) == 3
+
+    def test_start_before_definition_clamps(self, caplog):
+        p = HourlyBackfill(
+            start_date="2024-01-01T10",
+            end_date="2024-01-01T20",
+        )
+        with caplog.at_level(logging.WARNING):
+            keys = p.keys(start="2024-01-01T05")
+        assert keys[0] == "2024-01-01T10"
+        assert "before the backfill start_date" in caplog.text
+
+    def test_end_after_definition_clamps(self, caplog):
+        p = HourlyBackfill(
+            start_date="2024-01-01T10",
+            end_date="2024-01-01T20",
+        )
+        with caplog.at_level(logging.WARNING):
+            keys = p.keys(end="2024-01-01T23")
+        assert keys[-1] == "2024-01-01T20"
+        assert "after the backfill end_date" in caplog.text
 
 
 class TestStaticBackfill:
