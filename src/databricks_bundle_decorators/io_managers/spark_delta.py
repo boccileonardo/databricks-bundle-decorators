@@ -96,7 +96,12 @@ class _SparkDeltaBase(IoManager):
                 )
             else:
                 builder.execute()
-            self._last_partition_values = {}
+            if context.partition_by:
+                self._last_partition_values = _spark_extract_partition_values(
+                    obj.source, context.partition_by
+                )
+            else:
+                self._last_partition_values = {}
             return
 
         partition_by = context.partition_by

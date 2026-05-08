@@ -289,7 +289,7 @@ class TestSparkDeltaMerge:
 
         io.write(_output_ctx("dm_task"), merge)
 
-        assert io._last_partition_values == {}
+        assert io._last_partition_values == {}  # no partition_by set
 
         result = io.read(_input_ctx("dm_task"))
         rows = sorted(result.collect(), key=lambda r: r["id"])
@@ -403,6 +403,30 @@ class TestSparkDeltaMerge:
             if d.is_dir() and d.name.startswith("region=")
         )
         assert partition_dirs == ["region=eu", "region=us"]
+
+    def test_delta_merge_extracts_partition_values(self, spark: SparkSession, tmp_path):
+        """DeltaMerge write extracts partition values from source when partition_by is set."""
+        from databricks_bundle_decorators import DeltaMerge  # noqa: PLC0415
+
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        initial = spark.createDataFrame(
+            [(1, "us", "a"), (2, "eu", "b")], ["id", "region", "val"]
+        )
+        io.write(_output_ctx("pv_task", partition_by=["region"]), initial)
+
+        updates = spark.createDataFrame(
+            [(2, "eu", "B"), (3, "us", "c")], ["id", "region", "val"]
+        )
+        merge = (
+            DeltaMerge(source=updates, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+
+        io.write(_output_ctx("pv_task", partition_by=["region"]), merge)
+        assert io._last_partition_values == {"region": ["eu", "us"]}
 
 
 # ---------------------------------------------------------------------------

@@ -210,7 +210,12 @@ class PolarsDeltaIoManager(IoManager):
                 )
             else:
                 merger.execute()
-            self._last_partition_values = {}
+            if context.partition_by:
+                self._last_partition_values = _polars_extract_partition_values(
+                    obj.source, context.partition_by
+                )
+            else:
+                self._last_partition_values = {}
             return
 
         import polars as pl  # noqa: PLC0415
@@ -311,7 +316,12 @@ class PolarsDeltaIoManager(IoManager):
                 before_sleep=before_sleep_log(_logger, logging.WARNING),
             )
             retryer(_execute_merge)()
-            self._last_partition_values = {}
+            if context.partition_by:
+                self._last_partition_values = _polars_extract_partition_values(
+                    obj.source, context.partition_by
+                )
+            else:
+                self._last_partition_values = {}
             return
 
         super().write_with_retry(context, obj)

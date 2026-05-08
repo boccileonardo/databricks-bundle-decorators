@@ -186,7 +186,7 @@ class TestSparkUCTableDeltaMerge:
 
         io.write(_output_ctx("dm_tbl"), merge)
 
-        assert io._last_partition_values == {}
+        assert io._last_partition_values == {}  # no partition_by set
 
         result = io.read(_input_ctx("dm_tbl"))
         rows = sorted(result.collect(), key=lambda r: r["id"])
@@ -219,6 +219,35 @@ class TestSparkUCTableDeltaMerge:
         rows = result.collect()
         assert len(rows) == 1
         assert rows[0]["val"] == "x"
+
+    def test_delta_merge_extracts_partition_values(
+        self, spark: SparkSession, uc_schema: str, monkeypatch
+    ):
+        """DeltaMerge write extracts partition values when partition_by is set."""
+        from databricks_bundle_decorators import DeltaMerge  # noqa: PLC0415
+
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="error"
+        )
+        io.setup()
+        monkeypatch.setattr(io, "_table_name", lambda key: f"`{uc_schema}`.{key}")
+
+        initial = spark.createDataFrame(
+            [(1, "us", "a"), (2, "eu", "b")], ["id", "region", "val"]
+        )
+        io.write(_output_ctx("dm_pt", partition_by=["region"]), initial)
+
+        updates = spark.createDataFrame(
+            [(2, "eu", "B"), (3, "us", "c")], ["id", "region", "val"]
+        )
+        merge = (
+            DeltaMerge(source=updates, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+
+        io.write(_output_ctx("dm_pt", partition_by=["region"]), merge)
+        assert io._last_partition_values == {"region": ["eu", "us"]}
 
 
 # ===========================================================================
@@ -381,7 +410,7 @@ class TestSparkUCVolumeDeltaMerge:
 
         io.write(_output_ctx("dm_vol"), merge)
 
-        assert io._last_partition_values == {}
+        assert io._last_partition_values == {}  # no partition_by set
 
         result = io.read(_input_ctx("dm_vol"))
         rows = sorted(result.collect(), key=lambda r: r["id"])
@@ -412,6 +441,35 @@ class TestSparkUCVolumeDeltaMerge:
         rows = result.collect()
         assert len(rows) == 1
         assert rows[0]["val"] == "x"
+
+    def test_delta_merge_extracts_partition_values(
+        self, spark: SparkSession, tmp_path, monkeypatch
+    ):
+        """DeltaMerge write extracts partition values when partition_by is set."""
+        from databricks_bundle_decorators import DeltaMerge  # noqa: PLC0415
+
+        io = SparkUCVolumeDeltaIoManager(
+            catalog="main", schema="staging", volume="raw_data", mode="overwrite"
+        )
+        io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
+
+        initial = spark.createDataFrame(
+            [(1, "us", "a"), (2, "eu", "b")], ["id", "region", "val"]
+        )
+        io.write(_output_ctx("dm_pv", partition_by=["region"]), initial)
+
+        updates = spark.createDataFrame(
+            [(2, "eu", "B"), (3, "us", "c")], ["id", "region", "val"]
+        )
+        merge = (
+            DeltaMerge(source=updates, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+
+        io.write(_output_ctx("dm_pv", partition_by=["region"]), merge)
+        assert io._last_partition_values == {"region": ["eu", "us"]}
 
 
 # ===========================================================================
