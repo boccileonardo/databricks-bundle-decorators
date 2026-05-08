@@ -89,7 +89,11 @@ class _SparkDeltaBase(IoManager):
             )
             builder = obj._build_spark_merger(uri)
             if builder is None:
-                obj._initial_spark_write(uri)
+                obj._initial_spark_write(
+                    uri,
+                    partition_by=context.partition_by,
+                    write_options=dict(self._write_options),
+                )
             else:
                 builder.execute()
             self._last_partition_values = {}

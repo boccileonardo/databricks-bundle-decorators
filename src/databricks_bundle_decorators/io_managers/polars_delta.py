@@ -202,7 +202,12 @@ class PolarsDeltaIoManager(IoManager):
             merger = obj._build_merger(uri, storage_options=self.storage_options)
             if merger is None:
                 # Target table doesn't exist yet — write source data directly.
-                obj._initial_write(uri, storage_options=self.storage_options)
+                obj._initial_write(
+                    uri,
+                    storage_options=self.storage_options,
+                    partition_by=context.partition_by,
+                    write_options=dict(self._write_options),
+                )
             else:
                 merger.execute()
             self._last_partition_values = {}
@@ -287,7 +292,12 @@ class PolarsDeltaIoManager(IoManager):
             def _execute_merge() -> None:
                 merger = obj._build_merger(uri, storage_options=self.storage_options)
                 if merger is None:
-                    obj._initial_write(uri, storage_options=self.storage_options)
+                    obj._initial_write(
+                        uri,
+                        storage_options=self.storage_options,
+                        partition_by=context.partition_by,
+                        write_options=dict(self._write_options),
+                    )
                 else:
                     merger.execute()
 
