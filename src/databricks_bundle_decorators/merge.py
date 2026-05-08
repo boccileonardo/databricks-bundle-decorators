@@ -256,7 +256,11 @@ class DeltaMerge:
         return type(self.source).__module__.startswith("pyspark.")
 
     def _initial_write(
-        self, table_uri: str, storage_options: dict[str, str] | None = None
+        self,
+        table_uri: str,
+        storage_options: dict[str, str] | None = None,
+        partition_by: list[str] | None = None,
+        write_options: dict[str, Any] | None = None,
     ) -> None:
         """Write source data directly when the target table doesn't exist yet.
 
@@ -265,15 +269,20 @@ class DeltaMerge:
         """
         import polars as pl  # noqa: PLC0415
 
+        opts: dict[str, Any] = dict(write_options or {})
+        if partition_by:
+            delta_opts: dict[str, Any] = opts.setdefault("delta_write_options", {})
+            delta_opts.setdefault("partition_by", partition_by)
+
         source = self.source
         if isinstance(source, pl.LazyFrame):
-            source.sink_delta(table_uri, storage_options=storage_options)
+            source.sink_delta(table_uri, storage_options=storage_options, **opts)
         elif isinstance(source, pl.DataFrame):
-            source.write_delta(table_uri, storage_options=storage_options)
+            source.write_delta(table_uri, storage_options=storage_options, **opts)
         else:
             # PyArrow or other — convert to polars first
             df = pl.DataFrame(pl.from_arrow(source))
-            df.write_delta(table_uri, storage_options=storage_options)
+            df.write_delta(table_uri, storage_options=storage_options, **opts)
 
     def _build_spark_merger(self, table_identifier: str) -> Any:
         """Build a fresh ``delta.tables.DeltaMergeBuilder`` for Spark.
@@ -329,7 +338,12 @@ class DeltaMerge:
 
         return builder
 
-    def _initial_spark_write(self, table_identifier: str) -> None:
+    def _initial_spark_write(
+        self,
+        table_identifier: str,
+        partition_by: list[str] | None = None,
+        write_options: dict[str, str] | None = None,
+    ) -> None:
         """Write source Spark DataFrame directly when the target doesn't exist.
 
         Called by the Spark IoManager on first run.
@@ -339,6 +353,10 @@ class DeltaMerge:
         )
 
         writer = self.source.write.format("delta").mode("error")
+        if partition_by:
+            writer = writer.partitionBy(*partition_by)
+        for k, v in (write_options or {}).items():
+            writer = writer.option(k, v)
         if is_path:
             writer.save(table_identifier)
         else:

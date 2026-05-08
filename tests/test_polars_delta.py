@@ -374,10 +374,76 @@ class TestDeltaMerge:
         assert result["id"].to_list() == [1, 2, 3]
         assert result["val"].to_list() == ["a", "B", "c"]
 
+    def test_delta_merge_first_write_respects_partition_by(
+        self, tmp_path: Path
+    ) -> None:
+        """DeltaMerge initial write creates a partitioned Delta table."""
 
-# ---------------------------------------------------------------------------
-# Partitioning
-# ---------------------------------------------------------------------------
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        source = pl.DataFrame({"id": [1, 2], "region": ["us", "eu"], "val": ["a", "b"]})
+        merge_def = (
+            DeltaMerge(source=source, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+        io.write(_output_ctx("t", partition_by=["region"]), merge_def)
+
+        # Verify that partition directories were created
+        from deltalake import DeltaTable  # noqa: PLC0415
+
+        dt = DeltaTable(str(tmp_path / "t"))
+        assert dt.metadata().partition_columns == ["region"]
+
+    def test_delta_merge_first_write_respects_write_options(
+        self, tmp_path: Path
+    ) -> None:
+        """DeltaMerge initial write forwards IoManager write_options."""
+
+        io = PolarsDeltaIoManager(
+            base_path=str(tmp_path),
+            mode="overwrite",
+            write_options={
+                "delta_write_options": {
+                    "configuration": {"delta.enableChangeDataFeed": "true"},
+                },
+            },
+        )
+
+        source = pl.DataFrame({"id": [1], "val": ["a"]})
+        merge_def = (
+            DeltaMerge(source=source, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+        io.write(_output_ctx("t"), merge_def)
+
+        from deltalake import DeltaTable  # noqa: PLC0415
+
+        dt = DeltaTable(str(tmp_path / "t"))
+        assert dt.metadata().configuration.get("delta.enableChangeDataFeed") == "true"
+
+    def test_delta_merge_first_write_with_retry_respects_partition_by(
+        self, tmp_path: Path
+    ) -> None:
+        """DeltaMerge initial write via write_with_retry respects partition_by."""
+
+        io = PolarsDeltaIoManager(
+            base_path=str(tmp_path), mode="overwrite", retry=RetryConfig()
+        )
+
+        source = pl.DataFrame({"id": [1, 2], "region": ["us", "eu"], "val": ["a", "b"]})
+        merge_def = (
+            DeltaMerge(source=source, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+        io.write_with_retry(_output_ctx("t", partition_by=["region"]), merge_def)
+
+        from deltalake import DeltaTable  # noqa: PLC0415
+
+        dt = DeltaTable(str(tmp_path / "t"))
+        assert dt.metadata().partition_columns == ["region"]
 
 
 class TestPartitioning:

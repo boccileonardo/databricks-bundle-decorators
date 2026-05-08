@@ -375,6 +375,35 @@ class TestSparkDeltaMerge:
         assert rows[0]["val"] == "A"
         assert rows[1]["val"] == "b"
 
+    def test_delta_merge_first_write_respects_partition_by(
+        self, spark: SparkSession, tmp_path
+    ):
+        """DeltaMerge initial write creates a partitioned Delta table."""
+        from databricks_bundle_decorators import DeltaMerge  # noqa: PLC0415
+
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        source = spark.createDataFrame(
+            [(1, "us", "a"), (2, "eu", "b")], ["id", "region", "val"]
+        )
+        merge = (
+            DeltaMerge(source=source, predicate="s.id = t.id")
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+        )
+
+        io.write(_output_ctx("pt_task", partition_by=["region"]), merge)
+
+        # Verify partition directories exist
+        task_dir = tmp_path / "pt_task"
+        partition_dirs = sorted(
+            d.name
+            for d in task_dir.iterdir()
+            if d.is_dir() and d.name.startswith("region=")
+        )
+        assert partition_dirs == ["region=eu", "region=us"]
+
 
 # ---------------------------------------------------------------------------
 # Partitioning
