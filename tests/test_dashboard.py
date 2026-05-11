@@ -664,9 +664,10 @@ class TestBuildDailyCalendar:
         hover = _flatten_hover(fig)
         assert any("Missing" in h for h in hover)
 
-    def test_seven_weekday_rows(self) -> None:
+    def test_seven_weekday_columns(self) -> None:
         fig = _build_daily_calendar({"2024-01-15"}, set())
-        assert len(fig.data[0].z) == 7
+        # After axis flip: rows=weeks, columns=weekdays
+        assert len(fig.data[0].z[0]) == 7
 
     def test_hover_shows_run_info(self) -> None:
         key_run_info = {"2024-01-15": (42, 1_705_312_800_000)}
@@ -690,7 +691,7 @@ class TestBuildDailyCalendar:
         assert not any("2024-01-05" in h for h in hover)
 
     def test_auto_clips_large_range(self) -> None:
-        # >180 unique dates triggers auto-clip to last 90
+        # >31 unique dates triggers auto-clip to last 31
         base = date(2023, 1, 1)
         keys = {(base + timedelta(days=i)).isoformat() for i in range(200)}
         fig = _build_daily_calendar(keys, set())
@@ -1046,7 +1047,7 @@ class TestBackfillDateBounds:
         keys = [(start + timedelta(days=i)).isoformat() for i in range(730)]
         _min_d, _max_d, init_start, init_end = _backfill_date_bounds("daily", keys)
         assert init_end == today
-        assert init_start == today - timedelta(days=90)
+        assert init_start == today - timedelta(days=31)
 
     def test_init_end_clamps_to_max_d_when_data_in_past(self) -> None:
         keys = [f"2020-01-{d:02d}" for d in range(1, 15)]
