@@ -102,7 +102,7 @@ def _default_col_def() -> dict[str, Any]:
 #: When the date span exceeds max_span_days the initial date picker
 #: range is set to [max_date - window, max_date].
 _DATE_THRESHOLDS: dict[str, tuple[int, timedelta]] = {
-    "daily": (180, timedelta(days=90)),
+    "daily": (31, timedelta(days=31)),
     "weekly": (730, timedelta(weeks=52)),
     "monthly": (1460, timedelta(days=730)),  # ~24 months
     "hourly": (14, timedelta(days=7)),
@@ -401,17 +401,42 @@ def _page_backfill_detail(
             backfill_section.append(dcc.Store(id="bf-kind", data=cov.kind))
             backfill_section.append(
                 dbc.Row(
-                    dbc.Col(
-                        dcc.DatePickerRange(
-                            id="bf-date-range",
-                            start_date=init_start.isoformat(),
-                            end_date=init_end.isoformat(),
-                            min_date_allowed=min_d.isoformat(),
-                            max_date_allowed=max_d.isoformat(),
-                            className="mb-3",
+                    [
+                        dbc.Col(
+                            dbc.Button(
+                                "\u2190 Previous",
+                                id="bf-prev",
+                                color="secondary",
+                                size="sm",
+                                className="me-2",
+                            ),
+                            width="auto",
+                            className="d-flex align-items-center",
                         ),
-                        width="auto",
-                    ),
+                        dbc.Col(
+                            dcc.DatePickerRange(
+                                id="bf-date-range",
+                                start_date=init_start.isoformat(),
+                                end_date=init_end.isoformat(),
+                                min_date_allowed=min_d.isoformat(),
+                                max_date_allowed=max_d.isoformat(),
+                                className="mb-0",
+                            ),
+                            width="auto",
+                        ),
+                        dbc.Col(
+                            dbc.Button(
+                                "Next \u2192",
+                                id="bf-next",
+                                color="secondary",
+                                size="sm",
+                                className="ms-2",
+                            ),
+                            width="auto",
+                            className="d-flex align-items-center",
+                        ),
+                    ],
+                    className="mb-3 align-items-center",
                 )
             )
             fig = _build_coverage_figure(

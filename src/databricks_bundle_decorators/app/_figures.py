@@ -64,8 +64,8 @@ _LEGEND_ITEMS: list[tuple[str, str]] = [
 # Figure builder thresholds
 # ---------------------------------------------------------------------------
 
-_MAX_UNFILTERED_DAYS = 180
-_DEFAULT_WINDOW_DAYS = 90
+_MAX_UNFILTERED_DAYS = 31
+_DEFAULT_WINDOW_DAYS = 31
 _MAX_UNFILTERED_WEEKS = 104
 _DEFAULT_WINDOW_WEEKS = 52
 _MAX_UNFILTERED_MONTHS = 48
@@ -180,8 +180,8 @@ def _build_daily_calendar(
 ) -> Any:
     """Build a Plotly heatmap calendar for daily backfill keys.
 
-    Renders a GitHub-contribution-graph-style grid: rows are
-    weekdays (Mon-Sun) and columns are weeks.
+    Renders a traditional calendar grid: columns are weekdays
+    (Mon-Sun) and rows are weeks, with month labels on the y-axis.
     """
     expected_dates: set[whenever.Date] = set()
     for key in expected_keys:
@@ -223,8 +223,9 @@ def _build_daily_calendar(
     end = max_d.add(days=7 - max_d.day_of_week().value)
     num_weeks = (end.to_stdlib() - start.to_stdlib()).days // 7 + 1
 
-    z: list[list[int]] = [[0] * num_weeks for _ in range(7)]
-    hover: list[list[str]] = [[""] * num_weeks for _ in range(7)]
+    # Rows = weeks, columns = weekdays (traditional calendar layout)
+    z: list[list[int]] = [[0] * 7 for _ in range(num_weeks)]
+    hover: list[list[str]] = [[""] * 7 for _ in range(num_weeks)]
 
     today_wd = whenever.ZonedDateTime.now(tz).date()
     _ip = in_progress_keys or set()
@@ -236,7 +237,7 @@ def _build_daily_calendar(
             if d in expected_dates:
                 key_str = d.format_iso()
                 is_completed = d in completed_dates
-                z[dow][week_idx], hover[dow][week_idx] = _classify_cell(
+                z[week_idx][dow], hover[week_idx][dow] = _classify_cell(
                     key_str,
                     is_completed=is_completed,
                     is_future=d > today_wd,
@@ -245,9 +246,9 @@ def _build_daily_calendar(
                     key_run_info=key_run_info,
                 )
             else:
-                hover[dow][week_idx] = d.format_iso()
+                hover[week_idx][dow] = d.format_iso()
 
-    # Build month-boundary tick labels for x-axis
+    # Build month-boundary tick labels for y-axis
     month_ticks: list[int] = []
     month_labels: list[str] = []
     prev_ym: tuple[int, int] | None = None
@@ -277,17 +278,19 @@ def _build_daily_calendar(
             ygap=2,
         )
     )
-    xaxis_opts: dict[str, Any] = {"tickvals": month_ticks, "ticktext": month_labels}
 
     fig.update_layout(
-        height=230,
-        margin={"l": 50, "r": 20, "t": 10, "b": 60},
-        yaxis={
+        height=max(150, num_weeks * 30 + 80),
+        margin={"l": 70, "r": 20, "t": 10, "b": 60},
+        xaxis={
             "tickvals": list(range(7)),
             "ticktext": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        },
+        yaxis={
+            "tickvals": month_ticks,
+            "ticktext": month_labels,
             "autorange": "reversed",
         },
-        xaxis=xaxis_opts,
     )
     _add_coverage_legend(fig)
     return fig

@@ -65,7 +65,7 @@ def _load_registry() -> tuple[set[str], dict[str, BackfillDef], dict[str, str]]:
     return all_jobs, backfill_defs, schedule_crons
 
 
-def run_app(
+def run_app(  # noqa: PLR0915
     *,
     host: str = "0.0.0.0",  # noqa: S104
     port: int = 8000,
@@ -351,6 +351,59 @@ def run_app(
         _, build_fn = builder
         fig = _build_coverage_figure(build_fn, cov, start_date=sd, end_date=ed)
         return fig or {}
+
+    # --- Backfill prev/next navigation callback ---
+
+    @app.callback(
+        Output("bf-date-range", "start_date"),
+        Output("bf-date-range", "end_date"),
+        Input("bf-prev", "n_clicks"),
+        Input("bf-next", "n_clicks"),
+        State("bf-date-range", "start_date"),
+        State("bf-date-range", "end_date"),
+        State("bf-date-range", "min_date_allowed"),
+        State("bf-date-range", "max_date_allowed"),
+        prevent_initial_call=True,
+    )
+    def _navigate_bf_dates(
+        _prev_clicks: int | None,
+        _next_clicks: int | None,
+        start_str: str | None,
+        end_str: str | None,
+        min_str: str | None,
+        max_str: str | None,
+    ) -> Any:
+        from datetime import date as _date  # noqa: PLC0415
+
+        if not start_str or not end_str or not min_str or not max_str:
+            return dash.no_update  # type: ignore[return-value]
+
+        sd = _date.fromisoformat(start_str)
+        ed = _date.fromisoformat(end_str)
+        min_d = _date.fromisoformat(min_str)
+        max_d = _date.fromisoformat(max_str)
+        window = ed - sd
+
+        if dash.ctx.triggered_id == "bf-prev":
+            new_end = sd
+            new_start = sd - window
+        else:
+            new_start = ed
+            new_end = ed + window
+
+        # Clamp to allowed bounds
+        new_start = max(new_start, min_d)
+        new_end = min(new_end, max_d)
+        # Ensure at least 1-day window
+        if new_start >= new_end:
+            if dash.ctx.triggered_id == "bf-prev":
+                new_start = min_d
+                new_end = min(min_d + window, max_d)
+            else:
+                new_end = max_d
+                new_start = max(max_d - window, min_d)
+
+        return new_start.isoformat(), new_end.isoformat()
 
     # Prefetch data so the first page load is instant
     _refresh_data()
