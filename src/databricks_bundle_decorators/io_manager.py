@@ -38,11 +38,16 @@ class RetryConfig:
         Multiplier applied to *delay* after each failed attempt.
         For example, ``delay=1.0, backoff_factor=2.0`` produces waits
         of 1s, 2s, 4s, …
+    max_delay : float | None
+        Maximum delay in seconds between retry attempts.  Caps the
+        exponential growth so that individual waits never exceed this
+        value.  ``None`` means no cap (unlimited growth).
     """
 
     max_attempts: int = 3
     delay: float = 1.0
     backoff_factor: float = 2.0
+    max_delay: float | None = None
 
     def __post_init__(self) -> None:
         if self.max_attempts < 1:
@@ -53,6 +58,9 @@ class RetryConfig:
             raise ValueError(msg)
         if self.backoff_factor < 0:
             msg = f"backoff_factor must be >= 0, got {self.backoff_factor}"
+            raise ValueError(msg)
+        if self.max_delay is not None and self.max_delay < 0:
+            msg = f"max_delay must be >= 0 or None, got {self.max_delay}"
             raise ValueError(msg)
 
 
@@ -357,12 +365,16 @@ class IoManager(ABC):
             wait_exponential_jitter,
         )
 
+        wait_kwargs: dict[str, Any] = {
+            "initial": self.retry.delay,
+            "exp_base": self.retry.backoff_factor,
+        }
+        if self.retry.max_delay is not None:
+            wait_kwargs["max"] = self.retry.max_delay
+
         retryer = retry(
             stop=stop_after_attempt(self.retry.max_attempts),
-            wait=wait_exponential_jitter(
-                initial=self.retry.delay,
-                exp_base=self.retry.backoff_factor,
-            ),
+            wait=wait_exponential_jitter(**wait_kwargs),
             reraise=True,
             before_sleep=before_sleep_log(_logger, logging.WARNING),
         )

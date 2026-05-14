@@ -306,12 +306,16 @@ class PolarsDeltaIoManager(IoManager):
                 else:
                     merger.execute()
 
+            wait_kwargs: dict[str, Any] = {
+                "multiplier": self.retry.delay,
+                "exp_base": self.retry.backoff_factor,
+            }
+            if self.retry.max_delay is not None:
+                wait_kwargs["max"] = self.retry.max_delay
+
             retryer = retry(
                 stop=stop_after_attempt(self.retry.max_attempts),
-                wait=wait_exponential(
-                    multiplier=self.retry.delay,
-                    exp_base=self.retry.backoff_factor,
-                ),
+                wait=wait_exponential(**wait_kwargs),
                 reraise=True,
                 before_sleep=before_sleep_log(_logger, logging.WARNING),
             )
