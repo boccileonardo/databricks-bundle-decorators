@@ -835,6 +835,21 @@ async def _poll_runs(
     await asyncio.gather(*tasks)
 
 
+def _clear_local_bundle_state(target: str | None) -> None:
+    """Remove the local ``.databricks/bundle/<target>/`` state directory.
+
+    The Databricks CLI caches deployment state locally and prefers it
+    over querying the remote workspace.  For backfill, we always need
+    the real deployed job ID, so we remove the cache to force a fresh
+    remote lookup.
+    """
+    state_dir = Path(".databricks") / "bundle"
+    if target:
+        state_dir = state_dir / target
+    if state_dir.is_dir():
+        shutil.rmtree(state_dir)
+
+
 def _get_job_id_from_bundle(
     job_name: str,
     target: str | None,
@@ -844,6 +859,11 @@ def _get_job_id_from_bundle(
 
     Shells out to ``databricks bundle summary --output json`` and
     extracts the numeric job ID for *job_name*.
+
+    Always clears local bundle state before querying so the CLI fetches
+    the actual deployed (remote) state.  Without this, a stale local
+    ``.databricks/bundle/`` cache causes cryptic errors when the deploy
+    is handled by CI but the developer triggers a backfill locally.
     """
     if shutil.which("databricks") is None:
         print(
@@ -852,6 +872,9 @@ def _get_job_id_from_bundle(
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # Clear local bundle state so the CLI fetches remote state.
+    _clear_local_bundle_state(target)
 
     cmd: list[str] = ["databricks", "bundle", "summary", "--output", "json"]
     if target:
