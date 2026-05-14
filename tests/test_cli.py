@@ -10,6 +10,7 @@ import pytest
 
 from databricks_bundle_decorators.backfill import DailyBackfill
 from databricks_bundle_decorators.cli import (
+    _clear_local_bundle_state,
     _cmd_backfill,
     _cmd_backfill_catchup,
     _cmd_init,
@@ -1371,3 +1372,36 @@ class TestAppConfigNameResolution:
 
         # Verify uv lock was called in the app directory
         assert any("lock" in cmd for cmd in calls)
+
+
+class TestClearLocalBundleState:
+    """Tests for _clear_local_bundle_state."""
+
+    def test_removes_target_state_dir(self, tmp_path: Path, monkeypatch):
+        """Removes .databricks/bundle/<target>/ when it exists."""
+        monkeypatch.chdir(tmp_path)
+        state_dir = tmp_path / ".databricks" / "bundle" / "dev"
+        state_dir.mkdir(parents=True)
+        (state_dir / "terraform.tfstate").write_text("{}")
+
+        _clear_local_bundle_state("dev")
+
+        assert not state_dir.exists()
+
+    def test_removes_all_bundle_state_when_no_target(self, tmp_path: Path, monkeypatch):
+        """Removes .databricks/bundle/ entirely when target is None."""
+        monkeypatch.chdir(tmp_path)
+        state_dir = tmp_path / ".databricks" / "bundle"
+        (state_dir / "dev").mkdir(parents=True)
+        (state_dir / "prod").mkdir(parents=True)
+
+        _clear_local_bundle_state(None)
+
+        assert not state_dir.exists()
+
+    def test_noop_when_state_dir_missing(self, tmp_path: Path, monkeypatch):
+        """Does nothing when .databricks/bundle/ does not exist."""
+        monkeypatch.chdir(tmp_path)
+
+        # Should not raise
+        _clear_local_bundle_state("dev")
