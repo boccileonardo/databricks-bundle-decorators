@@ -1093,3 +1093,48 @@ class TestWriteRetry:
         assert io.retry.max_attempts == 5
         assert io.retry.delay == 2.0
         assert io.retry.backoff_factor == 3.0
+
+    def test_retry_config_max_delay_validation(self):
+        """max_delay must be >= 0 or None."""
+        # None is fine (default, no cap)
+        cfg = RetryConfig(max_attempts=3, delay=1.0, backoff_factor=2.0, max_delay=None)
+        assert cfg.max_delay is None
+
+        # Positive value is fine
+        cfg = RetryConfig(max_attempts=3, delay=1.0, backoff_factor=2.0, max_delay=30.0)
+        assert cfg.max_delay == 30.0
+
+        # Zero is fine (effectively no wait)
+        cfg = RetryConfig(max_attempts=3, delay=1.0, backoff_factor=2.0, max_delay=0.0)
+        assert cfg.max_delay == 0.0
+
+        # Negative raises
+        with pytest.raises(ValueError, match="max_delay must be >= 0"):
+            RetryConfig(max_attempts=3, delay=1.0, backoff_factor=2.0, max_delay=-1.0)
+
+    def test_retry_with_max_delay(self):
+        """Write retries respect max_delay cap."""
+        call_count = 0
+
+        class _FlakeyIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                nonlocal call_count
+                call_count += 1
+                if call_count < 2:
+                    raise RuntimeError("CommitFailedError: concurrent write")
+                _MemoryIo.storage[context.task_key] = obj
+
+            def read(self, context: InputContext) -> Any:
+                return _MemoryIo.storage.get(context.upstream_task_key)
+
+        io = _FlakeyIo()
+        io.retry = RetryConfig(
+            max_attempts=3, delay=0.01, backoff_factor=2.0, max_delay=0.02
+        )
+
+        _TASK_REGISTRY["j.t"] = TaskMeta(fn=lambda: "data", task_key="t", io_manager=io)
+
+        run_task("t", {"__job_name__": "j", "__task_key__": "t"})
+
+        assert call_count == 2
+        assert _MemoryIo.storage["t"] == "data"
