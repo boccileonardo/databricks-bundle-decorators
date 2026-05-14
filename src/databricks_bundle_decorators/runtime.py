@@ -239,7 +239,10 @@ def main() -> None:
 
     Invoked by Databricks ``python_wheel_task`` with ``named_parameters``.
     """
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+    )
 
     # 1. Discover and import pipeline definitions to populate registries.
     #    Pipeline packages register themselves via the 'databricks_bundle_decorators.pipelines'
