@@ -102,3 +102,58 @@ def get_task_value(task_key: str, key: str, *, default: Any = _MISSING) -> Any:
     if default is not _MISSING:
         return _local_task_values.get(task_key, {}).get(key, default)
     return _local_task_values.get(task_key, {}).get(key)
+
+
+#: Internal task-value key used to propagate partition values between tasks.
+_PARTITION_VALUES_KEY: str = "__partition_values__"
+
+
+def get_upstream_partition_values(task_key: str) -> dict[str, list[str]] | None:
+    """Return the partition values written by an upstream task.
+
+    When an IoManager with ``auto_filter=True`` writes partitioned data,
+    the framework pushes the distinct partition column values as an
+    internal task value.  This function retrieves those values, letting
+    downstream task code inspect which partitions were produced without
+    accessing internal task-value keys directly.
+
+    Parameters
+    ----------
+    task_key:
+        The ``task_key`` of the upstream task whose partition values
+        you want to inspect.
+
+    Returns
+    -------
+    dict[str, list[str]] | None
+        A mapping of partition column names to their distinct values
+        (e.g. ``{"date": ["2024-01-15"], "region": ["us", "eu"]}``),
+        or ``None`` if the upstream task did not push partition values
+        (e.g. it has no IoManager, ``auto_filter=False``, or no
+        ``partition_by``).
+
+    Example
+    -------
+    ::
+
+        from databricks_bundle_decorators import (
+            task,
+            job,
+            get_upstream_partition_values,
+        )
+
+
+        @job
+        def my_pipeline():
+            @task(io_manager=my_io)
+            def produce(): ...
+
+            @task
+            def consume(data):
+                parts = get_upstream_partition_values("produce")
+                # parts == {"date": ["2024-01-15"]}
+                ...
+
+            consume(produce())
+    """
+    return get_task_value(task_key, _PARTITION_VALUES_KEY, default=None)

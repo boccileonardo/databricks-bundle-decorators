@@ -25,7 +25,11 @@ from databricks_bundle_decorators.io_manager import (
     OutputContext,
 )
 from databricks_bundle_decorators.registry import _TASK_REGISTRY
-from databricks_bundle_decorators.task_values import get_task_value, set_task_value
+from databricks_bundle_decorators.task_values import (
+    _PARTITION_VALUES_KEY,
+    get_task_value,
+    set_task_value,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -141,7 +145,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 and not is_all_partitions
             ):
                 partition_filter = get_task_value(
-                    upstream_task_key, "__partition_values__", default=None
+                    upstream_task_key, _PARTITION_VALUES_KEY, default=None
                 )
             elif (
                 not upstream_meta.io_manager.auto_filter
@@ -217,7 +221,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                     "Pushing partition values for downstream filtering: %s",
                     partition_values,
                 )
-                set_task_value("__partition_values__", partition_values)  # ty: ignore[invalid-argument-type]
+                set_task_value(_PARTITION_VALUES_KEY, partition_values)  # ty: ignore[invalid-argument-type]
         elif result is None and task_meta.io_manager:
             # Signal to downstream tasks that this task produced no output.
             # This allows tasks with optional return types (e.g.
