@@ -4,9 +4,11 @@ import pytest
 
 import databricks_bundle_decorators.task_values as _tv
 from databricks_bundle_decorators.task_values import (
+    _PARTITION_VALUES_KEY,
     _is_databricks_runtime,
     _local_task_values,
     get_task_value,
+    get_upstream_partition_values,
     set_task_value,
 )
 
@@ -110,3 +112,56 @@ class TestDatabricksRuntimeDetection:
     def test_detected_when_env_var_set(self, monkeypatch):
         monkeypatch.setenv("DATABRICKS_RUNTIME_VERSION", "14.3.x-scala2.12")
         assert _is_databricks_runtime() is True
+
+
+class TestGetUpstreamPartitionValues:
+    """Tests for get_upstream_partition_values helper."""
+
+    def setup_method(self):
+        _local_task_values.clear()
+        _tv._current_task_key = None
+
+    def teardown_method(self):
+        _tv._current_task_key = None
+
+    def test_returns_partition_values_from_upstream(self):
+        """Retrieves partition values pushed by an upstream task."""
+        _tv._current_task_key = "producer"
+        set_task_value(_PARTITION_VALUES_KEY, {"date": ["2024-01-15"]})
+        _tv._current_task_key = None
+
+        result = get_upstream_partition_values("producer")
+        assert result == {"date": ["2024-01-15"]}
+
+    def test_returns_none_when_no_partition_values(self):
+        """Returns None when upstream has no partition values."""
+        assert get_upstream_partition_values("nonexistent") is None
+
+    def test_returns_none_when_upstream_has_no_partitioning(self):
+        """Returns None when upstream task didn't push partition values."""
+        _tv._current_task_key = "producer"
+        set_task_value("row_count", 100)
+        _tv._current_task_key = None
+
+        assert get_upstream_partition_values("producer") is None
+
+    def test_multi_column_partition(self):
+        """Handles multi-column partitioning."""
+        _tv._current_task_key = "producer"
+        set_task_value(
+            _PARTITION_VALUES_KEY,
+            {"region": ["us", "eu"], "date": ["2024-01-15"]},
+        )
+        _tv._current_task_key = None
+
+        result = get_upstream_partition_values("producer")
+        assert result == {"region": ["us", "eu"], "date": ["2024-01-15"]}
+
+    def test_backfill_key_partition(self):
+        """Works with the special backfill_key partition column."""
+        _tv._current_task_key = "producer"
+        set_task_value(_PARTITION_VALUES_KEY, {"backfill_key": ["2024-01-15"]})
+        _tv._current_task_key = None
+
+        result = get_upstream_partition_values("producer")
+        assert result == {"backfill_key": ["2024-01-15"]}
