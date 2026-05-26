@@ -37,6 +37,27 @@ def extract(): ...
 
 ::: databricks_bundle_decorators.io_managers.SparkUCTableIoManager
 
+### External Tables
+
+Set `location` to create external tables backed by storage you control:
+
+```python
+io = SparkUCTableIoManager(
+    catalog="main",
+    schema="bronze",
+    location="s3://my-bucket/delta",
+)
+
+@task(io_manager=io, output_name="customers")
+def extract_customers():
+    ...  # table: main.bronze.customers
+         # path:  s3://my-bucket/delta/customers
+```
+
+The path must be registered as a UC
+[external location](https://docs.databricks.com/en/sql/language-manual/sql-ref-external-locations.html).
+Reads use `spark.table()` so location is transparent.
+
 ## Volume – Delta
 
 ::: databricks_bundle_decorators.io_managers.SparkUCVolumeDeltaIoManager

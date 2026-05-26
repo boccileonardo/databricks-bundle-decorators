@@ -23,6 +23,7 @@ class TaskMeta:
     fn: Callable
     task_key: str
     io_manager: IoManager | None = None
+    output_name: str | None = None
     partition_by: list[str] | None = None
     sdk_config: dict[str, Any] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)

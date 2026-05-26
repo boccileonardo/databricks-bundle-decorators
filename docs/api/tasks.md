@@ -76,6 +76,21 @@ def my_job():
 See [How It Works — Control-flow dependencies](../how-it-works.md#control-flow-dependencies-depends_on)
 for more details.
 
+## Asset Naming (`output_name`)
+
+By default, task outputs are stored under the task key (function name).
+Use `output_name` to decouple the storage name from the function name:
+
+```python
+@task(io_manager=io, output_name="customers")
+def extract_customers():
+    ...  # stored as "customers", not "extract_customers"
+```
+
+The resolved name is available as `OutputContext.asset_name` (write)
+and `InputContext.upstream_asset_name` (read).  When `output_name` is
+`None` (the default), both fall back to the task key.
+
 ## Per-Task Compute Override
 
 By default every task inherits the shared job cluster defined via

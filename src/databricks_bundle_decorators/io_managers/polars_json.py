@@ -173,7 +173,7 @@ class PolarsJsonIoManager(IoManager):
         """
         import polars as pl  # noqa: PLC0415
 
-        base_uri = self._uri(context.task_key)
+        base_uri = self._uri(context.asset_name)
         partition_by = context.partition_by
         _logger.info("Writing to %s (partition_by=%s)", base_uri, partition_by)
 
@@ -247,7 +247,7 @@ class PolarsJsonIoManager(IoManager):
         """
         import polars as pl  # noqa: PLC0415
 
-        base_uri = self._uri(context.upstream_task_key)
+        base_uri = self._uri(context.upstream_asset_name)
         partition_by = context.partition_by
         _logger.info(
             "Reading from %s (partition_filter=%s)", base_uri, context.partition_filter

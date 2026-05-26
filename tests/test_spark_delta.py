@@ -109,6 +109,45 @@ class TestSparkServerlessDeltaConstruction:
 
 
 # ---------------------------------------------------------------------------
+# output_name (asset naming)
+# ---------------------------------------------------------------------------
+
+
+class TestSparkDeltaOutputName:
+    def test_write_uses_output_name(self, spark, tmp_path):
+        """output_name overrides task_key for the Delta path."""
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("extract_orders", output_name="orders"), df)
+
+        assert (tmp_path / "orders").exists()
+        assert not (tmp_path / "extract_orders").exists()
+
+    def test_read_uses_upstream_output_name(self, spark, tmp_path):
+        """Read resolves path from upstream_output_name."""
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("extract_orders", output_name="orders"), df)
+
+        result = io.read(_input_ctx("extract_orders", upstream_output_name="orders"))
+        assert result.count() == 1
+
+    def test_without_output_name_uses_task_key(self, spark, tmp_path):
+        """Without output_name, task_key is used."""
+        io = SparkDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("my_task"), df)
+
+        assert (tmp_path / "my_task").exists()
+
+
+# ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 

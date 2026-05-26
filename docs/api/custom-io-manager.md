@@ -4,6 +4,26 @@ Subclass `IoManager` to implement your own storage backend when the
 [built-in IoManagers](io-managers/index.md) don't cover your use case
 (e.g. writing to a REST API, a message queue, or a custom file format).
 
+## Asset naming
+
+Use `context.asset_name` (write) and `context.upstream_asset_name`
+(read) to derive storage paths.  These return `output_name` when set
+via `@task(output_name="...")`, falling back to the task key otherwise.
+
+```python
+def write(self, context: OutputContext, obj) -> None:
+    path = f"{self.base_path}/{context.asset_name}"
+    save(path, obj)
+
+def read(self, context: InputContext):
+    path = f"{self.base_path}/{context.upstream_asset_name}"
+    return load(path)
+```
+
+!!! tip
+    Prefer `asset_name` / `upstream_asset_name` over `task_key` /
+    `upstream_task_key` when building storage paths.
+
 ## Partitioning support
 
 When building a custom IoManager, use `context.backfill_key` to scope

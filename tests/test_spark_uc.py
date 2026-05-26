@@ -251,6 +251,151 @@ class TestSparkUCTableDeltaMerge:
 
 
 # ===========================================================================
+# SparkUCTableIoManager - output_name (asset naming)
+# ===========================================================================
+
+
+class TestSparkUCTableOutputName:
+    def test_output_name_used_for_table(self, spark: SparkSession, uc_schema: str):
+        """output_name overrides task_key for table registration."""
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="error"
+        )
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
+        io.write(_output_ctx("extract_customers", output_name="customers"), df)
+
+        # Table registered under output_name
+        result = spark.table(f"`{uc_schema}`.customers")
+        assert result.count() == 2
+
+    def test_output_name_read_resolves_correctly(
+        self, spark: SparkSession, uc_schema: str
+    ):
+        """Read uses upstream_output_name to find the table."""
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="error"
+        )
+        io.setup()
+
+        df = spark.createDataFrame([(1, "x")], ["id", "val"])
+        io.write(_output_ctx("extract_orders", output_name="orders"), df)
+
+        result = io.read(_input_ctx("extract_orders", upstream_output_name="orders"))
+        assert result.count() == 1
+
+    def test_output_name_with_location(
+        self, spark: SparkSession, uc_schema: str, tmp_path
+    ):
+        """output_name is used for both table name and external path."""
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog",
+            schema=uc_schema,
+            mode="error",
+            location=str(tmp_path / "ext"),
+        )
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("extract_customers", output_name="customers"), df)
+
+        # External path uses output_name
+        assert (tmp_path / "ext" / "customers").exists()
+        # Table registered under output_name
+        result = io.read(
+            _input_ctx("extract_customers", upstream_output_name="customers")
+        )
+        assert result.count() == 1
+
+    def test_without_output_name_uses_task_key(
+        self, spark: SparkSession, uc_schema: str
+    ):
+        """Without output_name, task_key is used for the table."""
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog", schema=uc_schema, mode="error"
+        )
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("my_task"), df)
+
+        result = spark.table(f"`{uc_schema}`.my_task")
+        assert result.count() == 1
+
+
+# ===========================================================================
+# SparkUCTableIoManager - external tables (location)
+# ===========================================================================
+
+
+class TestSparkUCTableLocation:
+    def test_location_path_generation(self):
+        io = SparkUCTableIoManager(
+            catalog="main",
+            schema="bronze",
+            location="s3://my-bucket/delta",
+        )
+        assert io._location_path("my_task") == "s3://my-bucket/delta/my_task"
+
+    def test_location_trailing_slash_stripped(self):
+        io = SparkUCTableIoManager(
+            catalog="main",
+            schema="bronze",
+            location="s3://my-bucket/delta/",
+        )
+        assert io._location_path("my_task") == "s3://my-bucket/delta/my_task"
+
+    def test_location_none_returns_none(self):
+        io = SparkUCTableIoManager(catalog="main", schema="bronze")
+        assert io._location_path("my_task") is None
+
+    def test_external_table_round_trip(
+        self, spark: SparkSession, uc_schema: str, tmp_path
+    ):
+        """Write with location creates an external table and reads back correctly."""
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog",
+            schema=uc_schema,
+            mode="error",
+            location=str(tmp_path / "ext_tables"),
+        )
+        io.setup()
+
+        df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "val"])
+        io.write(_output_ctx("ext_task"), df)
+
+        # Data should exist at the external path
+        ext_path = tmp_path / "ext_tables" / "ext_task"
+        assert ext_path.exists()
+
+        # Read via catalog still works
+        result = io.read(_input_ctx("ext_task"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 2
+        assert rows[0]["val"] == "a"
+
+    def test_external_table_append(self, spark: SparkSession, uc_schema: str, tmp_path):
+        """Append mode works with external tables."""
+        io = SparkUCTableIoManager(
+            catalog="spark_catalog",
+            schema=uc_schema,
+            mode="append",
+            location=str(tmp_path / "ext_append"),
+        )
+        io.setup()
+
+        df1 = spark.createDataFrame([(1, "a")], ["id", "val"])
+        io.write(_output_ctx("append_ext"), df1)
+
+        df2 = spark.createDataFrame([(2, "b")], ["id", "val"])
+        io.write(_output_ctx("append_ext"), df2)
+
+        result = io.read(_input_ctx("append_ext"))
+        assert result.count() == 2
+
+
+# ===========================================================================
 # SparkUCVolumeDeltaIoManager - construction & round-trip
 # ===========================================================================
 
@@ -288,6 +433,21 @@ class TestSparkUCVolumeDeltaConstruction:
                 catalog="main", schema="staging", volume="raw_data", mode="upsert"
             )
 
+    def test_path_name_none_uses_task_key(self):
+        io = SparkUCVolumeDeltaIoManager(
+            catalog="main", schema="staging", volume="raw_data"
+        )
+        assert io._uri("my_task") == "/Volumes/main/staging/raw_data/my_task"
+
+    def test_output_name_resolves_in_uri(self):
+        """asset_name (from output_name) is used to build the URI."""
+        io = SparkUCVolumeDeltaIoManager(
+            catalog="main", schema="staging", volume="raw_data"
+        )
+        # asset_name is resolved from OutputContext, not directly _uri
+        # but _uri("customers") should give the expected path
+        assert io._uri("customers") == "/Volumes/main/staging/raw_data/customers"
+
 
 class TestSparkUCVolumeDeltaSetup:
     def test_setup_obtains_session(self, spark: SparkSession):
@@ -315,6 +475,29 @@ class TestSparkUCVolumeDeltaRoundTrip:
         rows = sorted(result.collect(), key=lambda r: r["id"])
         assert len(rows) == 2
         assert rows[0]["val"] == "a"
+
+    def test_round_trip_with_output_name(
+        self, spark: SparkSession, tmp_path, monkeypatch
+    ):
+        """output_name directs writes to output_name path, not task_key."""
+        io = SparkUCVolumeDeltaIoManager(
+            catalog="main", schema="staging", volume="raw_data", mode="overwrite"
+        )
+        io.setup()
+        monkeypatch.setattr(io, "_uri", lambda key: str(tmp_path / key))
+
+        df = spark.createDataFrame([(1, "x"), (2, "y")], ["id", "val"])
+        io.write(_output_ctx("extract_orders", output_name="orders"), df)
+
+        # Written under "orders", not "extract_orders"
+        assert (tmp_path / "orders").exists()
+        assert not (tmp_path / "extract_orders").exists()
+
+        # Read resolves via upstream_output_name
+        result = io.read(_input_ctx("extract_orders", upstream_output_name="orders"))
+        rows = sorted(result.collect(), key=lambda r: r["id"])
+        assert len(rows) == 2
+        assert rows[0]["val"] == "x"
 
     def test_mode_append(self, spark: SparkSession, tmp_path, monkeypatch):
         io = SparkUCVolumeDeltaIoManager(

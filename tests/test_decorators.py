@@ -61,6 +61,24 @@ class TestTaskDecorator:
 
         assert _TASK_REGISTRY["my_task"].io_manager is fake
 
+    def test_output_name_stored_in_registry(self):
+        """output_name= kwarg is propagated to TaskMeta."""
+
+        @task(output_name="customers")
+        def extract_customers():
+            return 1
+
+        assert _TASK_REGISTRY["extract_customers"].output_name == "customers"
+
+    def test_output_name_defaults_to_none(self):
+        """Without output_name=, TaskMeta.output_name is None."""
+
+        @task
+        def my_task():
+            return 1
+
+        assert _TASK_REGISTRY["my_task"].output_name is None
+
 
 class TestJobCluster:
     def setup_method(self):

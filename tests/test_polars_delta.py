@@ -108,6 +108,52 @@ class TestConstruction:
 
 
 # ---------------------------------------------------------------------------
+# output_name (asset naming)
+# ---------------------------------------------------------------------------
+
+
+class TestOutputName:
+    def test_write_uses_output_name_as_path(self, tmp_path: Path) -> None:
+        """When output_name is set, writes use it instead of task_key."""
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.write(
+            _output_ctx("extract_customers", output_name="customers"),
+            _SAMPLE,
+        )
+        # Delta table created under output_name, not task_key
+        assert (tmp_path / "customers" / "_delta_log").is_dir()
+        assert not (tmp_path / "extract_customers").exists()
+
+    def test_read_uses_upstream_output_name(self, tmp_path: Path) -> None:
+        """When upstream has output_name, reads use it instead of task_key."""
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        # Write under the output_name path
+        _SAMPLE.write_delta(str(tmp_path / "customers"), mode="overwrite")
+
+        result = io.read(
+            _input_ctx("extract_customers", upstream_output_name="customers")
+        )
+        assert isinstance(result, pl.LazyFrame)
+        assert result.collect().sort("a").equals(_SAMPLE.sort("a"))
+
+    def test_round_trip_with_output_name(self, tmp_path: Path) -> None:
+        """Full write→read cycle using output_name."""
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.write(
+            _output_ctx("extract_orders", output_name="orders"),
+            _SAMPLE,
+        )
+        result = io.read(_input_ctx("extract_orders", upstream_output_name="orders"))
+        assert result.collect().sort("a").equals(_SAMPLE.sort("a"))
+
+    def test_without_output_name_uses_task_key(self, tmp_path: Path) -> None:
+        """When output_name is None, task_key is used as the path."""
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+        io.write(_output_ctx("my_task"), _SAMPLE)
+        assert (tmp_path / "my_task" / "_delta_log").is_dir()
+
+
+# ---------------------------------------------------------------------------
 # Write + Read round-trips
 # ---------------------------------------------------------------------------
 
