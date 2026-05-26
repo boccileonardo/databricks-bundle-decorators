@@ -1210,6 +1210,58 @@ class TestGetLaunchedBackfillKeys:
         result = _get_launched_backfill_keys("123", None, None)
         assert result == {"2024-01-01"}
 
+    def test_falls_back_to_default_when_value_absent(self, monkeypatch):
+        """Cron-triggered runs may lack 'value'; fall back to 'default'."""
+        runs = [
+            {
+                "state": {"result_state": "SUCCESS"},
+                "job_parameters": [
+                    {"name": "env", "default": "prod"},
+                    {"name": "backfill_key", "default": "2024-01-01"},
+                ],
+            },
+            {
+                "state": {"result_state": "SUCCESS"},
+                "job_parameters": [
+                    {"name": "env", "default": "prod", "value": "prod"},
+                    {"name": "backfill_key", "default": "", "value": "2024-01-02"},
+                ],
+            },
+        ]
+
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda cmd, **kw: subprocess.CompletedProcess(
+                cmd, 0, stdout=json.dumps(runs)
+            ),
+        )
+
+        result = _get_launched_backfill_keys("123", None, None)
+        assert result == {"2024-01-01", "2024-01-02"}
+
+    def test_skips_empty_backfill_key(self, monkeypatch):
+        """Runs with empty backfill_key (no value, empty default) are skipped."""
+        runs = [
+            {
+                "state": {"result_state": "SUCCESS"},
+                "job_parameters": [
+                    {"name": "backfill_key", "default": ""},
+                ],
+            },
+        ]
+
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/databricks")
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda cmd, **kw: subprocess.CompletedProcess(
+                cmd, 0, stdout=json.dumps(runs)
+            ),
+        )
+
+        result = _get_launched_backfill_keys("123", None, None)
+        assert result == set()
+
 
 class TestReadAppNameFromYml:
     """Tests for _read_app_name_from_yml."""
