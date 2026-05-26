@@ -119,6 +119,90 @@ class TestRunTask:
 
         assert _local_task_values["producer"]["row_count"] == 42
 
+    def test_output_name_passed_to_write_context(self):
+        """output_name from TaskMeta propagates to OutputContext."""
+        captured_ctx: list[OutputContext] = []
+
+        class _CapturingIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                captured_ctx.append(context)
+
+            def read(self, context: InputContext) -> Any:
+                return None
+
+        io = _CapturingIo()
+        _TASK_REGISTRY["j.extract_customers"] = TaskMeta(
+            fn=lambda: "data",
+            task_key="extract_customers",
+            io_manager=io,
+            output_name="customers",
+        )
+
+        run_task(
+            "extract_customers",
+            {"__job_name__": "j", "__task_key__": "extract_customers"},
+        )
+
+        assert len(captured_ctx) == 1
+        assert captured_ctx[0].output_name == "customers"
+        assert captured_ctx[0].asset_name == "customers"
+
+    def test_output_name_none_falls_back_to_task_key(self):
+        """When output_name is None, asset_name returns the task_key."""
+        captured_ctx: list[OutputContext] = []
+
+        class _CapturingIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                captured_ctx.append(context)
+
+            def read(self, context: InputContext) -> Any:
+                return None
+
+        io = _CapturingIo()
+        _TASK_REGISTRY["j.my_task"] = TaskMeta(
+            fn=lambda: "data", task_key="my_task", io_manager=io
+        )
+
+        run_task("my_task", {"__job_name__": "j", "__task_key__": "my_task"})
+
+        assert len(captured_ctx) == 1
+        assert captured_ctx[0].output_name is None
+        assert captured_ctx[0].asset_name == "my_task"
+
+    def test_upstream_output_name_passed_to_read_context(self):
+        """Upstream output_name propagates to InputContext.upstream_output_name."""
+        captured_ctx: list[InputContext] = []
+
+        class _CapturingIo(IoManager):
+            def write(self, context: OutputContext, obj: Any) -> None:
+                pass
+
+            def read(self, context: InputContext) -> Any:
+                captured_ctx.append(context)
+                return "loaded_data"
+
+        io = _CapturingIo()
+        _TASK_REGISTRY["j.extract_orders"] = TaskMeta(
+            fn=lambda: "data",
+            task_key="extract_orders",
+            io_manager=io,
+            output_name="orders",
+        )
+        _TASK_REGISTRY["j.transform"] = TaskMeta(fn=lambda df: df, task_key="transform")
+
+        run_task(
+            "transform",
+            {
+                "__job_name__": "j",
+                "__task_key__": "transform",
+                "__upstream__df": "extract_orders",
+            },
+        )
+
+        assert len(captured_ctx) == 1
+        assert captured_ctx[0].upstream_output_name == "orders"
+        assert captured_ctx[0].upstream_asset_name == "orders"
+
     def test_io_manager_setup_called_before_write(self):
         """IoManager.setup() is called once before write()."""
         call_log: list[str] = []

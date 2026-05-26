@@ -168,6 +168,7 @@ _TaskDecorator = Callable[[types.FunctionType], Callable[..., Any]]
 def task(
     *,
     io_manager: IoManager | None = ...,
+    output_name: str | None = ...,
     depends_on: TaskProxy | list[TaskProxy] | None = ...,
     all_partitions: bool = ...,
     partition_by: str | list[str] | None = ...,
@@ -183,6 +184,7 @@ def task(
     fn: types.FunctionType | None = None,
     *,
     io_manager: IoManager | None = None,
+    output_name: str | None = None,
     depends_on: TaskProxy | list[TaskProxy] | None = None,
     all_partitions: bool = False,
     partition_by: str | list[str] | None = None,
@@ -254,6 +256,7 @@ def task(
             fn=fn,
             task_key=task_key,
             io_manager=io_manager,
+            output_name=output_name,
             partition_by=_normalize_partition_by(partition_by),
             sdk_config={**kwargs},
             depends_on=depends_on_keys,

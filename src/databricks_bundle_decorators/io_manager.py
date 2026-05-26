@@ -224,8 +224,18 @@ class OutputContext:
     job_name: str
     task_key: str
     run_id: str
+    output_name: str | None = None
     backfill_key: str | None = None
     partition_by: list[str] | None = None
+
+    @property
+    def asset_name(self) -> str:
+        """The resolved name for the output asset (table, path segment, etc.).
+
+        Returns `output_name` if set on the ``@task`` decorator,
+        otherwise falls back to `task_key`.
+        """
+        return self.output_name if self.output_name is not None else self.task_key
 
 
 @dataclass
@@ -258,11 +268,25 @@ class InputContext:
     task_key: str
     upstream_task_key: str
     run_id: str
+    upstream_output_name: str | None = None
     expected_type: type | None = field(default=None, repr=False)
     backfill_key: str | None = None
     all_partitions: bool = False
     partition_by: list[str] | None = None
     partition_filter: dict[str, list[str]] | None = None
+
+    @property
+    def upstream_asset_name(self) -> str:
+        """The resolved name for the upstream output asset.
+
+        Returns the upstream task's `output_name` if set,
+        otherwise falls back to `upstream_task_key`.
+        """
+        return (
+            self.upstream_output_name
+            if self.upstream_output_name is not None
+            else self.upstream_task_key
+        )
 
 
 class IoManager(ABC):

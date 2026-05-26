@@ -40,14 +40,17 @@ _logger = logging.getLogger(__name__)
 
 
 class SparkUCTableIoManager(IoManager):
-    """Persist PySpark DataFrames as Unity Catalog managed Delta tables.
+    """Persist PySpark DataFrames as Unity Catalog Delta tables.
 
     Uses ``saveAsTable`` / ``spark.table()`` with the three-level
-    namespace ``catalog.schema.task_key``.
+    namespace ``catalog.schema.name``.
 
-    Unity Catalog manages access control and storage location, so no
-    credential configuration is required.  Works on both classic and
-    serverless compute.
+    By default creates **managed** tables (Unity Catalog controls
+    storage).  Set ``location`` to create **external** tables at a
+    user-specified storage path.
+
+    The table name defaults to the task key but can be overridden
+    per-task via ``@task(output_name="...")``.
 
     Parameters
     ----------
@@ -55,6 +58,13 @@ class SparkUCTableIoManager(IoManager):
         Unity Catalog catalog name (e.g. ``"main"``).
     schema : str
         Unity Catalog schema (database) name (e.g. ``"staging"``).
+    location : str | None
+        Base storage path for external tables.  When set, each table
+        is stored at ``{location}/{output_name}`` and registered in
+        Unity Catalog as an external table.  Accepts cloud URIs
+        (``s3://``, ``abfss://``, ``gs://``) or DBFS paths.  The
+        path must be registered as an external location in Unity
+        Catalog.  When ``None`` (default), managed tables are created.
     write_options : dict[str, str] | None
         Extra Spark writer options applied via ``.option(k, v)``.
     read_options : dict[str, str] | None
@@ -73,7 +83,7 @@ class SparkUCTableIoManager(IoManager):
 
     Example
     -------
-    ::
+    Managed table (default)::
 
         from databricks_bundle_decorators.io_managers import SparkUCTableIoManager
 
@@ -89,6 +99,19 @@ class SparkUCTableIoManager(IoManager):
         @task
         def transform(df):  # spark.table("main.staging.extract")
             df.show()
+
+    External table with custom name::
+
+        io = SparkUCTableIoManager(
+            catalog="main",
+            schema="bronze",
+            location="s3://my-bucket/delta",
+        )
+
+
+        @task(io_manager=io, output_name="customers")
+        def extract_customers():  # table: main.bronze.customers
+            ...  # path: s3://my-bucket/delta/customers
     """
 
     _spark: Any  # SparkSession, set in setup()
@@ -101,12 +124,14 @@ class SparkUCTableIoManager(IoManager):
         read_options: dict[str, str] | None = None,
         mode: str = "error",
         *,
+        location: str | None = None,
         auto_filter: bool = True,
         retry: RetryConfig | None = None,
     ) -> None:
         _validate_delta_mode(mode, type(self).__name__)
         self.catalog = catalog
         self.schema = schema
+        self._location = location.rstrip("/") if location else None
         self._write_options = write_options or {}
         self._read_options = read_options or {}
         self._mode = mode
@@ -115,6 +140,12 @@ class SparkUCTableIoManager(IoManager):
 
     def _table_name(self, key: str) -> str:
         return f"{self.catalog}.{self.schema}.{key}"
+
+    def _location_path(self, key: str) -> str | None:
+        """Return the external storage path for a table, or None for managed."""
+        if self._location is None:
+            return None
+        return f"{self._location}/{key}"
 
     def setup(self) -> None:
         """Obtain the active SparkSession."""
@@ -137,8 +168,10 @@ class SparkUCTableIoManager(IoManager):
         """
         from databricks_bundle_decorators.merge import DeltaMerge  # noqa: PLC0415
 
+        loc = self._location_path(context.asset_name)
+
         if isinstance(obj, DeltaMerge):
-            table = self._table_name(context.task_key)
+            table = self._table_name(context.asset_name)
             _logger.info(
                 "Merging into %s (predicate=%r, actions=%s)",
                 table,
@@ -147,10 +180,13 @@ class SparkUCTableIoManager(IoManager):
             )
             builder = obj._build_spark_merger(table)
             if builder is None:
+                write_opts = dict(self._write_options)
+                if loc:
+                    write_opts["path"] = loc
                 obj._initial_spark_write(
                     table,
                     partition_by=context.partition_by,
-                    write_options=dict(self._write_options),
+                    write_options=write_opts,
                 )
             else:
                 builder.execute()
@@ -173,11 +209,17 @@ class SparkUCTableIoManager(IoManager):
             bk = _resolve_backfill_key(context.backfill_key)
             obj = obj.withColumn("backfill_key", F.lit(bk))
 
-        table = self._table_name(context.task_key)
+        table = self._table_name(context.asset_name)
         _logger.info(
-            "Writing to %s (mode=%s, partition_by=%s)", table, self._mode, partition_by
+            "Writing to %s (mode=%s, partition_by=%s, location=%s)",
+            table,
+            self._mode,
+            partition_by,
+            loc,
         )
         writer = obj.write.format("delta").mode(self._mode)
+        if loc:
+            writer = writer.option("path", loc)
         if partition_by:
             # Extract partition values from data before writing
             self._last_partition_values = _spark_extract_partition_values(
@@ -196,14 +238,18 @@ class SparkUCTableIoManager(IoManager):
         writer.saveAsTable(table)
 
     def read(self, context: InputContext) -> Any:
-        """Read a Unity Catalog managed table as a PySpark DataFrame.
+        """Read a Unity Catalog table as a PySpark DataFrame.
+
+        Works for both managed and external tables — the read path
+        uses ``spark.table()`` which resolves via the UC catalog
+        regardless of storage location.
 
         When ``partition_by`` includes ``"backfill_key"``, reads are
         filtered to the current partition unless the upstream
         dependency uses `all_partitions()` or the consuming
         task uses ``@task(all_partitions=True)``.
         """
-        table = self._table_name(context.upstream_task_key)
+        table = self._table_name(context.upstream_asset_name)
         _logger.info(
             "Reading from %s (partition_filter=%s)", table, context.partition_filter
         )
@@ -325,7 +371,7 @@ class SparkUCVolumeDeltaIoManager(IoManager):
         from databricks_bundle_decorators.merge import DeltaMerge  # noqa: PLC0415
 
         if isinstance(obj, DeltaMerge):
-            uri = self._uri(context.task_key)
+            uri = self._uri(context.asset_name)
             _logger.info(
                 "Merging into %s (predicate=%r, actions=%s)",
                 uri,
@@ -360,7 +406,7 @@ class SparkUCVolumeDeltaIoManager(IoManager):
             bk = _resolve_backfill_key(context.backfill_key)
             obj = obj.withColumn("backfill_key", F.lit(bk))
 
-        uri = self._uri(context.task_key)
+        uri = self._uri(context.asset_name)
         _logger.info(
             "Writing to %s (mode=%s, partition_by=%s)", uri, self._mode, partition_by
         )
@@ -389,7 +435,7 @@ class SparkUCVolumeDeltaIoManager(IoManager):
         dependency uses `all_partitions()` or the consuming
         task uses ``@task(all_partitions=True)``.
         """
-        uri = self._uri(context.upstream_task_key)
+        uri = self._uri(context.upstream_asset_name)
         _logger.info(
             "Reading from %s (partition_filter=%s)", uri, context.partition_filter
         )
@@ -510,7 +556,7 @@ class SparkUCVolumeParquetIoManager(IoManager):
             bk = _resolve_backfill_key(context.backfill_key)
             obj = obj.withColumn("backfill_key", F.lit(bk))
 
-        uri = self._uri(context.task_key)
+        uri = self._uri(context.asset_name)
         _logger.info("Writing to %s (partition_by=%s)", uri, partition_by)
         writer = obj.write.format("parquet").mode("overwrite")
         if partition_by:
@@ -533,7 +579,7 @@ class SparkUCVolumeParquetIoManager(IoManager):
         dependency uses `all_partitions()` or the consuming
         task uses ``@task(all_partitions=True)``.
         """
-        uri = self._uri(context.upstream_task_key)
+        uri = self._uri(context.upstream_asset_name)
         _logger.info(
             "Reading from %s (partition_filter=%s)", uri, context.partition_filter
         )

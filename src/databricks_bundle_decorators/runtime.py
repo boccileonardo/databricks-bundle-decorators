@@ -167,6 +167,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 task_key=task_key,
                 upstream_task_key=upstream_task_key,
                 run_id=run_id,
+                upstream_output_name=upstream_meta.output_name,
                 expected_type=type_hints.get(param_name),
                 backfill_key=backfill_key,
                 all_partitions=is_all_partitions,
@@ -207,6 +208,7 @@ def run_task(task_key: str, cli_params: dict[str, str]) -> None:
                 job_name=job_name,
                 task_key=task_key,
                 run_id=run_id,
+                output_name=task_meta.output_name,
                 backfill_key=backfill_key,
                 partition_by=task_meta.partition_by,
             )

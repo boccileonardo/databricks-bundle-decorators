@@ -80,7 +80,7 @@ class _SparkDeltaBase(IoManager):
         from databricks_bundle_decorators.merge import DeltaMerge  # noqa: PLC0415
 
         if isinstance(obj, DeltaMerge):
-            uri = self._uri(context.task_key)
+            uri = self._uri(context.asset_name)
             _logger.info(
                 "Merging into %s (predicate=%r, actions=%s)",
                 uri,
@@ -115,7 +115,7 @@ class _SparkDeltaBase(IoManager):
             bk = _resolve_backfill_key(context.backfill_key)
             obj = obj.withColumn("backfill_key", F.lit(bk))
 
-        uri = self._uri(context.task_key)
+        uri = self._uri(context.asset_name)
         _logger.info(
             "Writing to %s (mode=%s, partition_by=%s)", uri, self._mode, partition_by
         )
@@ -144,7 +144,7 @@ class _SparkDeltaBase(IoManager):
         dependency uses `all_partitions()` or the consuming
         task uses ``@task(all_partitions=True)``.
         """
-        uri = self._uri(context.upstream_task_key)
+        uri = self._uri(context.upstream_asset_name)
         _logger.info(
             "Reading from %s (partition_filter=%s)", uri, context.partition_filter
         )

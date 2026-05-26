@@ -192,7 +192,7 @@ class PolarsDeltaIoManager(IoManager):
         """
         # Handle DeltaMerge definitions — build a fresh merger and execute.
         if isinstance(obj, DeltaMerge):
-            uri = self._uri(context.task_key)
+            uri = self._uri(context.asset_name)
             _logger.info(
                 "Merging into %s (predicate=%r, actions=%s)",
                 uri,
@@ -220,7 +220,7 @@ class PolarsDeltaIoManager(IoManager):
 
         import polars as pl  # noqa: PLC0415
 
-        uri = self._uri(context.task_key)
+        uri = self._uri(context.asset_name)
         partition_by = context.partition_by
 
         # Inject backfill_key column if it's a partition column
@@ -292,7 +292,7 @@ class PolarsDeltaIoManager(IoManager):
                 self.write(context, obj)
                 return
 
-            uri = self._uri(context.task_key)
+            uri = self._uri(context.asset_name)
 
             def _execute_merge() -> None:
                 merger = obj._build_merger(uri, storage_options=self.storage_options)
@@ -345,7 +345,7 @@ class PolarsDeltaIoManager(IoManager):
         """
         import polars as pl  # noqa: PLC0415
 
-        uri = self._uri(context.upstream_task_key)
+        uri = self._uri(context.upstream_asset_name)
         _logger.info(
             "Reading from %s (partition_filter=%s)", uri, context.partition_filter
         )
