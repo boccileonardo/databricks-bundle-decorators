@@ -966,7 +966,9 @@ def _get_launched_backfill_keys(
             continue
         for param in run.get("job_parameters", []):
             if param.get("name") == "backfill_key":
-                launched.add(param["value"])
+                key = param.get("value", param.get("default", ""))
+                if key:
+                    launched.add(key)
 
     return launched
 
