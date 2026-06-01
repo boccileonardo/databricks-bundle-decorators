@@ -53,6 +53,36 @@ def resolve_job_ids_from_sdk() -> dict[str, int]:
     return mapping
 
 
+def _compute_exec_duration(tasks: list | None) -> float | None:
+    """Compute execution duration from task-level timestamps.
+
+    Uses ``task.end_time - task.execution_duration`` to derive the true
+    execution start (excluding queue/pending time), then returns the
+    window from earliest execution start to latest task end.
+
+    Returns ``None`` if tasks are missing or lack required timestamps.
+    """
+    if not tasks:
+        return None
+
+    exec_starts: list[int] = []
+    end_times: list[int] = []
+
+    for task in tasks:
+        end_time = getattr(task, "end_time", None)
+        exec_duration_ms = getattr(task, "execution_duration", None)
+        if end_time is None or exec_duration_ms is None:
+            continue
+        exec_starts.append(end_time - exec_duration_ms)
+        end_times.append(end_time)
+
+    if not exec_starts:
+        return None
+
+    exec_window_ms = max(end_times) - min(exec_starts)
+    return round(exec_window_ms / 1000.0, 1)
+
+
 def fetch_job_runs(
     job_id: int,
     *,
@@ -82,7 +112,7 @@ def fetch_job_runs(
     runs: list[RunInfo] = []
 
     try:
-        for run in w.jobs.list_runs(job_id=job_id, limit=limit):
+        for run in w.jobs.list_runs(job_id=job_id, limit=limit, expand_tasks=True):
             state = run.state
             result_state = (
                 state.result_state.value if state and state.result_state else None
@@ -96,8 +126,8 @@ def fetch_job_runs(
 
             start_ms = run.start_time
             end_ms = run.end_time
-            duration = None
-            if start_ms and end_ms:
+            duration = _compute_exec_duration(run.tasks)
+            if duration is None and start_ms and end_ms:
                 duration = round((end_ms - start_ms) / 1000.0, 1)
 
             backfill_key = None

@@ -14,6 +14,7 @@ from databricks_bundle_decorators.app._codegen import (
     sync_registry_json,
 )
 from databricks_bundle_decorators.app._fetch import (
+    _compute_exec_duration,
     resolve_job_ids_from_sdk,
     resolve_workspace_url,
 )
@@ -90,6 +91,61 @@ class TestResolveWorkspaceUrl:
         result = resolve_workspace_url()
 
         assert result is None
+
+
+class TestComputeExecDuration:
+    """Tests for _compute_exec_duration."""
+
+    def test_returns_none_for_no_tasks(self) -> None:
+        assert _compute_exec_duration(None) is None
+        assert _compute_exec_duration([]) is None
+
+    def test_returns_none_when_tasks_lack_timestamps(self) -> None:
+        class _Task:
+            end_time = None
+            execution_duration = None
+
+        assert _compute_exec_duration([_Task()]) is None
+
+    def test_computes_exec_window_excluding_queue(self) -> None:
+        """Simulates a job queued 8 hours but executing in ~6.6 minutes."""
+
+        class _TaskA:
+            # Task started executing at t=0ms, ran for 300_000ms (5 min)
+            end_time = 300_000
+            execution_duration = 300_000
+
+        class _TaskB:
+            # Task started executing at t=100_000ms, ran for 296_000ms
+            end_time = 396_000
+            execution_duration = 296_000
+
+        result = _compute_exec_duration([_TaskA(), _TaskB()])
+
+        # exec window = max(300000, 396000) - min(0, 100000) = 396000 ms = 396.0 s
+        assert result == 396.0
+
+    def test_single_task(self) -> None:
+        class _Task:
+            end_time = 1_000_000
+            execution_duration = 60_000  # 60 seconds
+
+        result = _compute_exec_duration([_Task()])
+
+        assert result == 60.0
+
+    def test_skips_tasks_without_end_time(self) -> None:
+        class _GoodTask:
+            end_time = 500_000
+            execution_duration = 100_000
+
+        class _BadTask:
+            end_time = None
+            execution_duration = 50_000
+
+        result = _compute_exec_duration([_GoodTask(), _BadTask()])
+
+        assert result == 100.0
 
 
 def _dummy_fn() -> None:
