@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +66,7 @@ def _load_registry() -> tuple[set[str], dict[str, BackfillDef], dict[str, str]]:
     return all_jobs, backfill_defs, schedule_crons
 
 
-def run_app(
+def run_app(  # noqa: PLR0915
     *,
     host: str = "0.0.0.0",  # noqa: S104
     port: int = 8000,
@@ -249,6 +250,12 @@ def run_app(
     app.layout = html.Div(
         [
             dcc.Location(id="url", refresh=False),
+            dcc.Interval(
+                id="auto-refresh-interval",
+                interval=3_600_000,  # 1 hour
+                n_intervals=0,
+            ),
+            dcc.Store(id="bg-refresh-ts", data=0),
             navbar,
             dbc.Container(
                 [
@@ -265,6 +272,17 @@ def run_app(
         ]
     )
 
+    # --- Background auto-refresh callback ---
+
+    @app.callback(
+        Output("bg-refresh-ts", "data"),
+        Input("auto-refresh-interval", "n_intervals"),
+        prevent_initial_call=True,
+    )
+    def _background_refresh(_n: int) -> float:
+        _refresh_data()
+        return time.time()
+
     # --- URL routing callback ---
 
     @app.callback(
@@ -272,10 +290,12 @@ def run_app(
         Output("workspace-link", "children"),
         Input("url", "pathname"),
         Input("btn-refresh", "n_clicks"),
+        Input("bg-refresh-ts", "data"),
     )
     def _display_page(
         pathname: str | None,
         _n_clicks: int | None,
+        _refresh_ts: float | None,
     ) -> tuple[Any, Any]:
         triggered = dash.ctx.triggered_id
         if triggered == "btn-refresh" or not _cache["overviews"]:
