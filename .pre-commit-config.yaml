@@ -15,7 +15,7 @@ repos:
     name: Check for files larger than 5 MB
     args: [ "--maxkb=5120" ]
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.15.12
+  rev: v0.15.15
   hooks:
   - id: ruff-format
     name: ruff formatter
@@ -36,6 +36,6 @@ repos:
   - id: detect-missing-init
     args: [ '--create', "--track", "--python-folders", "src,tests" ]
 - repo: https://github.com/tox-dev/pyproject-fmt
-  rev: "v2.21.2"
+  rev: "v2.23.0"
   hooks:
     - id: pyproject-fmt
