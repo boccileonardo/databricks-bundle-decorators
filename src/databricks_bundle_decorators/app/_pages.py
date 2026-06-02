@@ -43,13 +43,22 @@ from databricks_bundle_decorators.app._figures import (
 _MAX_MISSING_DISPLAY = 500
 
 
-def _kpi_card(title: str, value: str | int, color: str = "primary") -> Any:
+def _kpi_card(
+    title: str,
+    value: str | int,
+    color: str = "primary",
+    *,
+    card_id: str | None = None,
+) -> Any:
     """Return a Bootstrap card showing a single KPI metric."""
+    h3_props: dict[str, Any] = {"className": f"card-title text-{color} mb-0"}
+    if card_id is not None:
+        h3_props["id"] = card_id
     return dbc.Card(
         dbc.CardBody(
             [
                 html.H6(title, className="card-subtitle mb-1 text-muted"),
-                html.H3(str(value), className=f"card-title text-{color} mb-0"),
+                html.H3(str(value), **h3_props),
             ],
             className="text-center py-3",
         ),
@@ -225,12 +234,30 @@ def _page_overview(
 
     kpi_row = dbc.Row(
         [
-            dbc.Col(_kpi_card("Registered Jobs", total_jobs), md=2),
-            dbc.Col(_kpi_card("Deployed", deployed), md=2),
-            dbc.Col(_kpi_card("Total Runs", total_runs), md=2),
-            dbc.Col(_kpi_card("Success Rate", f"{success_rate}%", "success"), md=2),
-            dbc.Col(_kpi_card("Failures", total_failures, "danger"), md=2),
-            dbc.Col(_kpi_card("Avg Duration", avg_dur), md=2),
+            dbc.Col(
+                _kpi_card("Registered Jobs", total_jobs, card_id="kpi-total-jobs"),
+                md=2,
+            ),
+            dbc.Col(_kpi_card("Deployed", deployed, card_id="kpi-deployed"), md=2),
+            dbc.Col(
+                _kpi_card("Total Runs", total_runs, card_id="kpi-total-runs"), md=2
+            ),
+            dbc.Col(
+                _kpi_card(
+                    "Success Rate",
+                    f"{success_rate}%",
+                    "success",
+                    card_id="kpi-success-rate",
+                ),
+                md=2,
+            ),
+            dbc.Col(
+                _kpi_card("Failures", total_failures, "danger", card_id="kpi-failures"),
+                md=2,
+            ),
+            dbc.Col(
+                _kpi_card("Avg Duration", avg_dur, card_id="kpi-avg-duration"), md=2
+            ),
         ],
         className="mb-4 g-3",
     )
@@ -252,6 +279,12 @@ def _page_overview(
         {"field": "Success %", "maxWidth": 140},
         {"field": "Avg Duration", "maxWidth": 140},
         {"field": "Completeness", "cellRenderer": "markdown", "maxWidth": 160},
+        # Hidden columns carrying raw values for KPI recomputation
+        {"field": "_total_runs", "hide": True},
+        {"field": "_successes", "hide": True},
+        {"field": "_failures", "hide": True},
+        {"field": "_avg_duration_s", "hide": True},
+        {"field": "_deployed", "hide": True},
     ]
 
     job_grid = dag.AgGrid(

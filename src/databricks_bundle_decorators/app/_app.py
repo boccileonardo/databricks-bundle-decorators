@@ -24,6 +24,9 @@ from databricks_bundle_decorators.app._data import (
     JobOverview,
     RunInfo,
 )
+from databricks_bundle_decorators.app._display import (
+    _fmt_duration,
+)
 from databricks_bundle_decorators.app._fetch import (
     fetch_job_runs,
     resolve_job_ids_from_sdk,
@@ -371,6 +374,48 @@ def run_app(  # noqa: PLR0915
         _, build_fn = builder
         fig = _build_coverage_figure(build_fn, cov, start_date=sd, end_date=ed)
         return fig or {}
+
+    # --- Overview KPI recomputation on grid filter ---
+
+    @app.callback(
+        Output("kpi-total-jobs", "children"),
+        Output("kpi-deployed", "children"),
+        Output("kpi-total-runs", "children"),
+        Output("kpi-success-rate", "children"),
+        Output("kpi-failures", "children"),
+        Output("kpi-avg-duration", "children"),
+        Input("overview-jobs-grid", "virtualRowData"),
+        prevent_initial_call=True,
+    )
+    def _update_overview_kpis(
+        virtual_rows: list[dict[str, Any]] | None,
+    ) -> tuple[str, str, str, str, str, str]:
+        if not virtual_rows:
+            return "0", "0", "0", "0%", "0", "\u2014"
+
+        total_jobs = len(virtual_rows)
+        deployed = sum(r.get("_deployed", 0) for r in virtual_rows)
+        total_runs = sum(r.get("_total_runs", 0) for r in virtual_rows)
+        failures = sum(r.get("_failures", 0) for r in virtual_rows)
+        successes = sum(r.get("_successes", 0) for r in virtual_rows)
+        terminal = successes + failures
+        success_rate = round(successes / terminal * 100, 1) if terminal else 0
+        durations = [
+            r["_avg_duration_s"]
+            for r in virtual_rows
+            if r.get("_avg_duration_s") is not None
+        ]
+        avg_dur_s = round(sum(durations) / len(durations)) if durations else 0
+        avg_dur = _fmt_duration(avg_dur_s)
+
+        return (
+            str(total_jobs),
+            str(deployed),
+            str(total_runs),
+            f"{success_rate}%",
+            str(failures),
+            avg_dur,
+        )
 
     # Prefetch data so the first page load is instant
     _refresh_data()
