@@ -83,6 +83,12 @@ def _overviews_to_records(
                 "Success %": rate_cell,
                 "Avg Duration": avg_dur,
                 "Completeness": cov_cell,
+                # Hidden raw fields for KPI recomputation on filter
+                "_total_runs": o.total_runs,
+                "_successes": o.successes,
+                "_failures": o.failures,
+                "_avg_duration_s": o.avg_duration_seconds,
+                "_deployed": 1 if o.job_id else 0,
             }
         )
 

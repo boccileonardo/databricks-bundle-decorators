@@ -1210,6 +1210,11 @@ class TestOverviewsToRecords:
             "Success %",
             "Avg Duration",
             "Completeness",
+            "_total_runs",
+            "_successes",
+            "_failures",
+            "_avg_duration_s",
+            "_deployed",
         }
         assert set(records[0].keys()) == expected_cols
 
