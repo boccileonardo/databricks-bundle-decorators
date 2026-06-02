@@ -56,11 +56,15 @@ def resolve_job_ids_from_sdk() -> dict[str, int]:
 def _compute_exec_duration(tasks: list | None) -> float | None:
     """Compute execution duration from task-level timestamps.
 
-    Uses ``task.end_time - task.execution_duration`` to derive the true
+    Uses ``end_time - execution_duration`` per task to derive the true
     execution start (excluding queue/pending time), then returns the
-    window from earliest execution start to latest task end.
+    window from the earliest execution start to the latest task end.
+    This matches the Databricks UI behavior: real wall-clock from first
+    task start to last task finish, excluding queue wait.
 
-    Returns ``None`` if tasks are missing or lack required timestamps.
+    Returns ``None`` if tasks are missing or any task lacks the
+    required ``end_time``/``execution_duration`` fields (signalling
+    that the caller should fetch authoritative data via ``get_run``).
     """
     if not tasks:
         return None
@@ -72,7 +76,7 @@ def _compute_exec_duration(tasks: list | None) -> float | None:
         end_time = getattr(task, "end_time", None)
         exec_duration_ms = getattr(task, "execution_duration", None)
         if end_time is None or exec_duration_ms is None:
-            continue
+            return None
         exec_starts.append(end_time - exec_duration_ms)
         end_times.append(end_time)
 
@@ -126,9 +130,21 @@ def fetch_job_runs(
 
             start_ms = run.start_time
             end_ms = run.end_time
+
+            # Compute duration from task-level execution_duration.
+            # The list endpoint's expand_tasks is best-effort and may
+            # omit execution_duration; fall back to get_run for the
+            # authoritative task data.
             duration = _compute_exec_duration(run.tasks)
-            if duration is None and start_ms and end_ms:
-                duration = round((end_ms - start_ms) / 1000.0, 1)
+            if duration is None and run.run_id:
+                try:
+                    full_run = w.jobs.get_run(run_id=run.run_id)
+                    duration = _compute_exec_duration(full_run.tasks)
+                except Exception as _get_err:  # noqa: BLE001
+                    print(
+                        f"[dbxdec] get_run({run.run_id}) failed: {_get_err!r}",
+                        flush=True,
+                    )
 
             backfill_key = None
             for param in run.job_parameters or []:
