@@ -134,18 +134,18 @@ class TestComputeExecDuration:
 
         assert result == 60.0
 
-    def test_skips_tasks_without_end_time(self) -> None:
+    def test_returns_none_when_any_task_lacks_exec_duration(self) -> None:
         class _GoodTask:
             end_time = 500_000
             execution_duration = 100_000
 
         class _BadTask:
             end_time = None
-            execution_duration = 50_000
+            execution_duration = None
 
         result = _compute_exec_duration([_GoodTask(), _BadTask()])
 
-        assert result == 100.0
+        assert result is None
 
 
 def _dummy_fn() -> None:
