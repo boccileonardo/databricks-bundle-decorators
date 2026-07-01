@@ -35,6 +35,33 @@ from databricks_bundle_decorators.merge import DeltaMerge
 _logger = logging.getLogger(__name__)
 
 
+def _resolve_merge_partition_values(
+    merge: DeltaMerge, partition_by: list[str] | None
+) -> dict[str, list[str]]:
+    """Return the partition-value dict to publish for a DeltaMerge write.
+
+    - No ``partition_by`` on the task → empty dict (no downstream filtering).
+    - ``merge.partition_values`` set by the caller → trust and return it
+      after normalising to string values. Skips a full plan execution on
+      the source LazyFrame.
+    - Otherwise → fall back to scanning the source, matching the
+      pre-fix behaviour.
+
+    Callers passing ``partition_values`` are responsible for the values
+    matching those actually present in the source; a mismatch causes
+    downstream auto-filtering to drop rows.
+    """
+    if not partition_by:
+        return {}
+    if merge.partition_values is not None:
+        # Normalise to list[str] to match _polars_extract_partition_values.
+        return {
+            col: [str(v) for v in merge.partition_values.get(col, [])]
+            for col in partition_by
+        }
+    return _polars_extract_partition_values(merge.source, partition_by)
+
+
 class PolarsDeltaIoManager(IoManager):
     """Persist Polars DataFrames as Delta tables on any cloud or local filesystem.
 
@@ -210,12 +237,9 @@ class PolarsDeltaIoManager(IoManager):
                 )
             else:
                 merger.execute()
-            if context.partition_by:
-                self._last_partition_values = _polars_extract_partition_values(
-                    obj.source, context.partition_by
-                )
-            else:
-                self._last_partition_values = {}
+            self._last_partition_values = _resolve_merge_partition_values(
+                obj, context.partition_by
+            )
             return
 
         import polars as pl  # noqa: PLC0415
@@ -320,12 +344,9 @@ class PolarsDeltaIoManager(IoManager):
                 before_sleep=before_sleep_log(_logger, logging.WARNING),
             )
             retryer(_execute_merge)()
-            if context.partition_by:
-                self._last_partition_values = _polars_extract_partition_values(
-                    obj.source, context.partition_by
-                )
-            else:
-                self._last_partition_values = {}
+            self._last_partition_values = _resolve_merge_partition_values(
+                obj, context.partition_by
+            )
             return
 
         super().write_with_retry(context, obj)

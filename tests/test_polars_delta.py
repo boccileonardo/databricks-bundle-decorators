@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -348,6 +349,92 @@ class TestDeltaMerge:
         ).when_matched_update_all()
         io.write(_output_ctx("t", partition_by=["region"]), merge_def)
         assert io._last_partition_values == {"region": ["us"]}
+
+    def test_delta_merge_partition_values_shortcut_skips_source_scan(
+        self, tmp_path: Path
+    ) -> None:
+        """When merge.partition_values is set, IoManager trusts it and does
+        NOT scan the source LazyFrame to derive partition values.
+
+        We prove this by giving the shortcut a value that doesn't match the
+        source data — the shortcut wins, confirming the source isn't scanned.
+        """
+
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        initial = pl.DataFrame({"id": [1], "region": ["us"], "val": ["a"]})
+        io.write(_output_ctx("t", partition_by=["region"]), initial)
+
+        source = pl.LazyFrame({"id": [1], "region": ["us"], "val": ["X"]})
+        merge_def = DeltaMerge(
+            source=source,
+            predicate="s.id = t.id",
+            partition_values={"region": ["us", "eu-precomputed"]},
+        ).when_matched_update_all()
+        io.write(_output_ctx("t", partition_by=["region"]), merge_def)
+        # Values match the caller-supplied dict, not the actual source content.
+        assert io._last_partition_values == {"region": ["us", "eu-precomputed"]}
+
+    def test_delta_merge_partition_values_stringifies_values(
+        self, tmp_path: Path
+    ) -> None:
+        """Non-string values in the shortcut dict are stringified to match the
+        _polars_extract_partition_values contract (list[str])."""
+
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        initial = pl.DataFrame({"id": [1], "d": [date(2025, 10, 23)], "val": ["a"]})
+        io.write(_output_ctx("t", partition_by=["d"]), initial)
+
+        source = pl.LazyFrame({"id": [1], "d": [date(2025, 10, 23)], "val": ["X"]})
+        merge_def = DeltaMerge(
+            source=source,
+            predicate="s.id = t.id",
+            partition_values={"d": [date(2025, 10, 23)]},
+        ).when_matched_update_all()
+        io.write(_output_ctx("t", partition_by=["d"]), merge_def)
+        assert io._last_partition_values == {"d": ["2025-10-23"]}
+
+    def test_delta_merge_with_retry_partition_values_shortcut(
+        self, tmp_path: Path
+    ) -> None:
+        """The retry path also honours merge.partition_values."""
+
+        io = PolarsDeltaIoManager(
+            base_path=str(tmp_path), mode="overwrite", retry=RetryConfig()
+        )
+
+        initial = pl.DataFrame({"id": [1], "region": ["us"], "val": ["a"]})
+        io.write(_output_ctx("t", partition_by=["region"]), initial)
+
+        source = pl.LazyFrame({"id": [1], "region": ["us"], "val": ["X"]})
+        merge_def = DeltaMerge(
+            source=source,
+            predicate="s.id = t.id",
+            partition_values={"region": ["precomputed"]},
+        ).when_matched_update_all()
+        io.write_with_retry(_output_ctx("t", partition_by=["region"]), merge_def)
+        assert io._last_partition_values == {"region": ["precomputed"]}
+
+    def test_delta_merge_partition_values_ignored_without_partition_by(
+        self, tmp_path: Path
+    ) -> None:
+        """No partition_by on the task means no downstream filtering — the
+        shortcut is inert and _last_partition_values stays empty."""
+
+        io = PolarsDeltaIoManager(base_path=str(tmp_path), mode="overwrite")
+
+        initial = pl.DataFrame({"id": [1], "val": ["a"]})
+        io.write(_output_ctx("t"), initial)
+
+        source = pl.LazyFrame({"id": [1], "val": ["X"]})
+        merge_def = DeltaMerge(
+            source=source,
+            predicate="s.id = t.id",
+            partition_values={"region": ["precomputed"]},
+        ).when_matched_update_all()
+        io.write(_output_ctx("t"), merge_def)
+        assert io._last_partition_values == {}
 
     def test_delta_merge_with_retry_extracts_partition_values(
         self, tmp_path: Path
