@@ -102,9 +102,10 @@ class DeltaMerge:
     target_alias : str
         Alias for the target table in the predicate.  Defaults to
         ``"t"``.
-    partition_values : dict[str, list[str]] | None
+    partition_values : dict[str, list[Any]] | None
         Optional pre-computed partition values, keyed by partition column
-        name (e.g. ``{"period_end_date": ["2025-10-23"]}``). When set, the
+        name (e.g. ``{"period_end_date": ["2025-10-23"]}`` or
+        ``{"period_end_date": [date(2025, 10, 23)]}``). When set, the
         IoManager uses these directly for ``_last_partition_values``
         (which feeds downstream auto-filtering) instead of re-executing
         the source plan via ``select(partition_by).unique().collect()``.
@@ -115,16 +116,17 @@ class DeltaMerge:
         must match the distinct partition values actually present in
         the source, otherwise downstream auto-filtering will drop rows.
 
-        Values are stringified as required by ``_last_partition_values``.
-        Leave as ``None`` to keep the default extract-from-source
-        behaviour.
+        Values are stringified via ``str(v)`` before being stored in
+        ``_last_partition_values``, so any type with a sensible string
+        form is accepted (Date, datetime, int, str, …). Leave as
+        ``None`` to keep the default extract-from-source behaviour.
     """
 
     source: Any
     predicate: str
     source_alias: str = "s"
     target_alias: str = "t"
-    partition_values: dict[str, list[str]] | None = None
+    partition_values: dict[str, list[Any]] | None = None
     _actions: list[_MergeAction] = field(default_factory=list, init=False, repr=False)
 
     def when_matched_update_all(
